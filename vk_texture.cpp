@@ -4,6 +4,7 @@
 
 #include <SDL3/SDL_log.h>
 
+#include "vk_barrier.h"
 #include "vk_context.h"
 
 // ---------------------------------------------------------------------------
@@ -139,6 +140,8 @@ bool streaming_texture_create_format(StreamingTexture* texture, const VulkanCont
                                      uint32_t height, VkFormat format, bool opaque)
 {
     *texture = StreamingTexture{};
+    texture->path = context->path;
+    texture->barrier2 = context->cmd_pipeline_barrier2;
     texture->capacity_width = width;
     texture->capacity_height = height;
     texture->format = format;
@@ -241,12 +244,7 @@ bool streaming_texture_upload(StreamingTexture* texture, VkCommandBuffer command
         .image         = texture->image,
         .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
     };
-    VkDependencyInfo to_transfer_dependency = {
-        .sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .imageMemoryBarrierCount = 1,
-        .pImageMemoryBarriers    = &to_transfer,
-    };
-    vkCmdPipelineBarrier2(command_buffer, &to_transfer_dependency);
+    vk_cmd_image_barriers(command_buffer, texture->path, texture->barrier2, &to_transfer, 1);
 
     // 3. GPU: copy the frame into the top-left corner of the image.
     VkBufferImageCopy region = {
@@ -274,12 +272,7 @@ bool streaming_texture_upload(StreamingTexture* texture, VkCommandBuffer command
         .image         = texture->image,
         .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
     };
-    VkDependencyInfo to_shader_dependency = {
-        .sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .imageMemoryBarrierCount = 1,
-        .pImageMemoryBarriers    = &to_shader,
-    };
-    vkCmdPipelineBarrier2(command_buffer, &to_shader_dependency);
+    vk_cmd_image_barriers(command_buffer, texture->path, texture->barrier2, &to_shader, 1);
 
     texture->layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     texture->content_width = width;

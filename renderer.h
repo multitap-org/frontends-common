@@ -15,13 +15,16 @@
 //   if (result == RenderFrameResult::swapchain_needs_recreate) { recreate the swapchain }
 //
 // After renderer_begin_rendering() the swapchain image is in COLOR_ATTACHMENT_OPTIMAL
-// layout inside an active dynamic-rendering pass that has already been cleared.
-// Copies are not allowed inside a rendering pass, which is why uploads come first.
+// layout inside an active rendering pass that has already been cleared: dynamic
+// rendering on the Vulkan 1.3 path, the swapchain's render pass on the 1.1 path
+// (see VulkanPath in vk_context.h). Copies are not allowed inside a rendering
+// pass, which is why uploads come first.
 
 #include <cstdint>
 #include <vulkan/vulkan.h>
 
-struct VulkanContext;
+#include "vk_context.h"   // VulkanPath
+
 struct VulkanSwapchain;
 
 // The most frames the CPU may record ahead of the GPU (arrays are this big).
@@ -65,6 +68,11 @@ struct Renderer
     uint32_t       present_wait_timeouts   = 0;   // in a row
     bool           present_wait_unreliable = false;
     VkSwapchainKHR present_wait_swapchain  = VK_NULL_HANDLE;   // the swapchain those counts are for
+    // From the context at creation (renderer_begin_rendering has no context).
+    VulkanPath                path                  = VulkanPath::vulkan_1_3;
+    PFN_vkCmdPipelineBarrier2 cmd_pipeline_barrier2 = nullptr;
+    PFN_vkCmdBeginRendering   cmd_begin_rendering   = nullptr;
+    PFN_vkCmdEndRendering     cmd_end_rendering     = nullptr;
 };
 
 struct ClearColor
