@@ -49,6 +49,8 @@ add_library(frontend_common STATIC
     localization.cpp
     rate_control.cpp
     frame_delay.cpp
+    input_devices.cpp
+    input_bindings.cpp
 )
 
 # GameMode (deps/gamemode, BSD-3-Clause): only its client header, which
@@ -115,6 +117,14 @@ if(MULTITAP_BUILD_TESTS)
     add_test(NAME frontend_viewport COMMAND frontend_viewport_test)
     set_tests_properties(frontend_viewport PROPERTIES
                          FAIL_REGULAR_EXPRESSION "ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    add_executable(frontend_input_test tests/input_test.cpp)
+    target_link_libraries(frontend_input_test PRIVATE frontend_common)
+    multitap_set_project_flags(frontend_input_test)
+    add_test(NAME frontend_input COMMAND frontend_input_test)
+    set_tests_properties(frontend_input PROPERTIES
+                         PASS_REGULAR_EXPRESSION "input: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
     add_executable(frontend_window_size_test tests/window_size_test.cpp)
     target_link_libraries(frontend_window_size_test PRIVATE frontend_common)
