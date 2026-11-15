@@ -8,6 +8,11 @@
 //                           split across XDG config/data/state.
 //   Windows:                next to the executable (portable).
 //   macOS:                  ~/Library/Application Support/<program>.
+//   Android:                $MULTITAP_DATA_DIR/<program> (piccolo's activity sets it to
+//                           /sdcard when it has "All files access"), else the app's
+//                           private folder. cores/ is always in the app's private
+//                           storage: shared storage is mounted noexec, so cores
+//                           (.so files) can't be loaded from it.
 //
 // Inside it: settings/, cores/, saves/, states/, system/, cache/. The settings may
 // later point some of them elsewhere; these are the defaults.
