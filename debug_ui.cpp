@@ -35,7 +35,10 @@ bool debug_ui_init(SDL_Window* window, const VulkanContext* context, const Vulka
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    // No gamepad navigation yet: SDL takes some devices for gamepads that
+    // aren't (a keyboard's thumbstick receiver reads as a stick held all the
+    // way up), and ImGui then scrolls the focused window to the top every
+    // frame. To come back with the input work, ignoring such devices.
 
     // Scale for high-DPI displays (e.g. 150% on Windows, Retina on macOS).
     float display_scale = SDL_GetWindowDisplayScale(window);
@@ -119,9 +122,22 @@ void debug_ui_begin_frame()
     ImGui::NewFrame();
 }
 
+static DebugUiDrawDataHook g_draw_data_hook = nullptr;
+static void*               g_draw_data_hook_user = nullptr;
+
+void debug_ui_set_draw_data_hook(DebugUiDrawDataHook hook, void* user)
+{
+    g_draw_data_hook = hook;
+    g_draw_data_hook_user = user;
+}
+
 void debug_ui_render(VkCommandBuffer command_buffer)
 {
     ImGui::Render();
+    if (g_draw_data_hook != nullptr)
+    {
+        g_draw_data_hook(ImGui::GetDrawData(), g_draw_data_hook_user);
+    }
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), command_buffer);
 }
 

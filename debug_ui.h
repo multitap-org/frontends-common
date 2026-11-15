@@ -24,6 +24,12 @@ void debug_ui_begin_frame();
 // the active rendering pass (between renderer_begin_frame and renderer_end_frame).
 void debug_ui_render(VkCommandBuffer command_buffer);
 
+// Called with ImGui's draw data between finishing the frame and drawing it,
+// to change what gets drawn (e.g. add text shadows). nullptr: none.
+struct ImDrawData;
+typedef void (*DebugUiDrawDataHook)(ImDrawData* draw_data, void* user);
+void debug_ui_set_draw_data_hook(DebugUiDrawDataHook hook, void* user);
+
 // Finishes the imgui frame without drawing (e.g. the frame was skipped).
 void debug_ui_end_frame_without_render();
 
