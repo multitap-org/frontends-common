@@ -51,6 +51,7 @@ add_library(frontend_common STATIC
     frame_delay.cpp
     input_devices.cpp
     input_bindings.cpp
+    input_sdl.cpp
 )
 
 # GameMode (deps/gamemode, BSD-3-Clause): only its client header, which

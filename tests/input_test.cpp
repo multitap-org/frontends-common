@@ -349,6 +349,66 @@ static void test_fake_gamepad()
     delete system;
 }
 
+static void test_menus_and_defaults()
+{
+    InputSystem* system = new InputSystem{};
+    uint32_t keyboard = input_devices_add(&system->devices, InputDeviceKind::keyboard, "keyboard", "Keyboard");
+    InputBindingSet keys = {};
+    input_default_keyboard_bindings(&keys);
+    uint32_t controller = input_add_controller(system, keyboard, "Keyboard", &keys);
+    InputFrame out = {};
+
+    // Menus up: the keyboard neither joins nor plays, but its hotkeys work.
+    system->settings.game_has_input = false;
+    input_devices_set_code(&system->devices, keyboard, HID_RETURN, true);
+    input_devices_set_code(&system->devices, keyboard, HID_F1, true);
+    frame(system, 0, &out);
+    check(input_controller_port(system, controller) == INPUT_NO_PORT, "menus: the keyboard doesn't join");
+    check(out.pressed[static_cast<uint32_t>(InputAction::hotkey_quick_menu)], "menus: hotkeys still work");
+    input_join(system, controller);
+    input_devices_set_code(&system->devices, keyboard, HID_Z, true);
+    frame(system, 16, &out);
+    check(out.pad_buttons[0] == 0, "menus: the keyboard doesn't play");
+    system->settings.game_has_input = true;
+    frame(system, 32, &out);
+    check(out.pad_buttons[0] == 0, "menus closed: quiet while Z is still held");
+    input_devices_set_code(&system->devices, keyboard, HID_Z, false);
+    input_devices_set_code(&system->devices, keyboard, HID_RETURN, false);   // START, a RetroPad button too
+    frame(system, 48, &out);
+    input_devices_set_code(&system->devices, keyboard, HID_Z, true);
+    frame(system, 64, &out);
+    check((out.pad_buttons[0] & PAD_BIT_B) != 0, "menus closed: it plays again once let go");
+
+    input_leave_all(system);
+    check(system->ports[0] == INPUT_NO_PORT && input_first_controller(system, keyboard) == static_cast<int32_t>(controller),
+          "leave all: ports free, controller kept");
+
+    // A gamepad's interface actions are reported apart (to drive the UI).
+    uint32_t pad = input_devices_add(&system->devices, InputDeviceKind::gamepad, "pad-guid", "Pad");
+    InputBindingSet defaults = {};
+    input_default_gamepad_bindings(&defaults);
+    input_add_controller(system, pad, "Pad", &defaults);
+    input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::dpad_down), true);
+    input_devices_set_code(&system->devices, keyboard, HID_UP, true);
+    frame(system, 80, &out);
+    check(out.gamepad_held[static_cast<uint32_t>(InputAction::ui_down)], "ui: the gamepad's down is reported");
+    check(!out.gamepad_held[static_cast<uint32_t>(InputAction::ui_up)], "ui: the keyboard's up is not in gamepad_held");
+    check(out.held[static_cast<uint32_t>(InputAction::ui_up)], "ui: ...but is in held");
+
+    // The gamepad defaults: B bottom, A right, R2 on the trigger, SELECT+START quick menu.
+    InputBindingSet pad_set = {};
+    input_default_gamepad_bindings(&pad_set);
+    check(input_is_bound(&pad_set, InputAction::pad_b, button(InputButton::south)), "defaults: B is the bottom button");
+    check(input_is_bound(&pad_set, InputAction::pad_a, button(InputButton::east)), "defaults: A is the right button");
+    check(input_is_bound(&pad_set, InputAction::pad_r2, axis(InputAxis::right_trigger, true)), "defaults: R2 is the trigger");
+    check(input_is_bound(&pad_set, InputAction::hotkey_enable, button(InputButton::back)), "defaults: HOTKEY ENABLE is SELECT");
+    check(input_is_bound(&pad_set, InputAction::hotkey_quick_menu, button(InputButton::start)), "defaults: + START = quick menu");
+    check(input_is_bound(&pad_set, InputAction::ui_open_menu, button(InputButton::start)), "defaults: START opens the menu bar");
+    InputAction last = InputAction::count;
+    check(input_action_parse("hotkey.fast_forward", &last) && last == InputAction::hotkey_fast_forward, "actions: names line up");
+    delete system;
+}
+
 int main()
 {
     test_sources();
@@ -358,6 +418,7 @@ int main()
     test_gamepad_hotkeys();
     test_combo_and_stick();
     test_fake_gamepad();
+    test_menus_and_defaults();
     if (g_failures == 0)
     {
         std::printf("input: all checks passed\n");

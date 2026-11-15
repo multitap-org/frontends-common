@@ -72,6 +72,7 @@ enum class InputAction
     ui_back,
     ui_page_left,
     ui_page_right,
+    ui_open_menu,   // the main menu bar's first menu, to start navigating without a mouse
     // Hotkeys.
     hotkey_enable,
     hotkey_menu,
@@ -109,6 +110,13 @@ bool input_is_bound(const InputBindingSet* set, InputAction action, InputSource 
 // F1 quick menu, F2 save, F4 load, Escape menu, Space fast forward).
 void input_default_keyboard_bindings(InputBindingSet* set);
 
+// The defaults for a gamepad, by position (the RetroPad's SNES layout: B
+// bottom, A right, Y left, X top; triggers L2 / R2, stick clicks L3 / R3,
+// sticks analog). Interface: d-pad and left stick, accept = bottom, back =
+// right, shoulders page, START opens the menu bar's first menu. Hotkeys with HOTKEY ENABLE = Select: Start quick
+// menu, right button menu, R save, L load, R2 fast forward.
+void input_default_gamepad_bindings(InputBindingSet* set);
+
 enum class InputHotkeyMode
 {
     hold,
@@ -120,6 +128,11 @@ struct InputSettings
     bool            gamepad_takes_keyboard_port = true;
     InputHotkeyMode hotkey_mode = InputHotkeyMode::hold;
     bool            core_takes_keyboard = false;   // the core reads the keyboard as a keyboard
+    // False while the frontend's own UI is up (a menu or a dialog): no
+    // controller plays or joins (they drive the UI); hotkeys still work. When
+    // it comes back, each controller stays quiet until it lets go of everything,
+    // so the button that closed the menu isn't the game's.
+    bool            game_has_input = true;
 };
 
 struct InputController
@@ -133,6 +146,7 @@ struct InputController
     int32_t  last_port = INPUT_NO_PORT;            // the port it had when its device went away
     bool     held_last[INPUT_ACTION_COUNT] = {};
     bool     quiet_until_start_released = false;   // the START that joined is not the game's
+    bool     quiet_until_released = false;         // back from the UI: nothing to the game until all is let go
     uint64_t enable_down_ms = 0;
     uint64_t enable_last_tap_ms = 0;
     bool     armed = false;                        // DOUBLE TAP: the next hotkey works
@@ -145,6 +159,7 @@ struct InputSystem
     std::vector<InputController> controllers;
     int32_t                      ports[INPUT_PORT_COUNT] = {INPUT_NO_PORT, INPUT_NO_PORT, INPUT_NO_PORT, INPUT_NO_PORT};
     InputSettings                settings;
+    bool                         game_had_input = true;   // settings.game_has_input last frame
 };
 
 struct InputFrame
@@ -153,12 +168,16 @@ struct InputFrame
     int16_t  analog[INPUT_PORT_COUNT][2][2] = {};   // [port][left/right][x/y], -0x7fff..0x7fff
     bool     held[INPUT_ACTION_COUNT] = {};         // interface and hotkeys, any controller (hotkeys when allowed)
     bool     pressed[INPUT_ACTION_COUNT] = {};      // went down this frame
+    bool     gamepad_held[INPUT_ACTION_COUNT] = {}; // interface actions held on gamepads (not the keyboard): to drive a UI
     int32_t  joined_port = INPUT_NO_PORT;           // a controller joined this frame (for a message)
     int32_t  joined_controller = -1;
 };
 
 // A new controller on a device; returns its index in system->controllers.
 uint32_t input_add_controller(InputSystem* system, uint32_t device_id, const char* name, const InputBindingSet* bindings);
+
+// The first controller on a device, or -1.
+int32_t input_first_controller(const InputSystem* system, uint32_t device_id);
 
 // The controller's port, or INPUT_NO_PORT.
 int32_t input_controller_port(const InputSystem* system, uint32_t controller);
@@ -167,6 +186,9 @@ int32_t input_controller_port(const InputSystem* system, uint32_t controller);
 // port could be had.
 bool input_join(InputSystem* system, uint32_t controller);
 void input_leave(InputSystem* system, uint32_t controller);
+
+// Every port free, nothing remembered for devices that come back (a new game).
+void input_leave_all(InputSystem* system);
 
 // Swaps two ports' controllers (reordering from the quick menu).
 void input_swap_ports(InputSystem* system, uint32_t a, uint32_t b);

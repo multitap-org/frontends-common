@@ -16,7 +16,7 @@ static const char* const ACTION_NAMES[INPUT_ACTION_COUNT] = {
     "pad.a", "pad.x", "pad.l", "pad.r", "pad.l2", "pad.r2", "pad.l3", "pad.r3",
     "pad.left_x+", "pad.left_x-", "pad.left_y+", "pad.left_y-",
     "pad.right_x+", "pad.right_x-", "pad.right_y+", "pad.right_y-",
-    "ui.up", "ui.down", "ui.left", "ui.right", "ui.accept", "ui.back", "ui.page_left", "ui.page_right",
+    "ui.up", "ui.down", "ui.left", "ui.right", "ui.accept", "ui.back", "ui.page_left", "ui.page_right", "ui.open_menu",
     "hotkey.enable", "hotkey.menu", "hotkey.quick_menu", "hotkey.save_state", "hotkey.load_state",
     "hotkey.fast_forward",
 };
@@ -165,6 +165,72 @@ void input_default_keyboard_bindings(InputBindingSet* set)
     input_bind(set, InputAction::hotkey_fast_forward, key(HID_SPACE));
 }
 
+static InputSource pad_button(InputButton b)
+{
+    InputSource source = {};
+    source.type = InputSourceType::button;
+    source.code = static_cast<uint16_t>(b);
+    return source;
+}
+
+static InputSource pad_axis(InputAxis a, bool plus)
+{
+    InputSource source = {};
+    source.type = plus ? InputSourceType::axis_plus : InputSourceType::axis_minus;
+    source.code = static_cast<uint16_t>(a);
+    return source;
+}
+
+void input_default_gamepad_bindings(InputBindingSet* set)
+{
+    *set = InputBindingSet{};
+    input_bind(set, InputAction::pad_up, pad_button(InputButton::dpad_up));
+    input_bind(set, InputAction::pad_down, pad_button(InputButton::dpad_down));
+    input_bind(set, InputAction::pad_left, pad_button(InputButton::dpad_left));
+    input_bind(set, InputAction::pad_right, pad_button(InputButton::dpad_right));
+    input_bind(set, InputAction::pad_b, pad_button(InputButton::south));
+    input_bind(set, InputAction::pad_a, pad_button(InputButton::east));
+    input_bind(set, InputAction::pad_y, pad_button(InputButton::west));
+    input_bind(set, InputAction::pad_x, pad_button(InputButton::north));
+    input_bind(set, InputAction::pad_l, pad_button(InputButton::left_shoulder));
+    input_bind(set, InputAction::pad_r, pad_button(InputButton::right_shoulder));
+    input_bind(set, InputAction::pad_l2, pad_axis(InputAxis::left_trigger, true));
+    input_bind(set, InputAction::pad_r2, pad_axis(InputAxis::right_trigger, true));
+    input_bind(set, InputAction::pad_l3, pad_button(InputButton::left_stick));
+    input_bind(set, InputAction::pad_r3, pad_button(InputButton::right_stick));
+    input_bind(set, InputAction::pad_start, pad_button(InputButton::start));
+    input_bind(set, InputAction::pad_select, pad_button(InputButton::back));
+    input_bind(set, InputAction::pad_left_x_plus, pad_axis(InputAxis::left_x, true));
+    input_bind(set, InputAction::pad_left_x_minus, pad_axis(InputAxis::left_x, false));
+    input_bind(set, InputAction::pad_left_y_plus, pad_axis(InputAxis::left_y, true));
+    input_bind(set, InputAction::pad_left_y_minus, pad_axis(InputAxis::left_y, false));
+    input_bind(set, InputAction::pad_right_x_plus, pad_axis(InputAxis::right_x, true));
+    input_bind(set, InputAction::pad_right_x_minus, pad_axis(InputAxis::right_x, false));
+    input_bind(set, InputAction::pad_right_y_plus, pad_axis(InputAxis::right_y, true));
+    input_bind(set, InputAction::pad_right_y_minus, pad_axis(InputAxis::right_y, false));
+
+    input_bind(set, InputAction::ui_up, pad_button(InputButton::dpad_up));
+    input_bind(set, InputAction::ui_up, pad_axis(InputAxis::left_y, false));
+    input_bind(set, InputAction::ui_down, pad_button(InputButton::dpad_down));
+    input_bind(set, InputAction::ui_down, pad_axis(InputAxis::left_y, true));
+    input_bind(set, InputAction::ui_left, pad_button(InputButton::dpad_left));
+    input_bind(set, InputAction::ui_left, pad_axis(InputAxis::left_x, false));
+    input_bind(set, InputAction::ui_right, pad_button(InputButton::dpad_right));
+    input_bind(set, InputAction::ui_right, pad_axis(InputAxis::left_x, true));
+    input_bind(set, InputAction::ui_accept, pad_button(InputButton::south));
+    input_bind(set, InputAction::ui_back, pad_button(InputButton::east));
+    input_bind(set, InputAction::ui_page_left, pad_button(InputButton::left_shoulder));
+    input_bind(set, InputAction::ui_page_right, pad_button(InputButton::right_shoulder));
+    input_bind(set, InputAction::ui_open_menu, pad_button(InputButton::start));
+
+    input_bind(set, InputAction::hotkey_enable, pad_button(InputButton::back));
+    input_bind(set, InputAction::hotkey_quick_menu, pad_button(InputButton::start));
+    input_bind(set, InputAction::hotkey_menu, pad_button(InputButton::east));
+    input_bind(set, InputAction::hotkey_save_state, pad_button(InputButton::right_shoulder));
+    input_bind(set, InputAction::hotkey_load_state, pad_button(InputButton::left_shoulder));
+    input_bind(set, InputAction::hotkey_fast_forward, pad_axis(InputAxis::right_trigger, true));
+}
+
 // ---------------------------------------------------------------------------
 // Controllers and ports
 // ---------------------------------------------------------------------------
@@ -177,6 +243,18 @@ uint32_t input_add_controller(InputSystem* system, uint32_t device_id, const cha
     controller.bindings = *bindings;
     system->controllers.push_back(controller);
     return static_cast<uint32_t>(system->controllers.size() - 1);
+}
+
+int32_t input_first_controller(const InputSystem* system, uint32_t device_id)
+{
+    for (size_t c = 0; c < system->controllers.size(); c++)
+    {
+        if (system->controllers[c].device_id == device_id)
+        {
+            return static_cast<int32_t>(c);
+        }
+    }
+    return -1;
 }
 
 int32_t input_controller_port(const InputSystem* system, uint32_t controller)
@@ -245,6 +323,18 @@ void input_leave(InputSystem* system, uint32_t controller)
     if (port != INPUT_NO_PORT)
     {
         system->ports[port] = INPUT_NO_PORT;
+    }
+}
+
+void input_leave_all(InputSystem* system)
+{
+    for (uint32_t p = 0; p < INPUT_PORT_COUNT; p++)
+    {
+        system->ports[p] = INPUT_NO_PORT;
+    }
+    for (size_t c = 0; c < system->controllers.size(); c++)
+    {
+        system->controllers[c].last_port = INPUT_NO_PORT;
     }
 }
 
@@ -336,6 +426,8 @@ static void stick(const InputController* controller, const InputDevice* device, 
 void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
 {
     *frame = InputFrame{};
+    bool back_to_game = system->settings.game_has_input && !system->game_had_input;
+    system->game_had_input = system->settings.game_has_input;
 
     // Ports of devices that went away; back when they return, if still free.
     for (size_t c = 0; c < system->controllers.size(); c++)
@@ -379,8 +471,22 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         }
 
         // Joining.
+        bool plays = system->settings.game_has_input;
+        bool any_pad_held = false;
+        for (uint32_t a = 0; a <= index_of(InputAction::pad_right_y_minus); a++)
+        {
+            any_pad_held = any_pad_held || held[a];
+        }
+        if (back_to_game)
+        {
+            controller->quiet_until_released = any_pad_held;
+        }
+        else if (controller->quiet_until_released && !any_pad_held)
+        {
+            controller->quiet_until_released = false;
+        }
         int32_t port = input_controller_port(system, index);
-        if (port == INPUT_NO_PORT && pressed[index_of(InputAction::pad_start)])
+        if (plays && port == INPUT_NO_PORT && pressed[index_of(InputAction::pad_start)])
         {
             port = join_port(system, index, INPUT_NO_PORT);
             if (port != INPUT_NO_PORT)
@@ -398,7 +504,7 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         // HOTKEY ENABLE.
         uint32_t enable = index_of(InputAction::hotkey_enable);
         bool enabled = false;
-        bool quiet = controller->quiet_until_start_released;
+        bool quiet = controller->quiet_until_start_released || controller->quiet_until_released;
         if (system->settings.hotkey_mode == InputHotkeyMode::hold)
         {
             if (pressed[enable])
@@ -444,8 +550,16 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             {
                 continue;
             }
+            if (!input_action_is_hotkey(action) && enabled)
+            {
+                continue;   // the hotkey layer is on: its buttons aren't interface controls now
+            }
             frame->held[a] = frame->held[a] || held[a];
             frame->pressed[a] = frame->pressed[a] || pressed[a];
+            if (device->kind != InputDeviceKind::keyboard && !input_action_is_hotkey(action))
+            {
+                frame->gamepad_held[a] = frame->gamepad_held[a] || held[a];
+            }
             fired = fired || (input_action_is_hotkey(action) && pressed[a]);
         }
         if (fired && controller->armed)
@@ -454,7 +568,7 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         }
 
         // The RetroPad of its port.
-        if (port == INPUT_NO_PORT || quiet)
+        if (port == INPUT_NO_PORT || quiet || !plays)
         {
             continue;
         }
