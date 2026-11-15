@@ -1,8 +1,9 @@
 #pragma once
 
-// From raw device state (input_devices.h) to what it means: the RetroPad of
-// each port, the interface controls and the hotkeys. No libretro and no SDL:
-// the libretro side reads InputFrame::pad_* and builds what the core sees.
+// The input router, from raw device state (input_devices.h) to what it
+// means: the RetroPad of each port, the interface controls and the hotkeys.
+// No libretro and no SDL: the libretro side reads InputFrame::pad_* and
+// builds what the core sees.
 //
 // A *controller* is one set of bindings on one device. A gamepad is one
 // controller; the keyboard can be split into several (each with its own
@@ -176,6 +177,21 @@ struct InputProfile
     std::vector<InputBindingOverride> overrides;
 };
 
+// A controller's bindings for one core and one emulated device (step 5 of
+// milestone 3): what it does when that core asks for that device on its
+// port. `custom` = changes to its RetroPad bindings (the overrides apply);
+// otherwise the RetroPad bindings are used as they are, and `decided` says
+// the user was asked and chose that (so they aren't asked again).
+struct InputCoreProfile
+{
+    std::string                       core;          // the core's short name
+    uint32_t                          device = 0;    // the emulated device's id (the core's own numbers)
+    std::string                       profile_id;    // the controller's (input_controller_profile_id)
+    bool                              decided = false;
+    bool                              custom = false;
+    std::vector<InputBindingOverride> overrides;     // RetroPad actions only
+};
+
 // Waiting for the next control pressed on one device, to bind it
 // (input_capture_*). While active, input_update reports no actions and no
 // RetroPad: the press belongs to the binding.
@@ -192,6 +208,13 @@ struct InputSystem
     InputDevices                 devices;
     std::vector<InputController> controllers;
     std::vector<InputProfile>    profiles;   // loaded, plus what input_config_write took from the controllers
+    std::vector<InputCoreProfile> core_profiles;
+
+    // What runs now (set by the frontend): the core and the emulated device
+    // on each port. The RetroPad of a port comes from the controller's
+    // InputCoreProfile for them, when it is custom.
+    std::string core_name;
+    uint32_t    port_devices[INPUT_PORT_COUNT] = {1, 1, 1, 1};   // 1 = the libretro joypad
     int32_t                      ports[INPUT_PORT_COUNT] = {INPUT_NO_PORT, INPUT_NO_PORT, INPUT_NO_PORT, INPUT_NO_PORT};
     InputSettings                settings;
     bool                         game_had_input = true;   // settings.game_has_input last frame
@@ -242,6 +265,20 @@ void input_leave(InputSystem* system, uint32_t controller);
 
 // Every port free, nothing remembered for devices that come back (a new game).
 void input_leave_all(InputSystem* system);
+
+// The controller's profile for a core and device, or nullptr. _for makes one.
+const InputCoreProfile* input_core_profile(const InputSystem* system, const char* core, uint32_t device,
+                                           const std::string& profile_id);
+InputCoreProfile*       input_core_profile_for(InputSystem* system, const char* core, uint32_t device,
+                                               const std::string& profile_id);
+
+// The bindings a controller plays with on a port now: its own, with the
+// RetroPad changes of its custom profile for the running core and the
+// port's device.
+void input_effective_bindings(const InputSystem* system, uint32_t controller, uint32_t port, InputBindingSet* out);
+
+// Is this action held on this controller right now (its own bindings)?
+bool input_controller_action_held(const InputSystem* system, uint32_t controller, InputAction action);
 
 // Removes a controller (a keyboard part); ports after it are renumbered.
 void input_remove_controller(InputSystem* system, uint32_t controller);

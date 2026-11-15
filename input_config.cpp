@@ -9,6 +9,31 @@ constexpr int32_t DEFAULT_DEADZONE_PERCENT = 15;
 static const char PREFIX_CONTROLLER[] = "controller/";
 static const char PREFIX_RETROPAD[] = "retropad/";
 static const char PREFIX_UI[] = "ui/";
+static const char PREFIX_CORE[] = "core:";
+
+static void write_core_profiles(const InputSystem* system, SettingsFile* file);
+
+// "snes9x/257/<profile id>" -> core, device, profile id.
+static bool split_core_section(const std::string& rest, std::string* core, uint32_t* device, std::string* profile_id)
+{
+    size_t first = rest.find('/');
+    size_t second = first == std::string::npos ? std::string::npos : rest.find('/', first + 1);
+    if (second == std::string::npos || first == 0 || second == first + 1 || second + 1 >= rest.size())
+    {
+        return false;
+    }
+    std::string number = rest.substr(first + 1, second - first - 1);
+    char* end = nullptr;
+    unsigned long value = std::strtoul(number.c_str(), &end, 10);
+    if (end == number.c_str() || *end != '\0')
+    {
+        return false;
+    }
+    *core = rest.substr(0, first);
+    *device = static_cast<uint32_t>(value);
+    *profile_id = rest.substr(second + 1);
+    return true;
+}
 
 static bool starts_with(const std::string& text, const char* prefix, std::string* rest)
 {
@@ -104,9 +129,43 @@ static void read_bindings(InputProfile* profile, const SettingsFileSection* sect
     }
 }
 
+static void read_core_profile(InputSystem* system, const SettingsFileSection* section, const std::string& rest)
+{
+    std::string core;
+    uint32_t device = 0;
+    std::string profile_id;
+    if (!split_core_section(rest, &core, &device, &profile_id))
+    {
+        std::fprintf(stderr, "input.cfg: [%s]: not core/device/controller, ignored\n", section->name.c_str());
+        return;
+    }
+    InputCoreProfile* profile = input_core_profile_for(system, core.c_str(), device, profile_id);
+    for (size_t e = 0; e < section->entries.size(); e++)
+    {
+        const SettingsFileEntry* entry = &section->entries[e];
+        if (entry->key == "remap")
+        {
+            profile->decided = true;
+            profile->custom = entry->value == "custom";
+            continue;
+        }
+        InputAction action = InputAction::count;
+        InputBindingOverride change = {};
+        if (!input_action_parse(entry->key.c_str(), &action) || !input_action_is_pad(action) ||
+            !parse_sources(entry->value, change.sources))
+        {
+            std::fprintf(stderr, "input.cfg: [%s] %s: not understood, ignored\n", section->name.c_str(), entry->key.c_str());
+            continue;
+        }
+        change.action = action;
+        profile->overrides.push_back(change);
+    }
+}
+
 void input_config_read(InputSystem* system, const SettingsFile* file)
 {
     system->profiles.clear();
+    system->core_profiles.clear();
     for (size_t s = 0; s < file->sections.size(); s++)
     {
         const SettingsFileSection* section = &file->sections[s];
@@ -138,6 +197,10 @@ void input_config_read(InputSystem* system, const SettingsFile* file)
         else if (starts_with(section->name, PREFIX_UI, &id))
         {
             read_bindings(profile_for(system, id), section, false);
+        }
+        else if (starts_with(section->name, PREFIX_CORE, &id))
+        {
+            read_core_profile(system, section, id);
         }
     }
 }
@@ -259,6 +322,26 @@ void input_config_write(InputSystem* system, SettingsFile* file)
         {
             const InputBindingOverride* change = &profile->overrides[o];
             std::string section = (input_action_is_pad(change->action) ? PREFIX_RETROPAD : PREFIX_UI) + profile->id;
+            settings_file_set(file, section.c_str(), input_action_name(change->action), sources_text(change->sources).c_str());
+        }
+    }
+    write_core_profiles(system, file);
+}
+
+static void write_core_profiles(const InputSystem* system, SettingsFile* file)
+{
+    for (size_t p = 0; p < system->core_profiles.size(); p++)
+    {
+        const InputCoreProfile* profile = &system->core_profiles[p];
+        if (!profile->decided && profile->overrides.empty())
+        {
+            continue;
+        }
+        std::string section = PREFIX_CORE + profile->core + "/" + std::to_string(profile->device) + "/" + profile->profile_id;
+        settings_file_set(file, section.c_str(), "remap", profile->custom ? "custom" : "retropad");
+        for (size_t o = 0; o < profile->overrides.size(); o++)
+        {
+            const InputBindingOverride* change = &profile->overrides[o];
             settings_file_set(file, section.c_str(), input_action_name(change->action), sources_text(change->sources).c_str());
         }
     }

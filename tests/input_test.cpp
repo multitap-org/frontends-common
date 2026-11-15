@@ -567,6 +567,60 @@ static void test_capture_and_remove()
     delete system;
 }
 
+static void test_core_profiles()
+{
+    InputSystem* system = new InputSystem{};
+    system->settings.keyboard_shares_port1 = false;
+    uint32_t pad = input_devices_add(&system->devices, InputDeviceKind::gamepad, "pad-guid", "Pad");
+    input_add_controllers_for_device(system, pad);
+    input_join(system, 0);
+    InputFrame out = {};
+
+    // A custom profile for snes9x's device 257 on this pad: B on the top button.
+    InputCoreProfile* profile = input_core_profile_for(system, "snes9x", 257, "pad-guid");
+    profile->decided = true;
+    profile->custom = true;
+    InputBindingOverride change = {};
+    change.action = InputAction::pad_b;
+    change.sources[0] = button(InputButton::north);
+    profile->overrides.push_back(change);
+
+    input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::north), true);
+    frame(system, 0, &out);
+    check((out.pad_buttons[0] & PAD_BIT_B) == 0, "core profile: not used without that core running");
+    system->core_name = "snes9x";
+    system->port_devices[0] = 257;
+    frame(system, 16, &out);
+    check((out.pad_buttons[0] & PAD_BIT_B) != 0, "core profile: used for that core and device");
+    system->port_devices[0] = 1;
+    frame(system, 32, &out);
+    check((out.pad_buttons[0] & PAD_BIT_B) == 0, "core profile: not for another device");
+    system->port_devices[0] = 257;
+    profile->custom = false;
+    frame(system, 48, &out);
+    check((out.pad_buttons[0] & PAD_BIT_B) == 0, "core profile: kept the RetroPad");
+    profile->custom = true;
+
+    // Written and read back.
+    SettingsFile file = {};
+    input_config_write(system, &file);
+    std::string text;
+    settings_file_to_text(&file, nullptr, &text);
+    check(text.find("[core:snes9x/257/pad-guid]") != std::string::npos && text.find("remap = custom") != std::string::npos &&
+              text.find("pad.b = button:north") != std::string::npos,
+          "core profile: written");
+    SettingsFile parsed = {};
+    settings_file_parse(&parsed, text.c_str(), text.size(), "test");
+    InputSystem* back = new InputSystem{};
+    input_config_read(back, &parsed);
+    const InputCoreProfile* read = input_core_profile(back, "snes9x", 257, "pad-guid");
+    check(read != nullptr && read->decided && read->custom && read->overrides.size() == 1 &&
+              read->overrides[0].action == InputAction::pad_b,
+          "core profile: read back");
+    delete system;
+    delete back;
+}
+
 int main()
 {
     test_sources();
@@ -579,6 +633,7 @@ int main()
     test_menus_and_defaults();
     test_config();
     test_capture_and_remove();
+    test_core_profiles();
     if (g_failures == 0)
     {
         std::printf("input: all checks passed\n");

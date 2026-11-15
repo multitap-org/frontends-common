@@ -1,7 +1,9 @@
 #pragma once
 
-// The physical controllers and their raw state, with no libretro and no SDL
-// in it: the keyboard, gamepads, later a phone or a network client. A backend
+// The input router (input_devices, input_bindings, input_config; backends
+// like input_sdl feed it): takes input from any source and routes it to the
+// game's ports, the UI and the hotkeys. This part: the physical controllers
+// and their raw state, with no libretro and no SDL in it: the keyboard, gamepads, later a phone or a network client. A backend
 // (input_sdl for SDL) adds devices and feeds their keys, buttons and axes;
 // input_bindings turns that into actions.
 //

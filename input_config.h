@@ -15,6 +15,10 @@
 //   [ui/<id>]                             interface and hotkey bindings that differ
 //   hotkey.save_state = none
 //
+//   [core:<core>/<device>/<id>]           a controller for one core's emulated device
+//   remap = custom                        (retropad: asked, and the RetroPad was kept)
+//   pad.a = button:east                   RetroPad changes for it (custom)
+//
 // <id> is the profile id: a gamepad's GUID, "keyboard", "keyboard.2"...
 // A binding lists its sources separated by spaces; "none" unbinds. Only what
 // differs from the defaults is written, so improving the defaults reaches

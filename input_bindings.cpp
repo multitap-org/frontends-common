@@ -448,6 +448,84 @@ void input_leave_all(InputSystem* system)
     }
 }
 
+static float action_value(const InputController* controller, const InputDevice* device, InputAction action);
+
+const InputCoreProfile* input_core_profile(const InputSystem* system, const char* core, uint32_t device,
+                                           const std::string& profile_id)
+{
+    for (size_t p = 0; p < system->core_profiles.size(); p++)
+    {
+        const InputCoreProfile* profile = &system->core_profiles[p];
+        if (profile->device == device && profile->core == core && profile->profile_id == profile_id)
+        {
+            return profile;
+        }
+    }
+    return nullptr;
+}
+
+InputCoreProfile* input_core_profile_for(InputSystem* system, const char* core, uint32_t device, const std::string& profile_id)
+{
+    for (size_t p = 0; p < system->core_profiles.size(); p++)
+    {
+        InputCoreProfile* profile = &system->core_profiles[p];
+        if (profile->device == device && profile->core == core && profile->profile_id == profile_id)
+        {
+            return profile;
+        }
+    }
+    InputCoreProfile profile = {};
+    profile.core = core;
+    profile.device = device;
+    profile.profile_id = profile_id;
+    system->core_profiles.push_back(profile);
+    return &system->core_profiles.back();
+}
+
+void input_effective_bindings(const InputSystem* system, uint32_t controller, uint32_t port, InputBindingSet* out)
+{
+    if (controller >= system->controllers.size())
+    {
+        *out = InputBindingSet{};
+        return;
+    }
+    *out = system->controllers[controller].bindings;
+    if (system->core_name.empty() || port >= INPUT_PORT_COUNT)
+    {
+        return;
+    }
+    const InputCoreProfile* profile = input_core_profile(system, system->core_name.c_str(), system->port_devices[port],
+                                                         input_controller_profile_id(system, controller));
+    if (profile == nullptr || !profile->custom)
+    {
+        return;
+    }
+    for (size_t o = 0; o < profile->overrides.size(); o++)
+    {
+        const InputBindingOverride* change = &profile->overrides[o];
+        if (!input_action_is_pad(change->action))
+        {
+            continue;
+        }
+        input_unbind_all(out, change->action);
+        for (uint32_t s = 0; s < INPUT_SOURCES_PER_ACTION; s++)
+        {
+            input_bind(out, change->action, change->sources[s]);
+        }
+    }
+}
+
+bool input_controller_action_held(const InputSystem* system, uint32_t controller, InputAction action)
+{
+    if (controller >= system->controllers.size())
+    {
+        return false;
+    }
+    const InputDevice* device = input_devices_find_const(&system->devices, system->controllers[controller].device_id);
+    return device != nullptr && device->connected &&
+           action_value(&system->controllers[controller], device, action) >= PRESSED_THRESHOLD;
+}
+
 void input_remove_controller(InputSystem* system, uint32_t controller)
 {
     if (controller >= system->controllers.size())
@@ -543,6 +621,18 @@ void input_swap_ports(InputSystem* system, uint32_t a, uint32_t b)
 // One frame
 // ---------------------------------------------------------------------------
 
+static float set_value(const InputBindingSet* set, const InputDevice* device, InputAction action)
+{
+    float value = 0.0f;
+    const InputSource* slots = set->sources[index_of(action)];
+    for (uint32_t s = 0; s < INPUT_SOURCES_PER_ACTION; s++)
+    {
+        float v = input_source_value(device, slots[s]);
+        value = v > value ? v : value;
+    }
+    return value;
+}
+
 static float action_value(const InputController* controller, const InputDevice* device, InputAction action)
 {
     float value = 0.0f;
@@ -593,13 +683,12 @@ static int16_t to_axis(float value)
 
 // One stick of a port: plus minus minus per axis, then a round deadzone
 // (the rest rescaled so movement starts at 0 past it).
-static void stick(const InputController* controller, const InputDevice* device, InputAction x_plus, int16_t* out)
+static void stick(const InputController* controller, const InputBindingSet* set, const InputDevice* device,
+                  InputAction x_plus, int16_t* out)
 {
     uint32_t base = index_of(x_plus);
-    float x = action_value(controller, device, static_cast<InputAction>(base)) -
-              action_value(controller, device, static_cast<InputAction>(base + 1));
-    float y = action_value(controller, device, static_cast<InputAction>(base + 2)) -
-              action_value(controller, device, static_cast<InputAction>(base + 3));
+    float x = set_value(set, device, static_cast<InputAction>(base)) - set_value(set, device, static_cast<InputAction>(base + 1));
+    float y = set_value(set, device, static_cast<InputAction>(base + 2)) - set_value(set, device, static_cast<InputAction>(base + 3));
     float length = std::sqrt(x * x + y * y);
     float deadzone = controller->deadzone;
     if (length <= deadzone || length <= 0.0f)
@@ -786,16 +875,20 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             continue;
         }
         port = play_port;
+        // The port's RetroPad: the controller's bindings for the running core
+        // and the port's device (its own, unless a custom core profile).
+        InputBindingSet effective = {};
+        input_effective_bindings(system, index, static_cast<uint32_t>(port), &effective);
         uint16_t buttons = 0;
         for (uint32_t b = 0; b < INPUT_PAD_BUTTON_COUNT; b++)
         {
-            if (held[b])
+            if (set_value(&effective, device, static_cast<InputAction>(b)) >= PRESSED_THRESHOLD)
             {
                 buttons = static_cast<uint16_t>(buttons | (1u << b));
             }
         }
         frame->pad_buttons[port] = static_cast<uint16_t>(frame->pad_buttons[port] | buttons);
-        stick(controller, device, InputAction::pad_left_x_plus, frame->analog[port][0]);
-        stick(controller, device, InputAction::pad_right_x_plus, frame->analog[port][1]);
+        stick(controller, &effective, device, InputAction::pad_left_x_plus, frame->analog[port][0]);
+        stick(controller, &effective, device, InputAction::pad_right_x_plus, frame->analog[port][1]);
     }
 }

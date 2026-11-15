@@ -1,6 +1,6 @@
 #pragma once
 
-// The SDL side of the neutral input layer: the keyboard (all keyboards as
+// The SDL side of the input router: the keyboard (all keyboards as
 // one device, with one controller using the default keys) and every gamepad
 // SDL sees (each with a controller using the default layout, by position),
 // fed into an InputSystem from SDL events.
