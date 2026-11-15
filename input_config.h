@@ -1,15 +1,13 @@
 #pragma once
 
-// settings/input.cfg: the input settings and the controller profiles
-// (input_bindings.h), in the settings_file INI dialect:
-//
-//   [input]
-//   gamepad_takes_keyboard_port = true
-//   hotkey_mode = hold                    (or double_tap)
+// settings/input.cfg: the controller profiles (input_bindings.h), in the
+// settings_file INI dialect. (The input settings, InputSettings, are the
+// frontend's own settings, with their per core / game layers.)
 //
 //   [controller/<id>]                     name and deadzone (percent)
 //   name = SNES30
 //   deadzone = 15
+//   ignore = yes                          (or no; missing = automatic)
 //
 //   [retropad/<id>]                       RetroPad bindings that differ from the defaults
 //   pad.y = button:west key:A
@@ -26,11 +24,11 @@
 #include "input_bindings.h"
 #include "settings_file.h"
 
-// Reads the settings and the profiles (replacing them). Call before the
+// Reads the profiles (replacing them). Call before the
 // devices are added, so their controllers come from the profiles.
 void input_config_read(InputSystem* system, const SettingsFile* file);
 
-// Takes the controllers into the profiles, then writes settings and profiles.
+// Takes the controllers into the profiles, then writes them.
 void input_config_write(InputSystem* system, SettingsFile* file);
 
 // With a file on disk (a missing file reads as empty).

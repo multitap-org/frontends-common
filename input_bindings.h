@@ -9,14 +9,17 @@
 // keys and its own START), for any number of players.
 //
 // Rules (decided for milestone 3, docs/plan-milestones.md):
-//   - A controller plays only after it joins a port: START (its pad_start
-//     binding) while it has none, into the first free port. The frontend can
-//     also join one directly (the device that started the game).
-//   - With gamepad_takes_keyboard_port, a gamepad that joins while a
-//     keyboard controller holds port 1 takes port 1 (the keyboard leaves).
-//   - A disconnected device frees its port; when it comes back it gets that
-//     port again if it is still free.
-//   - The press that joins is not passed to the game.
+//   - A controller does nothing until it joins a port: START (its pad_start
+//     binding) while it has none, into the first free port, in the UI or in
+//     a game. The press that joins is not passed on.
+//   - With keyboard_shares_port1 (the default) the keyboard's first player
+//     plays on port 1 without joining, together with whatever controller
+//     joined port 1. Without it, it joins with START like the others. The
+//     keyboard's interface and hotkey keys always work.
+//   - Only the controller on port 1 drives the UI (interface actions); the
+//     keyboard always does.
+//   - A disconnected device frees its port (reported in the frame); when it
+//     comes back it gets that port again if it is still free.
 //   - Hotkeys on a gamepad need HOTKEY ENABLE (hotkey_enable): HOLD = they
 //     work while it is held; DOUBLE TAP = the next one hotkey works, then the
 //     normal layout is back (or after a few seconds). While enabled the
@@ -125,7 +128,7 @@ enum class InputHotkeyMode
 
 struct InputSettings
 {
-    bool            gamepad_takes_keyboard_port = true;
+    bool            keyboard_shares_port1 = true;
     InputHotkeyMode hotkey_mode = InputHotkeyMode::hold;
     bool            core_takes_keyboard = false;   // the core reads the keyboard as a keyboard
     // False while the frontend's own UI is up (a menu or a dialog): no
@@ -169,7 +172,19 @@ struct InputProfile
     std::string                       id;
     std::string                       name;               // "" = the device's own name
     int32_t                           deadzone_percent = -1;   // -1 = default
+    InputIgnore                       ignore = InputIgnore::automatic;   // gamepads
     std::vector<InputBindingOverride> overrides;
+};
+
+// Waiting for the next control pressed on one device, to bind it
+// (input_capture_*). While active, input_update reports no actions and no
+// RetroPad: the press belongs to the binding.
+struct InputCapture
+{
+    bool     active = false;
+    uint32_t device_id = 0;
+    uint8_t  held_at_start[INPUT_KEY_COUNT] = {};
+    float    axes_at_start[INPUT_AXIS_COUNT] = {};
 };
 
 struct InputSystem
@@ -180,6 +195,7 @@ struct InputSystem
     int32_t                      ports[INPUT_PORT_COUNT] = {INPUT_NO_PORT, INPUT_NO_PORT, INPUT_NO_PORT, INPUT_NO_PORT};
     InputSettings                settings;
     bool                         game_had_input = true;   // settings.game_has_input last frame
+    InputCapture                 capture;
 };
 
 struct InputFrame
@@ -188,9 +204,11 @@ struct InputFrame
     int16_t  analog[INPUT_PORT_COUNT][2][2] = {};   // [port][left/right][x/y], -0x7fff..0x7fff
     bool     held[INPUT_ACTION_COUNT] = {};         // interface and hotkeys, any controller (hotkeys when allowed)
     bool     pressed[INPUT_ACTION_COUNT] = {};      // went down this frame
-    bool     gamepad_held[INPUT_ACTION_COUNT] = {}; // interface actions held on gamepads (not the keyboard): to drive a UI
+    bool     gamepad_held[INPUT_ACTION_COUNT] = {}; // interface actions held on port 1's gamepad: to drive a UI
     int32_t  joined_port = INPUT_NO_PORT;           // a controller joined this frame (for a message)
     int32_t  joined_controller = -1;
+    int32_t  left_port = INPUT_NO_PORT;             // a controller's device went away and freed this port
+    int32_t  left_controller = -1;
 };
 
 // The defaults for a device's kind (keyboard or gamepad).
@@ -213,13 +231,27 @@ int32_t input_first_controller(const InputSystem* system, uint32_t device_id);
 // The controller's port, or INPUT_NO_PORT.
 int32_t input_controller_port(const InputSystem* system, uint32_t controller);
 
+// Is this controller the keyboard's first player while it shares port 1?
+bool input_controller_shares_port1(const InputSystem* system, uint32_t controller);
+
 // Joins a controller now (as START would), preferring port 1. False if no
 // port could be had.
+
 bool input_join(InputSystem* system, uint32_t controller);
 void input_leave(InputSystem* system, uint32_t controller);
 
 // Every port free, nothing remembered for devices that come back (a new game).
 void input_leave_all(InputSystem* system);
+
+// Removes a controller (a keyboard part); ports after it are renumbered.
+void input_remove_controller(InputSystem* system, uint32_t controller);
+
+// Binding by pressing: start waiting on a device, then poll each frame until
+// it gives a source (a key or button that wasn't held when it started, or
+// an axis pushed past half from where it was). Cancel to give up.
+void input_capture_begin(InputSystem* system, uint32_t device_id);
+bool input_capture_poll(InputSystem* system, InputSource* source);
+void input_capture_cancel(InputSystem* system);
 
 // Swaps two ports' controllers (reordering from the quick menu).
 void input_swap_ports(InputSystem* system, uint32_t a, uint32_t b);

@@ -63,6 +63,13 @@ enum class InputAxis
     count,
 };
 
+enum class InputIgnore
+{
+    automatic,
+    yes,
+    no,
+};
+
 constexpr uint32_t INPUT_BUTTON_COUNT = static_cast<uint32_t>(InputButton::count);
 constexpr uint32_t INPUT_AXIS_COUNT = static_cast<uint32_t>(InputAxis::count);
 
@@ -81,6 +88,9 @@ struct InputDevice
     // a device that isn't really a gamepad (a keyboard's thumbstick receiver).
     bool    axes_moved = false;
     bool    axes_pinned_at_start = false;
+
+    // The user's word on it: auto = ignored only if it looks fake.
+    InputIgnore ignore = InputIgnore::automatic;
 };
 
 struct InputDevices
@@ -109,6 +119,9 @@ void input_devices_end_frame(InputDevices* devices);
 
 // A device whose axes sat at an extreme from the start and never moved.
 bool input_devices_looks_fake(const InputDevice* device);
+
+// Not used for input: the user said so, or (automatic) it looks fake.
+bool input_devices_ignored(const InputDevice* device);
 
 // ---------------------------------------------------------------------------
 // Sources: one physical control, and its text form for settings files

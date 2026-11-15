@@ -138,6 +138,15 @@ bool input_devices_looks_fake(const InputDevice* device)
     return device->kind == InputDeviceKind::gamepad && device->axes_pinned_at_start && !device->axes_moved;
 }
 
+bool input_devices_ignored(const InputDevice* device)
+{
+    if (device->ignore != InputIgnore::automatic)
+    {
+        return device->ignore == InputIgnore::yes;
+    }
+    return input_devices_looks_fake(device);
+}
+
 // ---------------------------------------------------------------------------
 // Sources
 // ---------------------------------------------------------------------------

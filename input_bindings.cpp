@@ -295,7 +295,13 @@ void input_add_controllers_for_device(InputSystem* system, uint32_t device_id)
     }
     if (device->kind == InputDeviceKind::gamepad)
     {
-        add_from_profile(system, device, find_profile(system, device->guid));
+        const InputProfile* profile = find_profile(system, device->guid);
+        InputDevice* writable = input_devices_find(&system->devices, device_id);
+        if (profile != nullptr && writable != nullptr)
+        {
+            writable->ignore = profile->ignore;
+        }
+        add_from_profile(system, device, profile);
         return;
     }
     // The keyboard: "keyboard", then "keyboard.2", "keyboard.3"... while they exist.
@@ -386,12 +392,6 @@ static int32_t join_port(InputSystem* system, uint32_t controller, int32_t prefe
         return input_controller_port(system, controller);
     }
     int32_t index = static_cast<int32_t>(controller);
-    bool gamepad = !is_keyboard(system, index);
-    if (gamepad && system->settings.gamepad_takes_keyboard_port && is_keyboard(system, system->ports[0]))
-    {
-        system->ports[0] = index;   // the keyboard leaves port 1
-        return 0;
-    }
     if (preferred >= 0 && preferred < static_cast<int32_t>(INPUT_PORT_COUNT) && system->ports[preferred] == INPUT_NO_PORT)
     {
         system->ports[preferred] = index;
@@ -406,6 +406,16 @@ static int32_t join_port(InputSystem* system, uint32_t controller, int32_t prefe
         }
     }
     return INPUT_NO_PORT;
+}
+
+bool input_controller_shares_port1(const InputSystem* system, uint32_t controller)
+{
+    if (!system->settings.keyboard_shares_port1 || controller >= system->controllers.size())
+    {
+        return false;
+    }
+    return is_keyboard(system, static_cast<int32_t>(controller)) &&
+           input_first_controller(system, system->controllers[controller].device_id) == static_cast<int32_t>(controller);
 }
 
 bool input_join(InputSystem* system, uint32_t controller)
@@ -436,6 +446,87 @@ void input_leave_all(InputSystem* system)
     {
         system->controllers[c].last_port = INPUT_NO_PORT;
     }
+}
+
+void input_remove_controller(InputSystem* system, uint32_t controller)
+{
+    if (controller >= system->controllers.size())
+    {
+        return;
+    }
+    input_leave(system, controller);
+    system->controllers.erase(system->controllers.begin() + static_cast<long>(controller));
+    int32_t removed = static_cast<int32_t>(controller);
+    for (uint32_t p = 0; p < INPUT_PORT_COUNT; p++)
+    {
+        if (system->ports[p] > removed)
+        {
+            system->ports[p]--;
+        }
+    }
+}
+
+void input_capture_begin(InputSystem* system, uint32_t device_id)
+{
+    InputCapture* capture = &system->capture;
+    *capture = InputCapture{};
+    const InputDevice* device = input_devices_find_const(&system->devices, device_id);
+    if (device == nullptr)
+    {
+        return;
+    }
+    capture->active = true;
+    capture->device_id = device_id;
+    for (uint32_t code = 0; code < INPUT_KEY_COUNT; code++)
+    {
+        capture->held_at_start[code] = device->held[code];
+    }
+    for (uint32_t a = 0; a < INPUT_AXIS_COUNT; a++)
+    {
+        capture->axes_at_start[a] = device->axes[a];
+    }
+}
+
+bool input_capture_poll(InputSystem* system, InputSource* source)
+{
+    InputCapture* capture = &system->capture;
+    const InputDevice* device = input_devices_find_const(&system->devices, capture->device_id);
+    if (!capture->active || device == nullptr || !device->connected)
+    {
+        return false;
+    }
+    for (uint32_t code = 0; code < INPUT_KEY_COUNT; code++)
+    {
+        if (device->held[code] == 0 && device->tapped[code] == 0)
+        {
+            capture->held_at_start[code] = 0;   // let go: a new press of it counts
+            continue;
+        }
+        if (capture->held_at_start[code] == 0)
+        {
+            source->type = device->kind == InputDeviceKind::keyboard ? InputSourceType::key : InputSourceType::button;
+            source->code = static_cast<uint16_t>(code);
+            capture->active = false;
+            return true;
+        }
+    }
+    for (uint32_t a = 0; a < INPUT_AXIS_COUNT; a++)
+    {
+        float moved = device->axes[a] - capture->axes_at_start[a];
+        if (moved > 0.5f || moved < -0.5f)
+        {
+            source->type = moved > 0.0f ? InputSourceType::axis_plus : InputSourceType::axis_minus;
+            source->code = static_cast<uint16_t>(a);
+            capture->active = false;
+            return true;
+        }
+    }
+    return false;
+}
+
+void input_capture_cancel(InputSystem* system)
+{
+    system->capture.active = false;
 }
 
 void input_swap_ports(InputSystem* system, uint32_t a, uint32_t b)
@@ -540,6 +631,8 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         {
             controller->last_port = port;
             system->ports[port] = INPUT_NO_PORT;
+            frame->left_port = port;
+            frame->left_controller = static_cast<int32_t>(c);
         }
         else if (connected && port == INPUT_NO_PORT && controller->last_port != INPUT_NO_PORT)
         {
@@ -555,7 +648,7 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
     {
         InputController* controller = &system->controllers[c];
         const InputDevice* device = input_devices_find_const(&system->devices, controller->device_id);
-        if (device == nullptr || !device->connected || input_devices_looks_fake(device))
+        if (device == nullptr || !device->connected || input_devices_ignored(device))
         {
             continue;
         }
@@ -570,8 +663,20 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             controller->held_last[a] = held[a];
         }
 
-        // Joining.
+        // While binding by pressing, the press is the binding's alone.
+        if (system->capture.active)
+        {
+            continue;
+        }
+
+        // Joining (any time: in the UI or in a game).
         bool plays = system->settings.game_has_input;
+        bool keyboard = device->kind == InputDeviceKind::keyboard;
+        bool shared = input_controller_shares_port1(system, index);
+        if (shared && input_controller_port(system, index) != INPUT_NO_PORT)
+        {
+            input_leave(system, index);   // it plays on port 1 anyway
+        }
         bool any_pad_held = false;
         for (uint32_t a = 0; a <= index_of(InputAction::pad_right_y_minus); a++)
         {
@@ -586,7 +691,7 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             controller->quiet_until_released = false;
         }
         int32_t port = input_controller_port(system, index);
-        if (plays && port == INPUT_NO_PORT && pressed[index_of(InputAction::pad_start)])
+        if (!shared && port == INPUT_NO_PORT && pressed[index_of(InputAction::pad_start)])
         {
             port = join_port(system, index, INPUT_NO_PORT);
             if (port != INPUT_NO_PORT)
@@ -600,6 +705,12 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         {
             controller->quiet_until_start_released = false;
         }
+        bool joined = shared || port != INPUT_NO_PORT;
+        if (!joined && !keyboard)
+        {
+            continue;   // a gamepad does nothing until it joins
+        }
+        int32_t play_port = shared ? 0 : port;
 
         // HOTKEY ENABLE.
         uint32_t enable = index_of(InputAction::hotkey_enable);
@@ -637,7 +748,9 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             quiet = quiet || controller->armed;
         }
 
-        // Interface and hotkeys, from every controller.
+        // Interface: the keyboard and port 1's controller. Hotkeys: the
+        // keyboard and every controller that joined.
+        bool drives_ui = keyboard || port == 0;
         bool fired = false;
         for (uint32_t a = index_of(InputAction::ui_up); a < INPUT_ACTION_COUNT; a++)
         {
@@ -650,9 +763,9 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             {
                 continue;
             }
-            if (!input_action_is_hotkey(action) && enabled)
+            if (!input_action_is_hotkey(action) && (enabled || !drives_ui))
             {
-                continue;   // the hotkey layer is on: its buttons aren't interface controls now
+                continue;   // the hotkey layer is on, or this controller doesn't drive the UI
             }
             frame->held[a] = frame->held[a] || held[a];
             frame->pressed[a] = frame->pressed[a] || pressed[a];
@@ -668,10 +781,11 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         }
 
         // The RetroPad of its port.
-        if (port == INPUT_NO_PORT || quiet || !plays)
+        if (!joined || quiet || !plays)
         {
             continue;
         }
+        port = play_port;
         uint16_t buttons = 0;
         for (uint32_t b = 0; b < INPUT_PAD_BUTTON_COUNT; b++)
         {

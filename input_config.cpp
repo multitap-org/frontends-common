@@ -6,7 +6,6 @@
 
 constexpr int32_t DEFAULT_DEADZONE_PERCENT = 15;
 
-static const char SECTION_INPUT[] = "input";
 static const char PREFIX_CONTROLLER[] = "controller/";
 static const char PREFIX_RETROPAD[] = "retropad/";
 static const char PREFIX_UI[] = "ui/";
@@ -108,17 +107,6 @@ static void read_bindings(InputProfile* profile, const SettingsFileSection* sect
 void input_config_read(InputSystem* system, const SettingsFile* file)
 {
     system->profiles.clear();
-    const char* takes = settings_file_get(file, SECTION_INPUT, "gamepad_takes_keyboard_port");
-    if (takes != nullptr)
-    {
-        system->settings.gamepad_takes_keyboard_port = std::strcmp(takes, "false") != 0;
-    }
-    const char* mode = settings_file_get(file, SECTION_INPUT, "hotkey_mode");
-    if (mode != nullptr)
-    {
-        system->settings.hotkey_mode =
-            std::strcmp(mode, "double_tap") == 0 ? InputHotkeyMode::double_tap : InputHotkeyMode::hold;
-    }
     for (size_t s = 0; s < file->sections.size(); s++)
     {
         const SettingsFileSection* section = &file->sections[s];
@@ -128,6 +116,12 @@ void input_config_read(InputSystem* system, const SettingsFile* file)
             InputProfile* profile = profile_for(system, id);
             const char* name = settings_file_get(file, section->name.c_str(), "name");
             profile->name = name != nullptr ? name : "";
+            const char* ignore = settings_file_get(file, section->name.c_str(), "ignore");
+            if (ignore != nullptr)
+            {
+                profile->ignore = std::strcmp(ignore, "yes") == 0 ? InputIgnore::yes
+                                  : std::strcmp(ignore, "no") == 0 ? InputIgnore::no : InputIgnore::automatic;
+            }
             const char* deadzone = settings_file_get(file, section->name.c_str(), "deadzone");
             if (deadzone != nullptr)
             {
@@ -174,9 +168,24 @@ static bool same_sources(const InputSource* a, const InputSource* b)
     return count_a == count_b;
 }
 
-// The controllers as profiles (replacing those with the same id).
+// The controllers as profiles (replacing those with the same id). The
+// keyboard's profiles are all made again: parts may have been removed.
 static void take_controllers(InputSystem* system)
 {
+    bool keyboard_here = false;
+    for (size_t c = 0; c < system->controllers.size(); c++)
+    {
+        const InputDevice* device = input_devices_find_const(&system->devices, system->controllers[c].device_id);
+        keyboard_here = keyboard_here || (device != nullptr && device->kind == InputDeviceKind::keyboard);
+    }
+    for (size_t p = system->profiles.size(); keyboard_here && p > 0; p--)
+    {
+        const std::string& id = system->profiles[p - 1].id;
+        if (id == "keyboard" || id.compare(0, 9, "keyboard.") == 0)
+        {
+            system->profiles.erase(system->profiles.begin() + static_cast<long>(p - 1));
+        }
+    }
     for (size_t c = 0; c < system->controllers.size(); c++)
     {
         const InputController* controller = &system->controllers[c];
@@ -187,6 +196,7 @@ static void take_controllers(InputSystem* system)
         }
         InputProfile* profile = profile_for(system, input_controller_profile_id(system, static_cast<uint32_t>(c)));
         profile->name = controller->name == device->name ? "" : controller->name;
+        profile->ignore = device->ignore;
         int32_t percent = static_cast<int32_t>(controller->deadzone * 100.0f + 0.5f);
         profile->deadzone_percent = percent == DEFAULT_DEADZONE_PERCENT ? -1 : percent;
         profile->overrides.clear();
@@ -229,10 +239,6 @@ void input_config_write(InputSystem* system, SettingsFile* file)
 {
     take_controllers(system);
     *file = SettingsFile{};
-    settings_file_set(file, SECTION_INPUT, "gamepad_takes_keyboard_port",
-                      system->settings.gamepad_takes_keyboard_port ? "true" : "false");
-    settings_file_set(file, SECTION_INPUT, "hotkey_mode",
-                      system->settings.hotkey_mode == InputHotkeyMode::double_tap ? "double_tap" : "hold");
     for (size_t p = 0; p < system->profiles.size(); p++)
     {
         const InputProfile* profile = &system->profiles[p];
@@ -240,6 +246,10 @@ void input_config_write(InputSystem* system, SettingsFile* file)
         if (!profile->name.empty())
         {
             settings_file_set(file, controller.c_str(), "name", profile->name.c_str());
+        }
+        if (profile->ignore != InputIgnore::automatic)
+        {
+            settings_file_set(file, controller.c_str(), "ignore", profile->ignore == InputIgnore::yes ? "yes" : "no");
         }
         if (profile->deadzone_percent >= 0)
         {

@@ -52,7 +52,9 @@ static void add_gamepad(InputSdl* sdl, InputSystem* system, SDL_JoystickID id)
     sdl->gamepads.push_back(entry);
     const InputDevice* device = input_devices_find_const(&system->devices, entry.device);
     SDL_Log("Gamepad: %s (%s)%s", name, guid,
-            device != nullptr && input_devices_looks_fake(device) ? ", ignored: its axes are pinned (not a real gamepad)" : "");
+            device == nullptr || !input_devices_ignored(device) ? ""
+            : device->ignore == InputIgnore::yes ? ", ignored (CONFIG > INPUT)"
+                                                  : ", ignored: its axes are pinned (not a real gamepad)");
 }
 
 // A joystick SDL has no gamepad mapping for can't be used until it is mapped.
@@ -166,6 +168,7 @@ void input_sdl_handle_event(InputSdl* sdl, InputSystem* system, const SDL_Event*
         if (down)
         {
             sdl->last_active_device = gamepad->device;
+            sdl->last_active_gamepad = gamepad->device;
         }
         break;
     }
@@ -183,6 +186,18 @@ void input_sdl_handle_event(InputSdl* sdl, InputSystem* system, const SDL_Event*
     default:
         break;
     }
+}
+
+SDL_Gamepad* input_sdl_gamepad(const InputSdl* sdl, uint32_t device_id)
+{
+    for (size_t i = 0; i < sdl->gamepads.size(); i++)
+    {
+        if (sdl->gamepads[i].device == device_id)
+        {
+            return sdl->gamepads[i].gamepad;
+        }
+    }
+    return nullptr;
 }
 
 void input_sdl_rumble(InputSdl* sdl, const InputSystem* system, const uint16_t rumble[][2], uint32_t port_count)
