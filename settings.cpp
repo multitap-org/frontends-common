@@ -57,6 +57,39 @@ static int32_t enum_index(const SettingDescriptor* descriptor, const char* value
     return -1;
 }
 
+bool settings_color_from_text(const char* value, uint32_t* argb)
+{
+    if (value[0] != '#' || std::strlen(value) != 7)
+    {
+        return false;
+    }
+    uint32_t rgb = 0;
+    for (int i = 1; i < 7; i++)
+    {
+        char c = value[i];
+        uint32_t digit = 0;
+        if (c >= '0' && c <= '9')
+        {
+            digit = static_cast<uint32_t>(c - '0');
+        }
+        else if (c >= 'a' && c <= 'f')
+        {
+            digit = static_cast<uint32_t>(c - 'a' + 10);
+        }
+        else if (c >= 'A' && c <= 'F')
+        {
+            digit = static_cast<uint32_t>(c - 'A' + 10);
+        }
+        else
+        {
+            return false;
+        }
+        rgb = rgb * 16 + digit;
+    }
+    *argb = 0xFF000000u | rgb;
+    return true;
+}
+
 bool settings_value_is_valid(const SettingDescriptor* descriptor, const char* value)
 {
     switch (descriptor->type)
@@ -83,6 +116,11 @@ bool settings_value_is_valid(const SettingDescriptor* descriptor, const char* va
         size_t length = std::strlen(value);
         bool outer_blanks = length > 0 && (is_blank(value[0]) || is_blank(value[length - 1]));
         return !has_line_break(value) && !outer_blanks;
+    }
+    case SettingType::color:
+    {
+        uint32_t argb = 0;
+        return settings_color_from_text(value, &argb);
     }
     }
     return false;
@@ -414,6 +452,18 @@ const char* settings_get_text(const Settings* settings, const char* key)
     return value != nullptr ? value : "";
 }
 
+uint32_t settings_get_color(const Settings* settings, const char* key)
+{
+    const SettingDescriptor* descriptor = nullptr;
+    const char* value = get_typed(settings, key, SettingType::color, SettingType::color, &descriptor);
+    uint32_t argb = 0xFF000000u;
+    if (value != nullptr)
+    {
+        settings_color_from_text(value, &argb);
+    }
+    return argb;
+}
+
 bool settings_layer_has_values(const Settings* settings, SettingLayer layer)
 {
     const char* section = layer_section(settings, layer);
@@ -520,6 +570,13 @@ bool settings_set_enum(Settings* settings, SettingLayer layer, const char* key, 
         return false;
     }
     return settings_set(settings, layer, key, descriptor->values[index].key);
+}
+
+bool settings_set_color(Settings* settings, SettingLayer layer, const char* key, uint32_t argb)
+{
+    char text[8] = {};
+    std::snprintf(text, sizeof(text), "#%06X", static_cast<unsigned>(argb & 0xFFFFFFu));
+    return settings_set(settings, layer, key, text);
 }
 
 bool settings_reset(Settings* settings, SettingLayer layer, const char* key)

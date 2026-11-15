@@ -69,6 +69,7 @@ static const SettingDescriptor DESCRIPTORS[] = {
      .min_real = 0.0, .max_real = 50.0, .step_real = 0.5},
     {.key = "pause_on_focus_loss", .type = SettingType::boolean, .default_value = "true", .overridable = false,},
     {.key = "path_saves", .type = SettingType::path, .default_value = "", .overridable = false},
+    {.key = "ui_color_bar", .type = SettingType::color, .default_value = "#34507C", .overridable = false},
 };
 static const uint32_t DESCRIPTOR_COUNT = sizeof(DESCRIPTORS) / sizeof(DESCRIPTORS[0]);
 
@@ -110,6 +111,23 @@ static void test_validation()
     check(settings_value_is_valid(saves, "/home/user/Partidas guardadas/ñ"), "UTF-8 path accepted");
     check(!settings_value_is_valid(saves, "a\nb") && !settings_value_is_valid(saves, " /x"),
           "path with a line break / outer blanks refused");
+}
+
+static void test_colors()
+{
+    const SettingDescriptor* color = &DESCRIPTORS[5];
+    check(settings_value_is_valid(color, "#34507c") && settings_value_is_valid(color, "#FFFFFF"),
+          "colors in either case accepted");
+    check(!settings_value_is_valid(color, "34507C") && !settings_value_is_valid(color, "#34507") &&
+              !settings_value_is_valid(color, "#34507G") && !settings_value_is_valid(color, "#34507C00"),
+          "anything but #RRGGBB refused");
+
+    Settings settings = {};
+    settings_init(&settings, DESCRIPTORS, DESCRIPTOR_COUNT);
+    check(settings_get_color(&settings, "ui_color_bar") == 0xFF34507Cu, "the default as 0xFFRRGGBB");
+    check(settings_set_color(&settings, SettingLayer::global, "ui_color_bar", 0x80ABCDEFu), "a color is set");
+    check(std::strcmp(settings_get(&settings, "ui_color_bar", nullptr), "#ABCDEF") == 0, "written as #RRGGBB, alpha dropped");
+    check(settings_get_color(&settings, "ui_color_bar") == 0xFFABCDEFu, "and read back opaque");
 }
 
 static void test_layers()
@@ -320,6 +338,7 @@ int main(int argc, char** argv)
 
     test_table_checks();
     test_validation();
+    test_colors();
     test_layers();
     test_get_at_and_typed_setters();
     test_layer_has_values();

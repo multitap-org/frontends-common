@@ -33,6 +33,7 @@ enum class SettingType
     enumeration,   // one of `values` (by key)
     path,          // any text (UTF-8 path)
     text,          // any text
+    color,         // "#RRGGBB" (hex digits, either case)
 };
 
 // Where a value comes from, and which layer an edit goes to.
@@ -117,6 +118,11 @@ int32_t settings_get_int(const Settings* settings, const char* key);
 double settings_get_real(const Settings* settings, const char* key);
 uint32_t settings_get_enum(const Settings* settings, const char* key);   // index into `values`
 const char* settings_get_text(const Settings* settings, const char* key); // path or text
+uint32_t settings_get_color(const Settings* settings, const char* key);   // 0xFFRRGGBB
+
+// "#RRGGBB" -> 0xFFRRGGBB (e.g. for a value from settings_get_at). False if
+// the text isn't exactly that.
+bool settings_color_from_text(const char* text, uint32_t* argb);
 
 // The value as it resolves at `layer`, ignoring the layers above it: at
 // global, the global value or the default; at core, core -> global ->
@@ -142,6 +148,7 @@ bool settings_set_bool(Settings* settings, SettingLayer layer, const char* key, 
 bool settings_set_int(Settings* settings, SettingLayer layer, const char* key, int32_t value);
 bool settings_set_real(Settings* settings, SettingLayer layer, const char* key, double value);
 bool settings_set_enum(Settings* settings, SettingLayer layer, const char* key, uint32_t index);
+bool settings_set_color(Settings* settings, SettingLayer layer, const char* key, uint32_t argb);   // alpha ignored
 
 // Removes `key` from one layer, so the layer below applies again ("reset to
 // global" in a core/game layer, "reset to default" in the global one).
