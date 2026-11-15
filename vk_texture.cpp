@@ -28,12 +28,36 @@ static bool allocate_memory(const VulkanContext* context, VkMemoryRequirements r
     return vk_succeeded(vkAllocateMemory(context->device, &allocate_info, nullptr, memory), what);
 }
 
-static bool create_image(StreamingTexture* texture, const VulkanContext* context)
+static uint32_t format_bytes_per_pixel(VkFormat format)
+{
+    switch (format)
+    {
+        case VK_FORMAT_B8G8R8A8_UNORM:         return 4;
+        case VK_FORMAT_R5G6B5_UNORM_PACK16:    return 2;
+        case VK_FORMAT_A1R5G5B5_UNORM_PACK16:  return 2;
+        default:                               return 0;
+    }
+}
+
+bool streaming_texture_format_supported(const VulkanContext* context, VkFormat format)
+{
+    if (format_bytes_per_pixel(format) == 0)
+    {
+        return false;
+    }
+    VkFormatProperties properties = {};
+    vkGetPhysicalDeviceFormatProperties(context->physical_device, format, &properties);
+    VkFormatFeatureFlags needed = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
+                                  VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    return (properties.optimalTilingFeatures & needed) == needed;
+}
+
+static bool create_image(StreamingTexture* texture, const VulkanContext* context, bool opaque)
 {
     VkImageCreateInfo image_info = {
         .sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType     = VK_IMAGE_TYPE_2D,
-        .format        = STREAMING_TEXTURE_FORMAT,
+        .format        = texture->format,
         .extent        = { texture->capacity_width, texture->capacity_height, 1 },
         .mipLevels     = 1,
         .arrayLayers   = 1,
@@ -65,7 +89,9 @@ static bool create_image(StreamingTexture* texture, const VulkanContext* context
         .sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .image    = texture->image,
         .viewType = VK_IMAGE_VIEW_TYPE_2D,
-        .format   = STREAMING_TEXTURE_FORMAT,
+        .format   = texture->format,
+        .components = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+                        opaque ? VK_COMPONENT_SWIZZLE_ONE : VK_COMPONENT_SWIZZLE_IDENTITY },
         .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
     };
     return vk_succeeded(vkCreateImageView(context->device, &view_info, nullptr, &texture->view),
@@ -76,7 +102,7 @@ static bool create_staging_buffer(StreamingTexture* texture, const VulkanContext
 {
     VkBufferCreateInfo buffer_info = {
         .sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size        = static_cast<VkDeviceSize>(texture->capacity_width) * texture->capacity_height * 4u,
+        .size        = static_cast<VkDeviceSize>(texture->capacity_width) * texture->capacity_height * texture->bytes_per_pixel,
         .usage       = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
     };
@@ -106,16 +132,30 @@ static bool create_staging_buffer(StreamingTexture* texture, const VulkanContext
 
 bool streaming_texture_create(StreamingTexture* texture, const VulkanContext* context, uint32_t width, uint32_t height)
 {
+    return streaming_texture_create_format(texture, context, width, height, STREAMING_TEXTURE_FORMAT, false);
+}
+
+bool streaming_texture_create_format(StreamingTexture* texture, const VulkanContext* context, uint32_t width,
+                                     uint32_t height, VkFormat format, bool opaque)
+{
     *texture = StreamingTexture{};
     texture->capacity_width = width;
     texture->capacity_height = height;
+    texture->format = format;
+    texture->bytes_per_pixel = format_bytes_per_pixel(format);
+
+    if (texture->bytes_per_pixel == 0)
+    {
+        SDL_LogError(SDL_LOG_CATEGORY_GPU, "Streaming texture: unsupported format %d", static_cast<int>(format));
+        return false;
+    }
 
     if (width == 0 || height == 0)
     {
         SDL_LogError(SDL_LOG_CATEGORY_GPU, "Streaming texture needs a non-zero size");
         return false;
     }
-    if (!create_image(texture, context))
+    if (!create_image(texture, context, opaque))
     {
         streaming_texture_destroy(texture, context);
         return false;
@@ -173,7 +213,7 @@ void streaming_texture_destroy(StreamingTexture* texture, const VulkanContext* c
 // ---------------------------------------------------------------------------
 
 bool streaming_texture_upload(StreamingTexture* texture, VkCommandBuffer command_buffer, uint32_t frame_index,
-                              const uint32_t* pixels, uint32_t width, uint32_t height)
+                              const void* pixels, uint32_t width, uint32_t height)
 {
     if (width == 0 || height == 0 || width > texture->capacity_width || height > texture->capacity_height ||
         frame_index >= FRAMES_IN_FLIGHT)
@@ -183,7 +223,7 @@ bool streaming_texture_upload(StreamingTexture* texture, VkCommandBuffer command
 
     // 1. CPU: into this slot's staging buffer. The renderer already waited for
     //    this slot's fence, so the GPU is done with the previous copy from it.
-    std::memcpy(texture->staging_mapped[frame_index], pixels, static_cast<size_t>(width) * height * 4u);
+    std::memcpy(texture->staging_mapped[frame_index], pixels, static_cast<size_t>(width) * height * texture->bytes_per_pixel);
 
     // 2. GPU: make the image writable. Earlier frames may still be sampling it
     //    in their fragment shaders (the write must wait for those reads).

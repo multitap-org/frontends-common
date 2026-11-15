@@ -30,7 +30,7 @@ void picture_destroy(Picture* picture, const VulkanContext* context)
     {
         vkFreeMemory(context->device, picture->image_memory, nullptr);
     }
-    bool blit_checked = picture->blit_checked;
+    VkFormat blit_checked = picture->blit_checked;
     bool blit_supported = picture->blit_supported;
     *picture = Picture{};
     picture->blit_checked = blit_checked;
@@ -83,6 +83,11 @@ static bool create_copy(Picture* picture, const VulkanContext* context, uint32_t
         .image    = picture->image,
         .viewType = VK_IMAGE_VIEW_TYPE_2D,
         .format   = STREAMING_TEXTURE_FORMAT,
+        // Alpha read as 1: the blit copies the source's alpha bits, and a core's
+        // native frame (0RGB1555, XRGB8888) leaves them unused, often 0. The
+        // picture is always opaque; ImGui draws it with blending on.
+        .components = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+                        VK_COMPONENT_SWIZZLE_ONE },
         .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
     };
     if (!vk_succeeded(vkCreateImageView(context->device, &view_info, nullptr, &picture->view),
@@ -97,16 +102,20 @@ static bool create_copy(Picture* picture, const VulkanContext* context, uint32_t
     return true;
 }
 
-// Blit (both ways) and linear filtering are required for this format by the
-// Vulkan spec, but check once instead of trusting every driver.
-static void check_blit_support(Picture* picture, const VulkanContext* context)
+// The blit reads the source's format (a core's native one, e.g. R5G6B5) and
+// writes the copy's (B8G8R8A8), which is then sampled bilinear. All of it is
+// required by the Vulkan spec for these formats, but check once per source
+// format instead of trusting every driver.
+static void check_blit_support(Picture* picture, const VulkanContext* context, VkFormat source_format)
 {
-    picture->blit_checked = true;
-    VkFormatProperties properties = {};
-    vkGetPhysicalDeviceFormatProperties(context->physical_device, STREAMING_TEXTURE_FORMAT, &properties);
-    VkFormatFeatureFlags needed = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT |
-                                  VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
-    picture->blit_supported = (properties.optimalTilingFeatures & needed) == needed;
+    picture->blit_checked = source_format;
+    VkFormatProperties source_properties = {};
+    vkGetPhysicalDeviceFormatProperties(context->physical_device, source_format, &source_properties);
+    VkFormatProperties copy_properties = {};
+    vkGetPhysicalDeviceFormatProperties(context->physical_device, STREAMING_TEXTURE_FORMAT, &copy_properties);
+    VkFormatFeatureFlags copy_needed = VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+    picture->blit_supported = (source_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) != 0 &&
+                              (copy_properties.optimalTilingFeatures & copy_needed) == copy_needed;
     if (!picture->blit_supported)
     {
         SDL_LogWarn(SDL_LOG_CATEGORY_GPU, "This GPU can't blit/filter the picture format: bilinear filters fall back");
@@ -134,9 +143,9 @@ bool picture_prepare(Picture* picture, const VulkanContext* context, const Strea
     {
         return true;
     }
-    if (!picture->blit_checked)
+    if (picture->blit_checked != source->format)
     {
-        check_blit_support(picture, context);
+        check_blit_support(picture, context, source->format);
     }
     if (!picture->blit_supported)
     {

@@ -43,8 +43,8 @@ struct Picture
     uint32_t       height       = 0;
     uint64_t       texture_id   = 0;   // ImGui texture id of the copy
 
-    bool blit_checked   = false;
-    bool blit_supported = false;   // the GPU can blit and filter our texture format
+    VkFormat blit_checked   = VK_FORMAT_UNDEFINED;   // the source format blit_supported is for
+    bool     blit_supported = false;   // the GPU can blit that format into the copy and filter it
 
     // What this frame draws (set by picture_prepare).
     ViewportResult viewport = {};
