@@ -41,12 +41,7 @@ static void add_gamepad(InputSdl* sdl, InputSystem* system, SDL_JoystickID id)
     entry.joystick_id = id;
     entry.gamepad = gamepad;
     entry.device = input_devices_add(&system->devices, InputDeviceKind::gamepad, guid, name);
-    if (input_first_controller(system, entry.device) < 0)
-    {
-        InputBindingSet bindings = {};
-        input_default_gamepad_bindings(&bindings);
-        input_add_controller(system, entry.device, name, &bindings);
-    }
+    input_add_controllers_for_device(system, entry.device);
     // The axes as they are now: a device pinned at an extreme from the
     // start (not a real gamepad) is told apart this way.
     for (uint32_t a = 0; a < INPUT_AXIS_COUNT; a++)
@@ -58,6 +53,20 @@ static void add_gamepad(InputSdl* sdl, InputSystem* system, SDL_JoystickID id)
     const InputDevice* device = input_devices_find_const(&system->devices, entry.device);
     SDL_Log("Gamepad: %s (%s)%s", name, guid,
             device != nullptr && input_devices_looks_fake(device) ? ", ignored: its axes are pinned (not a real gamepad)" : "");
+}
+
+// A joystick SDL has no gamepad mapping for can't be used until it is mapped.
+static void report_unmapped(SDL_JoystickID id)
+{
+    if (SDL_IsGamepad(id))
+    {
+        return;
+    }
+    char guid[64] = {};
+    SDL_GUIDToString(SDL_GetJoystickGUIDForID(id), guid, sizeof(guid));
+    const char* name = SDL_GetJoystickNameForID(id);
+    SDL_Log("Controller %s (%s) isn't known as a gamepad: map it with piccolo_map_gamepad to use it",
+            name != nullptr ? name : "(no name)", guid);
 }
 
 static void remove_gamepad(InputSdl* sdl, InputSystem* system, SDL_JoystickID id)
@@ -85,18 +94,20 @@ void input_sdl_init(InputSdl* sdl, InputSystem* system, const char* mappings_pat
         }
     }
     sdl->keyboard_device = input_devices_add(&system->devices, InputDeviceKind::keyboard, "keyboard", "Keyboard");
-    if (input_first_controller(system, sdl->keyboard_device) < 0)
-    {
-        InputBindingSet bindings = {};
-        input_default_keyboard_bindings(&bindings);
-        input_add_controller(system, sdl->keyboard_device, "Keyboard", &bindings);
-    }
+    input_add_controllers_for_device(system, sdl->keyboard_device);
     sdl->last_active_device = sdl->keyboard_device;
     int count = 0;
-    SDL_JoystickID* ids = SDL_GetGamepads(&count);
+    SDL_JoystickID* ids = SDL_GetJoysticks(&count);
     for (int i = 0; ids != nullptr && i < count; i++)
     {
-        add_gamepad(sdl, system, ids[i]);
+        if (SDL_IsGamepad(ids[i]))
+        {
+            add_gamepad(sdl, system, ids[i]);
+        }
+        else
+        {
+            report_unmapped(ids[i]);
+        }
     }
     SDL_free(ids);
 }
@@ -131,6 +142,9 @@ void input_sdl_handle_event(InputSdl* sdl, InputSystem* system, const SDL_Event*
     }
     case SDL_EVENT_WINDOW_FOCUS_LOST:
         input_devices_release_all(&system->devices, sdl->keyboard_device);
+        break;
+    case SDL_EVENT_JOYSTICK_ADDED:
+        report_unmapped(event->jdevice.which);
         break;
     case SDL_EVENT_GAMEPAD_ADDED:
         add_gamepad(sdl, system, event->gdevice.which);

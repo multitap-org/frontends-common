@@ -153,10 +153,30 @@ struct InputController
     uint64_t armed_ms = 0;
 };
 
+// What is kept of a controller between runs (settings/input.cfg), by id: a
+// gamepad's GUID (same model = same profile), "keyboard" for the keyboard's
+// first controller, "keyboard.2"... for the next parts of a split keyboard.
+// Bindings are kept as changes to the defaults for the device's kind, so
+// better defaults reach every controller that wasn't changed.
+struct InputBindingOverride
+{
+    InputAction action = InputAction::pad_b;
+    InputSource sources[INPUT_SOURCES_PER_ACTION] = {};   // all none = unbound
+};
+
+struct InputProfile
+{
+    std::string                       id;
+    std::string                       name;               // "" = the device's own name
+    int32_t                           deadzone_percent = -1;   // -1 = default
+    std::vector<InputBindingOverride> overrides;
+};
+
 struct InputSystem
 {
     InputDevices                 devices;
     std::vector<InputController> controllers;
+    std::vector<InputProfile>    profiles;   // loaded, plus what input_config_write took from the controllers
     int32_t                      ports[INPUT_PORT_COUNT] = {INPUT_NO_PORT, INPUT_NO_PORT, INPUT_NO_PORT, INPUT_NO_PORT};
     InputSettings                settings;
     bool                         game_had_input = true;   // settings.game_has_input last frame
@@ -172,6 +192,17 @@ struct InputFrame
     int32_t  joined_port = INPUT_NO_PORT;           // a controller joined this frame (for a message)
     int32_t  joined_controller = -1;
 };
+
+// The defaults for a device's kind (keyboard or gamepad).
+void input_default_bindings(InputDeviceKind kind, InputBindingSet* set);
+
+// The controllers a device gets when it first appears: from its profiles
+// (every keyboard part, or the gamepad's GUID), else one with the defaults.
+// Nothing if it already has controllers (a device coming back).
+void input_add_controllers_for_device(InputSystem* system, uint32_t device_id);
+
+// The profile id of a controller ("keyboard", "keyboard.2", or the GUID).
+std::string input_controller_profile_id(const InputSystem* system, uint32_t controller);
 
 // A new controller on a device; returns its index in system->controllers.
 uint32_t input_add_controller(InputSystem* system, uint32_t device_id, const char* name, const InputBindingSet* bindings);

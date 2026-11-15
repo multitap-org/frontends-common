@@ -52,6 +52,7 @@ add_library(frontend_common STATIC
     input_devices.cpp
     input_bindings.cpp
     input_sdl.cpp
+    input_config.cpp
 )
 
 # GameMode (deps/gamemode, BSD-3-Clause): only its client header, which

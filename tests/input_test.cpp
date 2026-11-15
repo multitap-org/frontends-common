@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "input_bindings.h"
+#include "input_config.h"
 #include "input_devices.h"
 
 static int g_failures = 0;
@@ -409,6 +410,85 @@ static void test_menus_and_defaults()
     delete system;
 }
 
+static void test_config()
+{
+    // A split keyboard, a renamed gamepad with a changed binding and deadzone.
+    InputSystem* first = new InputSystem{};
+    InputSource f1 = {};
+    f1.type = InputSourceType::key;
+    f1.code = HID_F1;
+    InputProfile second_part = {};
+    second_part.id = "keyboard.2";
+    second_part.name = "Keyboard right";
+    InputBindingOverride start = {};
+    start.action = InputAction::pad_start;
+    start.sources[0] = f1;
+    second_part.overrides.push_back(start);
+    first->profiles.push_back(second_part);
+    first->settings.hotkey_mode = InputHotkeyMode::double_tap;
+    uint32_t keyboard = input_devices_add(&first->devices, InputDeviceKind::keyboard, "keyboard", "Keyboard");
+    uint32_t pad = input_devices_add(&first->devices, InputDeviceKind::gamepad, "pad-guid", "Pad");
+    input_add_controllers_for_device(first, keyboard);
+    input_add_controllers_for_device(first, pad);
+    check(first->controllers.size() == 3, "config: two keyboard parts and the gamepad");
+    check(first->controllers[1].name == "Keyboard right", "config: profile name used");
+    check(input_is_bound(&first->controllers[1].bindings, InputAction::pad_start, f1), "config: profile binding used");
+    InputController* gamepad = &first->controllers[2];
+    gamepad->name = "My pad";
+    gamepad->deadzone = 0.25f;
+    input_unbind_all(&gamepad->bindings, InputAction::pad_y);
+    input_bind(&gamepad->bindings, InputAction::pad_y, button(InputButton::north));
+    input_unbind_all(&gamepad->bindings, InputAction::hotkey_save_state);
+
+    SettingsFile file = {};
+    input_config_write(first, &file);
+    std::string text;
+    settings_file_to_text(&file, nullptr, &text);
+    check(text.find("[controller/pad-guid]") != std::string::npos && text.find("deadzone = 25") != std::string::npos,
+          "config: name and deadzone written");
+    check(text.find("pad.y = button:north") != std::string::npos, "config: changed binding written");
+    check(text.find("hotkey.save_state = none") != std::string::npos, "config: unbound written as none");
+    check(text.find("pad.b") == std::string::npos, "config: unchanged bindings not written");
+    check(text.find("[retropad/keyboard]") == std::string::npos, "config: the default keyboard writes no bindings");
+
+    // Read back into a fresh system: the same controllers.
+    SettingsFile parsed = {};
+    settings_file_parse(&parsed, text.c_str(), text.size(), "test");
+    InputSystem* second = new InputSystem{};
+    input_config_read(second, &parsed);
+    check(second->settings.hotkey_mode == InputHotkeyMode::double_tap, "config: hotkey mode read");
+    uint32_t keyboard2 = input_devices_add(&second->devices, InputDeviceKind::keyboard, "keyboard", "Keyboard");
+    uint32_t pad2 = input_devices_add(&second->devices, InputDeviceKind::gamepad, "pad-guid", "Pad");
+    input_add_controllers_for_device(second, keyboard2);
+    input_add_controllers_for_device(second, pad2);
+    check(second->controllers.size() == 3, "config: same controllers after reading");
+    if (second->controllers.size() == 3)
+    {
+        const InputController* back = &second->controllers[2];
+        check(back->name == "My pad", "config: name back");
+        check(back->deadzone > 0.24f && back->deadzone < 0.26f, "config: deadzone back");
+        check(input_is_bound(&back->bindings, InputAction::pad_y, button(InputButton::north)) &&
+                  !input_is_bound(&back->bindings, InputAction::pad_y, button(InputButton::west)),
+              "config: binding back");
+        check(back->bindings.sources[static_cast<uint32_t>(InputAction::hotkey_save_state)][0].type == InputSourceType::none,
+              "config: unbound back");
+        check(input_is_bound(&back->bindings, InputAction::pad_b, button(InputButton::south)), "config: defaults kept");
+        check(second->controllers[1].name == "Keyboard right", "config: keyboard part back");
+    }
+
+    // A profile for a gamepad not connected now survives a write.
+    InputSystem* third = new InputSystem{};
+    input_config_read(third, &parsed);
+    SettingsFile again = {};
+    input_config_write(third, &again);
+    std::string text_again;
+    settings_file_to_text(&again, nullptr, &text_again);
+    check(text_again.find("[controller/pad-guid]") != std::string::npos, "config: absent controller kept");
+    delete first;
+    delete second;
+    delete third;
+}
+
 int main()
 {
     test_sources();
@@ -419,6 +499,7 @@ int main()
     test_combo_and_stick();
     test_fake_gamepad();
     test_menus_and_defaults();
+    test_config();
     if (g_failures == 0)
     {
         std::printf("input: all checks passed\n");

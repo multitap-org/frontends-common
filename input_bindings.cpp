@@ -235,6 +235,106 @@ void input_default_gamepad_bindings(InputBindingSet* set)
 // Controllers and ports
 // ---------------------------------------------------------------------------
 
+void input_default_bindings(InputDeviceKind kind, InputBindingSet* set)
+{
+    if (kind == InputDeviceKind::keyboard)
+    {
+        input_default_keyboard_bindings(set);
+    }
+    else
+    {
+        input_default_gamepad_bindings(set);
+    }
+}
+
+static const InputProfile* find_profile(const InputSystem* system, const std::string& id)
+{
+    for (size_t p = 0; p < system->profiles.size(); p++)
+    {
+        if (system->profiles[p].id == id)
+        {
+            return &system->profiles[p];
+        }
+    }
+    return nullptr;
+}
+
+static void add_from_profile(InputSystem* system, const InputDevice* device, const InputProfile* profile)
+{
+    InputBindingSet bindings = {};
+    input_default_bindings(device->kind, &bindings);
+    std::string name = device->name;
+    int32_t deadzone = -1;
+    if (profile != nullptr)
+    {
+        for (size_t o = 0; o < profile->overrides.size(); o++)
+        {
+            const InputBindingOverride* change = &profile->overrides[o];
+            input_unbind_all(&bindings, change->action);
+            for (uint32_t s = 0; s < INPUT_SOURCES_PER_ACTION; s++)
+            {
+                input_bind(&bindings, change->action, change->sources[s]);
+            }
+        }
+        name = profile->name.empty() ? name : profile->name;
+        deadzone = profile->deadzone_percent;
+    }
+    uint32_t index = input_add_controller(system, device->id, name.c_str(), &bindings);
+    if (deadzone >= 0 && deadzone < 100)
+    {
+        system->controllers[index].deadzone = static_cast<float>(deadzone) / 100.0f;
+    }
+}
+
+void input_add_controllers_for_device(InputSystem* system, uint32_t device_id)
+{
+    const InputDevice* device = input_devices_find_const(&system->devices, device_id);
+    if (device == nullptr || input_first_controller(system, device_id) >= 0)
+    {
+        return;
+    }
+    if (device->kind == InputDeviceKind::gamepad)
+    {
+        add_from_profile(system, device, find_profile(system, device->guid));
+        return;
+    }
+    // The keyboard: "keyboard", then "keyboard.2", "keyboard.3"... while they exist.
+    add_from_profile(system, device, find_profile(system, "keyboard"));
+    for (uint32_t part = 2; part < 64; part++)
+    {
+        const InputProfile* profile = find_profile(system, "keyboard." + std::to_string(part));
+        if (profile == nullptr)
+        {
+            break;
+        }
+        add_from_profile(system, device, profile);
+    }
+}
+
+std::string input_controller_profile_id(const InputSystem* system, uint32_t controller)
+{
+    if (controller >= system->controllers.size())
+    {
+        return "";
+    }
+    uint32_t device_id = system->controllers[controller].device_id;
+    const InputDevice* device = input_devices_find_const(&system->devices, device_id);
+    if (device == nullptr)
+    {
+        return "";
+    }
+    if (device->kind == InputDeviceKind::gamepad)
+    {
+        return device->guid;
+    }
+    uint32_t part = 1;
+    for (uint32_t c = 0; c < controller; c++)
+    {
+        part += system->controllers[c].device_id == device_id ? 1u : 0u;
+    }
+    return part == 1 ? std::string("keyboard") : "keyboard." + std::to_string(part);
+}
+
 uint32_t input_add_controller(InputSystem* system, uint32_t device_id, const char* name, const InputBindingSet* bindings)
 {
     InputController controller = {};
