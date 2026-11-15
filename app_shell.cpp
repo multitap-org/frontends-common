@@ -22,6 +22,49 @@ static bool window_size_in_pixels(SDL_Window* window, uint32_t* width, uint32_t*
     return true;
 }
 
+// Sets the window icon from the config's PNGs. A failure only costs the icon.
+static void set_window_icon(SDL_Window* window, const AppShellConfig* config)
+{
+    if (config->icons == nullptr || config->icon_count <= 0)
+    {
+        return;
+    }
+
+    SDL_Surface* icon = nullptr;
+    for (int32_t i = 0; i < config->icon_count; i++)
+    {
+        SDL_IOStream* io = SDL_IOFromConstMem(config->icons[i].png, config->icons[i].size);
+        SDL_Surface* image = nullptr;
+        if (io != nullptr)
+        {
+            image = SDL_LoadPNG_IO(io, true);
+        }
+        if (image == nullptr)
+        {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Window icon %d: %s", i, SDL_GetError());
+            continue;
+        }
+        if (icon == nullptr)
+        {
+            icon = image;
+        }
+        else
+        {
+            SDL_AddSurfaceAlternateImage(icon, image);
+            SDL_DestroySurface(image);   // the base surface keeps its own reference
+        }
+    }
+
+    if (icon != nullptr)
+    {
+        if (!SDL_SetWindowIcon(window, icon))
+        {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "SDL_SetWindowIcon failed: %s", SDL_GetError());
+        }
+        SDL_DestroySurface(icon);
+    }
+}
+
 static bool create_window(AppShell* shell, const AppShellConfig* config)
 {
     int32_t width  = config->window_width;
@@ -48,6 +91,7 @@ static bool create_window(AppShell* shell, const AppShellConfig* config)
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL_CreateWindow failed: %s", SDL_GetError());
         return false;
     }
+    set_window_icon(shell->window, config);
     return true;
 }
 

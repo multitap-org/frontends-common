@@ -28,6 +28,13 @@
 struct SDL_Window;
 union SDL_Event;
 
+// One size of the window icon, as the bytes of a PNG file.
+struct AppShellIcon
+{
+    const uint8_t* png;
+    uint32_t       size;
+};
+
 struct AppShellConfig
 {
     const char* name           = "frontend";   // window title, Vulkan application name
@@ -35,6 +42,11 @@ struct AppShellConfig
     const char* identifier     = "org.multitap.frontend";
     int32_t     window_width   = 1920;          // clamped to the screen's usable area
     int32_t     window_height  = 1080;
+    // The window icon: every size the frontend has, the first one is the base
+    // image and the rest go to the window manager as alternates. None = the
+    // system's default icon.
+    const AppShellIcon* icons      = nullptr;
+    int32_t             icon_count = 0;
 };
 
 // Zero/null-initialized, so app_shell_destroy() is safe at any point during startup.
