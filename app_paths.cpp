@@ -162,6 +162,30 @@ bool app_paths_init(AppPaths* paths, const char* program_name, const char* old_l
     {
         paths->root.pop_back();
     }
+#elif defined(__ANDROID__)
+    // Set by the Java activity before SDL_main runs (see PiccoloActivity.java).
+    const char* data_dir = SDL_getenv("MULTITAP_DATA_DIR");
+    if (data_dir != nullptr && data_dir[0] != '\0')
+    {
+        paths->root = join(data_dir, program_name);
+    }
+    else
+    {
+        char* preferences = SDL_GetPrefPath("multitap", program_name);
+        if (preferences == nullptr)
+        {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Can't find a folder for %s: %s", program_name, SDL_GetError());
+            return false;
+        }
+        paths->root = preferences;
+        SDL_free(preferences);
+        while (paths->root.size() > 1 && is_separator(paths->root.back()))
+        {
+            paths->root.pop_back();
+        }
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "No All files access: using the app's private folder (deleted on uninstall)");
+    }
 #elif defined(__APPLE__)
     if (home == nullptr)
     {
@@ -190,6 +214,14 @@ bool app_paths_init(AppPaths* paths, const char* program_name, const char* old_l
 #endif
 
     app_paths_fill(paths);
+#if defined(__ANDROID__)
+    // Cores can't be loaded from shared storage (noexec): the private folder.
+    const char* internal = SDL_GetAndroidInternalStoragePath();
+    if (internal != nullptr)
+    {
+        paths->cores = join(internal, "cores");
+    }
+#endif
     std::string old_root = home != nullptr ? join(home, ".host-libretro") : std::string();
     bool ok = app_paths_setup(paths, old_root.c_str(), old_last_used_name);
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "%s folder: %s", program_name, paths->root.c_str());

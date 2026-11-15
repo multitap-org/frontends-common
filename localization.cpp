@@ -5,8 +5,6 @@
 
 #include <SDL3/SDL.h>
 
-#include "host_fs.h"
-
 // ---------------------------------------------------------------------------
 // Table
 // ---------------------------------------------------------------------------
@@ -289,16 +287,18 @@ uint32_t localization_parse_po(Localization* localization, const char* text, siz
 
 bool localization_load_po(Localization* localization, const char* path, const char* language)
 {
-    uint8_t* data = nullptr;
+    // SDL's file functions rather than host_fs: on Android the translations
+    // that come with the program are inside the APK (assets), which only SDL
+    // can read (a relative path there means the APK's assets).
     size_t size = 0;
-    if (!host_fs_exists(path) || !host_fs_read_file(path, &data, &size))
+    void* data = SDL_LoadFile(path, &size);
+    if (data == nullptr)
     {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "No translation file %s: English", path);
         localization_use_english(localization);
         return false;
     }
-    const char* text = static_cast<const char*>(static_cast<const void*>(data));
-    localization_parse_po(localization, text, size, path, language);
-    delete[] data;
+    localization_parse_po(localization, static_cast<const char*>(data), size, path, language);
+    SDL_free(data);
     return true;
 }

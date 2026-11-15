@@ -264,9 +264,20 @@ endif()
 
 # Build-time tool: a frontend's strings.txt -> its string IDs, English table
 # and .pot (see tools/strings_generator.cpp).
-add_executable(multitap_strings_generator tools/strings_generator.cpp)
-target_link_libraries(multitap_strings_generator PRIVATE host_common)
-multitap_set_project_flags(multitap_strings_generator)
+# Cross builds (Android) can't run what they build: there it's an imported
+# program, built for the build machine first (piccolo's android/build-apk.sh).
+if(ANDROID)
+    if(NOT MULTITAP_STRINGS_GENERATOR OR NOT EXISTS "${MULTITAP_STRINGS_GENERATOR}")
+        message(FATAL_ERROR "Android build: set MULTITAP_STRINGS_GENERATOR to multitap_strings_generator built "
+                            "for this machine (build-apk.sh does it)")
+    endif()
+    add_executable(multitap_strings_generator IMPORTED GLOBAL)
+    set_target_properties(multitap_strings_generator PROPERTIES IMPORTED_LOCATION "${MULTITAP_STRINGS_GENERATOR}")
+else()
+    add_executable(multitap_strings_generator tools/strings_generator.cpp)
+    target_link_libraries(multitap_strings_generator PRIVATE host_common)
+    multitap_set_project_flags(multitap_strings_generator)
+endif()
 
 if(MULTITAP_BUILD_TESTS)
     add_executable(frontend_settings_file_test tests/settings_file_test.cpp)
