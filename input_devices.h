@@ -91,6 +91,10 @@ struct InputDevice
     bool    axes_moved = false;
     bool    axes_pinned_at_start = false;
 
+    // A gamepad whose d-pad SDL reports as d-pad buttons (false: some pads
+    // report it as the left stick, so the defaults use that instead).
+    bool    has_dpad = true;
+
     // The user's word on it: auto = ignored only if it looks fake.
     InputIgnore ignore = InputIgnore::automatic;
 };

@@ -277,9 +277,11 @@ static void test_gamepad_hotkeys()
     // Held past the delay: the RetroPad goes quiet, SELECT+START = quick menu.
     frame(system, 200, &out);
     check(out.pad_buttons[0] == 0, "hold: RetroPad quiet while enable is held");
+    check(out.gamepad_enable_alone, "hold: SELECT held alone is reported (port 1)");
     input_devices_set_code(&system->devices, pad, start, true);
     frame(system, 216, &out);
     check(out.pressed[quick_menu], "hold: SELECT+START is the quick menu");
+    check(!out.gamepad_enable_alone, "hold: not alone once a hotkey fired with it");
     input_devices_set_code(&system->devices, pad, start, false);
     input_devices_set_code(&system->devices, pad, back, false);
     frame(system, 232, &out);
@@ -425,6 +427,16 @@ static void test_menus_and_defaults()
     check(!out.gamepad_held[static_cast<uint32_t>(InputAction::ui_up)], "ui: the keyboard's up is not in gamepad_held");
     check(out.held[static_cast<uint32_t>(InputAction::ui_up)], "ui: ...but is in held");
 
+    // A gamepad without d-pad buttons: its directions on the left stick.
+    InputDevice no_dpad = {};
+    no_dpad.kind = InputDeviceKind::gamepad;
+    no_dpad.has_dpad = false;
+    InputBindingSet stick_dpad = {};
+    input_default_bindings_for(&no_dpad, &stick_dpad);
+    check(input_is_bound(&stick_dpad, InputAction::pad_up, axis(InputAxis::left_y, false)) &&
+              !input_is_bound(&stick_dpad, InputAction::pad_up, button(InputButton::dpad_up)),
+          "defaults: no d-pad buttons, directions on the left stick");
+
     // The gamepad defaults: B bottom, A right, R2 on the trigger, SELECT+START quick menu.
     InputBindingSet pad_set = {};
     input_default_gamepad_bindings(&pad_set);
@@ -545,6 +557,15 @@ static void test_capture_and_remove()
     check(input_capture_poll(system, &source) && source.type == InputSourceType::axis_plus &&
               source.code == static_cast<uint16_t>(InputAxis::left_trigger),
           "capture: an axis");
+    // An axis held when it starts: going back to the center is not the
+    // other direction (the d-pad of a pad that reports it as an axis).
+    input_devices_set_axis(&system->devices, pad, InputAxis::left_x, -1.0f);
+    input_capture_begin(system, pad);
+    input_devices_set_axis(&system->devices, pad, InputAxis::left_x, 0.0f);
+    check(!input_capture_poll(system, &source), "capture: an axis let go is not a push");
+    input_devices_set_axis(&system->devices, pad, InputAxis::left_x, -1.0f);
+    check(input_capture_poll(system, &source) && source.type == InputSourceType::axis_minus,
+          "capture: pushed again after letting go");
     input_capture_begin(system, pad);
     input_capture_cancel(system);
     check(!input_capture_poll(system, &source), "capture: cancelled");

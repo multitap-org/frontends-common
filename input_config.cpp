@@ -264,7 +264,7 @@ static void take_controllers(InputSystem* system)
         profile->deadzone_percent = percent == DEFAULT_DEADZONE_PERCENT ? -1 : percent;
         profile->overrides.clear();
         InputBindingSet defaults = {};
-        input_default_bindings(device->kind, &defaults);
+        input_default_bindings_for(device, &defaults);
         for (uint32_t a = 0; a < INPUT_ACTION_COUNT; a++)
         {
             if (same_sources(controller->bindings.sources[a], defaults.sources[a]))

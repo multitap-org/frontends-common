@@ -247,6 +247,24 @@ void input_default_bindings(InputDeviceKind kind, InputBindingSet* set)
     }
 }
 
+void input_default_bindings_for(const InputDevice* device, InputBindingSet* set)
+{
+    input_default_bindings(device->kind, set);
+    if (device->kind != InputDeviceKind::gamepad || device->has_dpad)
+    {
+        return;
+    }
+    // Its d-pad comes as the left stick: the RetroPad's directions there.
+    input_unbind_all(set, InputAction::pad_up);
+    input_unbind_all(set, InputAction::pad_down);
+    input_unbind_all(set, InputAction::pad_left);
+    input_unbind_all(set, InputAction::pad_right);
+    input_bind(set, InputAction::pad_up, pad_axis(InputAxis::left_y, false));
+    input_bind(set, InputAction::pad_down, pad_axis(InputAxis::left_y, true));
+    input_bind(set, InputAction::pad_left, pad_axis(InputAxis::left_x, false));
+    input_bind(set, InputAction::pad_right, pad_axis(InputAxis::left_x, true));
+}
+
 static const InputProfile* find_profile(const InputSystem* system, const std::string& id)
 {
     for (size_t p = 0; p < system->profiles.size(); p++)
@@ -262,7 +280,7 @@ static const InputProfile* find_profile(const InputSystem* system, const std::st
 static void add_from_profile(InputSystem* system, const InputDevice* device, const InputProfile* profile)
 {
     InputBindingSet bindings = {};
-    input_default_bindings(device->kind, &bindings);
+    input_default_bindings_for(device, &bindings);
     std::string name = device->name;
     int32_t deadzone = -1;
     if (profile != nullptr)
@@ -561,7 +579,8 @@ void input_capture_begin(InputSystem* system, uint32_t device_id)
     }
     for (uint32_t a = 0; a < INPUT_AXIS_COUNT; a++)
     {
-        capture->axes_at_start[a] = device->axes[a];
+        capture->plus_at_start[a] = device->axes[a] > 0.5f;
+        capture->minus_at_start[a] = device->axes[a] < -0.5f;
     }
 }
 
@@ -590,10 +609,14 @@ bool input_capture_poll(InputSystem* system, InputSource* source)
     }
     for (uint32_t a = 0; a < INPUT_AXIS_COUNT; a++)
     {
-        float moved = device->axes[a] - capture->axes_at_start[a];
-        if (moved > 0.5f || moved < -0.5f)
+        float value = device->axes[a];
+        capture->plus_at_start[a] = capture->plus_at_start[a] && value > 0.5f;     // let go: counts again
+        capture->minus_at_start[a] = capture->minus_at_start[a] && value < -0.5f;
+        bool plus = value > 0.5f && !capture->plus_at_start[a];
+        bool minus = value < -0.5f && !capture->minus_at_start[a];
+        if (plus || minus)
         {
-            source->type = moved > 0.0f ? InputSourceType::axis_plus : InputSourceType::axis_minus;
+            source->type = plus ? InputSourceType::axis_plus : InputSourceType::axis_minus;
             source->code = static_cast<uint16_t>(a);
             capture->active = false;
             return true;
@@ -810,6 +833,7 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             if (pressed[enable])
             {
                 controller->enable_down_ms = now_ms;
+                controller->enable_used = false;
             }
             enabled = held[enable];
             quiet = quiet || (held[enable] && now_ms - controller->enable_down_ms >= HOTKEY_BLOCK_DELAY_MS);
@@ -867,6 +891,11 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         if (fired && controller->armed)
         {
             controller->armed = false;   // DOUBLE TAP: one hotkey, then back to normal
+        }
+        controller->enable_used = controller->enable_used || (fired && held[enable]);
+        if (!keyboard && port == 0 && held[enable] && !controller->enable_used)
+        {
+            frame->gamepad_enable_alone = true;   // SELECT held by itself: the UI may use it (hold to go back)
         }
 
         // The RetroPad of its port.

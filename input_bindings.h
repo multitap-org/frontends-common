@@ -152,6 +152,7 @@ struct InputController
     bool     quiet_until_start_released = false;   // the START that joined is not the game's
     bool     quiet_until_released = false;         // back from the UI: nothing to the game until all is let go
     uint64_t enable_down_ms = 0;
+    bool     enable_used = false;                  // a hotkey fired since HOTKEY ENABLE went down
     uint64_t enable_last_tap_ms = 0;
     bool     armed = false;                        // DOUBLE TAP: the next hotkey works
     uint64_t armed_ms = 0;
@@ -200,7 +201,10 @@ struct InputCapture
     bool     active = false;
     uint32_t device_id = 0;
     uint8_t  held_at_start[INPUT_KEY_COUNT] = {};
-    float    axes_at_start[INPUT_AXIS_COUNT] = {};
+    // Axis halves already pushed past half when it started (they count
+    // only once let go and pushed again; going back to the center isn't a push).
+    bool     plus_at_start[INPUT_AXIS_COUNT] = {};
+    bool     minus_at_start[INPUT_AXIS_COUNT] = {};
 };
 
 struct InputSystem
@@ -228,6 +232,7 @@ struct InputFrame
     bool     held[INPUT_ACTION_COUNT] = {};         // interface and hotkeys, any controller (hotkeys when allowed)
     bool     pressed[INPUT_ACTION_COUNT] = {};      // went down this frame
     bool     gamepad_held[INPUT_ACTION_COUNT] = {}; // interface actions held on port 1's gamepad: to drive a UI
+    bool     gamepad_enable_alone = false;          // port 1's gamepad holds HOTKEY ENABLE and no hotkey fired with it
     int32_t  joined_port = INPUT_NO_PORT;           // a controller joined this frame (for a message)
     int32_t  joined_controller = -1;
     int32_t  left_port = INPUT_NO_PORT;             // a controller's device went away and freed this port
@@ -236,6 +241,10 @@ struct InputFrame
 
 // The defaults for a device's kind (keyboard or gamepad).
 void input_default_bindings(InputDeviceKind kind, InputBindingSet* set);
+
+// The defaults for this device: its kind's, and for a gamepad without d-pad
+// buttons (has_dpad false) the RetroPad's directions on the left stick.
+void input_default_bindings_for(const InputDevice* device, InputBindingSet* set);
 
 // The controllers a device gets when it first appears: from its profiles
 // (every keyboard part, or the gamepad's GUID), else one with the defaults.
@@ -285,7 +294,8 @@ void input_remove_controller(InputSystem* system, uint32_t controller);
 
 // Binding by pressing: start waiting on a device, then poll each frame until
 // it gives a source (a key or button that wasn't held when it started, or
-// an axis pushed past half from where it was). Cancel to give up.
+// an axis half pushed past half from the center that wasn't when it
+// started). Cancel to give up.
 void input_capture_begin(InputSystem* system, uint32_t device_id);
 bool input_capture_poll(InputSystem* system, InputSource* source);
 void input_capture_cancel(InputSystem* system);

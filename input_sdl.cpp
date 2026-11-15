@@ -41,6 +41,12 @@ static void add_gamepad(InputSdl* sdl, InputSystem* system, SDL_JoystickID id)
     entry.joystick_id = id;
     entry.gamepad = gamepad;
     entry.device = input_devices_add(&system->devices, InputDeviceKind::gamepad, guid, name);
+    InputDevice* added = input_devices_find(&system->devices, entry.device);
+    if (added != nullptr)
+    {
+        // Some pads report their d-pad as the left stick (no d-pad buttons).
+        added->has_dpad = SDL_GamepadHasButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_UP);
+    }
     input_add_controllers_for_device(system, entry.device);
     // The axes as they are now: a device pinned at an extreme from the
     // start (not a real gamepad) is told apart this way.
