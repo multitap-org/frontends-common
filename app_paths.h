@@ -46,6 +46,12 @@ struct AppPaths
 // False (logged) if the folder can't be found or created.
 bool app_paths_init(AppPaths* paths, const char* program_name, const char* old_last_used_name);
 
+// The user's own folder, where browsing for files starts: the home folder on
+// desktop (SDL_GetUserFolder), the shared storage on Android (/sdcard, passed
+// by the Java activity as MULTITAP_HOME_DIR: SDL has no user folders there).
+// nullptr if unknown.
+const char* app_paths_home_folder();
+
 // --- The pieces of app_paths_init, separate so they can be tested ---------
 
 // The Linux rule. `xdg_data_home` is ignored unless it's an absolute path (as

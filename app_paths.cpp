@@ -143,6 +143,16 @@ bool app_paths_setup(const AppPaths* paths, const char* old_root, const char* ol
     return ok;
 }
 
+const char* app_paths_home_folder()
+{
+#if defined(__ANDROID__)
+    const char* home = SDL_getenv("MULTITAP_HOME_DIR");   // set by the Java activity
+    return home != nullptr && home[0] != '\0' ? home : nullptr;
+#else
+    return SDL_GetUserFolder(SDL_FOLDER_HOME);
+#endif
+}
+
 bool app_paths_init(AppPaths* paths, const char* program_name, const char* old_last_used_name)
 {
     *paths = AppPaths{};
