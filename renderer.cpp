@@ -249,13 +249,17 @@ void renderer_begin_rendering(Renderer* renderer, const VulkanSwapchain* swapcha
 // can't hang the loop. A failed wait only costs latency, not correctness.
 constexpr uint64_t PRESENT_WAIT_TIMEOUT_NS = 100000000u;
 
-static void wait_after_present(const VulkanContext* context, const VulkanSwapchain* swapchain,
-                               const FrameResources* frame, uint64_t present_id)
+// Present wait timeouts in a row before it counts as unreliable (each costs
+// a 100 ms frame, so few; a working present wait never times out on a
+// visible window).
+constexpr uint32_t PRESENT_WAIT_MAX_TIMEOUTS = 3;
+
+// The present wait call; VK_ERROR_FEATURE_NOT_PRESENT when there's none.
+static VkResult present_wait(const VulkanContext* context, const VulkanSwapchain* swapchain, uint64_t present_id)
 {
     if (context->present_wait_version == 1 && context->wait_for_present != nullptr)
     {
-        context->wait_for_present(context->device, swapchain->swapchain, present_id, PRESENT_WAIT_TIMEOUT_NS);
-        return;
+        return context->wait_for_present(context->device, swapchain->swapchain, present_id, PRESENT_WAIT_TIMEOUT_NS);
     }
 #if defined(VK_KHR_present_wait2)
     if (context->present_wait_version == 2 && context->wait_for_present2 != nullptr)
@@ -265,10 +269,39 @@ static void wait_after_present(const VulkanContext* context, const VulkanSwapcha
             .presentId = present_id,
             .timeout   = PRESENT_WAIT_TIMEOUT_NS,
         };
-        context->wait_for_present2(context->device, swapchain->swapchain, &wait_info);
-        return;
+        return context->wait_for_present2(context->device, swapchain->swapchain, &wait_info);
     }
 #endif
+    return VK_ERROR_FEATURE_NOT_PRESENT;
+}
+
+static void wait_after_present(Renderer* renderer, const VulkanContext* context, const VulkanSwapchain* swapchain,
+                               const FrameResources* frame, uint64_t present_id)
+{
+    if (renderer->present_wait_swapchain != swapchain->swapchain)
+    {
+        // A new swapchain (resize, vsync switched...): present wait gets another chance.
+        renderer->present_wait_swapchain = swapchain->swapchain;
+        renderer->present_wait_timeouts = 0;
+        renderer->present_wait_unreliable = false;
+    }
+    if (!renderer->present_wait_unreliable)
+    {
+        VkResult result = present_wait(context, swapchain, present_id);
+        if (result != VK_ERROR_FEATURE_NOT_PRESENT)
+        {
+            renderer->present_wait_timeouts = result == VK_TIMEOUT ? renderer->present_wait_timeouts + 1 : 0;
+            if (renderer->present_wait_timeouts >= PRESENT_WAIT_MAX_TIMEOUTS)
+            {
+                renderer->present_wait_unreliable = true;
+                SDL_LogWarn(SDL_LOG_CATEGORY_GPU,
+                            "Present wait timed out %u times in a row (a driver setting such as NVIDIA's \"Fast\" "
+                            "vertical sync?): waiting for the GPU instead",
+                            renderer->present_wait_timeouts);
+            }
+            return;
+        }
+    }
     vkWaitForFences(context->device, 1, &frame->in_flight_fence, VK_TRUE, PRESENT_WAIT_TIMEOUT_NS);
 }
 
@@ -365,7 +398,7 @@ RenderFrameResult renderer_end_frame(Renderer* renderer, const VulkanContext* co
 
     if (renderer->wait_for_present && (present_result == VK_SUCCESS || present_result == VK_SUBOPTIMAL_KHR))
     {
-        wait_after_present(context, swapchain, frame, present_id);
+        wait_after_present(renderer, context, swapchain, frame, present_id);
     }
 
     // Advance to the next FrameResources whatever happened, the submit already went through.

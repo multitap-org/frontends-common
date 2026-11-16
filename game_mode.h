@@ -30,6 +30,10 @@ struct GameMode
     GameModeState state     = GameModeState::off;
 };
 
+// True where GameMode can exist (Linux), even if it isn't installed. UIs hide
+// its setting where it's false.
+bool game_mode_supported();
+
 // Asks for GameMode (wanted) or lets it go. Does nothing when unchanged.
 // After a failed request it doesn't retry until the wish changes again.
 void game_mode_set(GameMode* game_mode, bool wanted);

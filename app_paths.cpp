@@ -156,6 +156,7 @@ bool app_paths_init(AppPaths* paths, const char* program_name, const char* old_l
         return false;
     }
     paths->root = base;
+    host_fs_forward_slashes(paths->root.data());   // "C:\Users\me\piccolo\" -> "C:/Users/me/piccolo/"
     while (paths->root.size() > 3 && is_separator(paths->root.back()))
     {
         paths->root.pop_back();

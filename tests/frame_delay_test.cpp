@@ -197,12 +197,56 @@ static void test_catch_up()
     check(timing.last_loop_ns == 0 && timing.behind_ns == 0.0, "no frames running restarts the measurement");
 }
 
+// Vsync that doesn't pace (a driver override presenting without waiting):
+// many short loops in a row switch Vsync to Exact; jitter and the swapchain's
+// queue filling up at the start don't.
+static void test_vsync_unpaced()
+{
+    uint64_t now = 1000000000ull;
+    FrameTiming timing = vsync_timing(true);
+    frame_timing_measure_at(&timing, true, now);   // first loop: starts the measurement
+
+    double start[8] = {0.05, 0.05, 0.05, 1.0, 1.0, 1.0, 1.0, 1.0};   // queue filling, then paced
+    run_loops(&timing, start, 8, &now);
+    double jitter[600];
+    for (int i = 0; i < 600; i++)
+    {
+        jitter[i] = i % 2 == 0 ? 0.45 : 1.55;   // short loops, but never two in a row
+    }
+    run_loops(&timing, jitter, 600, &now);
+    check(!timing.vsync_unpaced, "paced vsync with jitter isn't taken for unpaced");
+
+    double almost[FRAME_TIMING_UNPACED_LOOPS];
+    for (uint32_t i = 0; i < FRAME_TIMING_UNPACED_LOOPS; i++)
+    {
+        almost[i] = i + 1 == FRAME_TIMING_UNPACED_LOOPS ? 1.0 : 0.06;
+    }
+    run_loops(&timing, almost, static_cast<int>(FRAME_TIMING_UNPACED_LOOPS), &now);
+    check(!timing.vsync_unpaced, "short loops broken by a paced one don't count");
+
+    double fast[FRAME_TIMING_UNPACED_LOOPS];
+    for (uint32_t i = 0; i < FRAME_TIMING_UNPACED_LOOPS; i++)
+    {
+        fast[i] = 0.06;   // ~1000 loops a second on 60 Hz
+    }
+    run_loops(&timing, fast, static_cast<int>(FRAME_TIMING_UNPACED_LOOPS), &now);
+    check(timing.vsync_unpaced, "unpaced vsync is detected");
+
+    frame_timing_update(&timing, true, 60.0, 60.0, false);
+    check(timing.effective == TimingMode::exact && timing.fell_back, "unpaced vsync falls back to Exact");
+    frame_timing_update(&timing, false, 0.0, 60.0, false);
+    check(timing.effective == TimingMode::vsync, "no core running: vsync (nothing to pace)");
+    frame_timing_update(&timing, true, 60.0, 60.0, false);
+    check(timing.effective == TimingMode::exact, "the next core stays on Exact");
+}
+
 int main()
 {
     test_auto_delay_comes_down_and_locks();
     test_auto_delay_minute_must_be_uninterrupted();
     test_auto_delay_warmup_and_restore();
     test_catch_up();
+    test_vsync_unpaced();
     if (g_failures == 0)
     {
         std::printf("frame delay: all checks passed\n");

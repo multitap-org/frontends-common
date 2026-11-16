@@ -7,6 +7,11 @@
 
 #include "gamemode_client.h"
 
+bool game_mode_supported()
+{
+    return true;
+}
+
 void game_mode_set(GameMode* game_mode, bool wanted)
 {
     if (wanted == game_mode->requested)

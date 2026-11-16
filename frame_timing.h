@@ -43,6 +43,10 @@ enum class TimingMode
 
 constexpr double FRAME_TIMING_VSYNC_TOLERANCE = 0.01;   // 1%: 59.94 / 60 / 60.10 all use vsync on 60 Hz
 constexpr uint32_t FRAME_TIMING_MAX_CATCH_UP = 2;         // extra core frames per loop, at most
+// Vsync not pacing (vsync_unpaced): this many loops in a row each shorter
+// than this share of a refresh.
+constexpr uint32_t FRAME_TIMING_UNPACED_LOOPS = 30;
+constexpr double   FRAME_TIMING_UNPACED_LOOP  = 0.5;
 
 struct FrameTiming
 {
@@ -70,6 +74,12 @@ struct FrameTiming
     uint32_t catch_up_frames = 0;      // extra core frames to run this loop
     uint64_t missed_total    = 0;      // statistics, for debug UIs
     uint64_t caught_up_total = 0;
+
+    // Vsync picked, but the driver doesn't make presents wait for it (an
+    // override such as NVIDIA's "Fast" vertical sync): measured in Vsync
+    // timing, then Exact is used (fell_back) for the rest of the session.
+    uint32_t short_loops   = 0;      // loops in a row much shorter than a refresh
+    bool     vsync_unpaced = false;
 };
 
 // Once per loop: works out the effective mode from the user's choice, the

@@ -57,6 +57,14 @@ struct Renderer
     // finished it. The next frame then starts as late as possible.
     bool     wait_for_present = false;
     uint64_t present_id = 0;           // id of the last present (present wait)
+
+    // Present wait that never completes (a driver override like NVIDIA's
+    // "Fast" vertical sync drops frames, so their ids never reach the
+    // screen): after a few timeouts in a row the fence wait is used instead,
+    // until the swapchain is recreated.
+    uint32_t       present_wait_timeouts   = 0;   // in a row
+    bool           present_wait_unreliable = false;
+    VkSwapchainKHR present_wait_swapchain  = VK_NULL_HANDLE;   // the swapchain those counts are for
 };
 
 struct ClearColor

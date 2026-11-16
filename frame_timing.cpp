@@ -31,7 +31,8 @@ void frame_timing_update(FrameTiming* timing, bool core_running, double core_fps
         // core at the wrong speed (DRC can only stretch audio by a little).
         double difference = display_hz > 0.0 ? (core_fps - display_hz) / display_hz : 1.0;
         difference = difference < 0.0 ? -difference : difference;
-        if (difference > FRAME_TIMING_VSYNC_TOLERANCE)
+        // Or vsync doesn't pace the loop at all (frame_timing_measure_at).
+        if (difference > FRAME_TIMING_VSYNC_TOLERANCE || timing->vsync_unpaced)
         {
             effective = TimingMode::exact;
             timing->fell_back = true;
@@ -83,11 +84,27 @@ void frame_timing_measure_at(FrameTiming* timing, bool running_frames, uint64_t 
     if (!measuring || last == 0 || now_ns <= last)
     {
         timing->behind_ns = 0.0;
+        timing->short_loops = 0;
         return;
     }
 
     double period = static_cast<double>(NANOSECONDS_PER_SECOND) / timing->display_hz;
     double interval = static_cast<double>(now_ns - last);
+
+    // Vsync that doesn't pace: with FIFO working no loop is much shorter than
+    // a refresh once the swapchain's queue is full, so many short loops in a
+    // row mean the driver presents without waiting (an override such as
+    // NVIDIA's "Fast" vertical sync). The core would run many times too fast:
+    // Exact from now on (frame_timing_update), for as long as this lasts.
+    timing->short_loops = interval < FRAME_TIMING_UNPACED_LOOP * period ? timing->short_loops + 1 : 0;
+    if (timing->short_loops >= FRAME_TIMING_UNPACED_LOOPS && !timing->vsync_unpaced)
+    {
+        timing->vsync_unpaced = true;
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Vsync is not pacing the frames (%u loops in a row under %.0f%% of a %.2f Hz refresh; a driver "
+                    "setting such as NVIDIA's \"Fast\" vertical sync?): using Exact timing",
+                    timing->short_loops, FRAME_TIMING_UNPACED_LOOP * 100.0, timing->display_hz);
+    }
 
     // Lost refreshes: whole periods the core frames are behind. A refresh can
     // be lost in one long loop or spread over several slightly long ones

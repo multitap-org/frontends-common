@@ -2,6 +2,11 @@
 
 #include "game_mode.h"
 
+bool game_mode_supported()
+{
+    return false;
+}
+
 void game_mode_set(GameMode* game_mode, bool wanted)
 {
     game_mode->requested = false;
