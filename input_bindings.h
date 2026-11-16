@@ -21,13 +21,22 @@
 //     keyboard always does.
 //   - A disconnected device frees its port (reported in the frame); when it
 //     comes back it gets that port again if it is still free.
-//   - Hotkeys on a gamepad need HOTKEY ENABLE (hotkey_enable): HOLD = they
-//     work while it is held; DOUBLE TAP = the next one hotkey works, then the
-//     normal layout is back (or after a few seconds). While enabled the
-//     controller's RetroPad goes quiet (after a short delay in HOLD, so a
-//     quick tap of the enable button still reaches the game).
-//   - Keyboard hotkeys work without HOTKEY ENABLE, unless their key is also
-//     bound to the RetroPad or the core takes the keyboard as a keyboard.
+//   - Layers (inspired by Steam Input and reWASD): each controller is in one
+//     layer at a time and only that layer's bindings do anything:
+//       HOTKEY     its modifier (hotkey_enable) is active: hotkeys only;
+//       INTERFACE  the UI is up (settings.ui_active): interface actions, for
+//                  the keyboard and port 1's controller;
+//       GAME       otherwise, once joined: the RetroPad of its port;
+//       NONE       nothing (not joined, another port while the UI is up,
+//                  binding by pressing, mapping).
+//     Entering the GAME or INTERFACE layer from another one, what was already
+//     held is ignored, each until let go (the button that closed the menu,
+//     the START that opened it); joining, only the START that joined.
+//   - The modifier's mode is the controller's (keyboard too): HOLD = the
+//     HOTKEY layer while it is held (after a short delay, so a quick tap of
+//     it still reaches the game; at once if a hotkey is pressed with it);
+//     ONE HOTKEY = a double tap turns it on until one hotkey fires (or a few
+//     seconds pass); STAYS ON = a double tap turns it on, another turns it off.
 //   - Any binding can share a source with others: one key on two RetroPad
 //     buttons is a combo (L as A + B on a GBA core).
 // Turbo and macros (a source that plays a sequence) are planned on top of
@@ -111,32 +120,42 @@ void input_unbind_all(InputBindingSet* set, InputAction action);
 bool input_is_bound(const InputBindingSet* set, InputAction action, InputSource source);
 
 // The defaults for the keyboard (arrows, Z X A S Q W E R, Enter, Right Shift;
-// F1 quick menu, F2 save, F4 load, Escape menu, Space fast forward).
+// Escape goes back in the UI (Backspace is kept for rewind); the hotkey
+// modifier is Left Shift:
+// Shift + F1 quick menu, F2 save, F4 load, Escape menu, Space fast forward).
 void input_default_keyboard_bindings(InputBindingSet* set);
 
 // The defaults for a gamepad, by position (the RetroPad's SNES layout: B
 // bottom, A right, Y left, X top; triggers L2 / R2, stick clicks L3 / R3,
 // sticks analog). Interface: d-pad and left stick, accept = bottom, back =
-// right, shoulders page, START opens the menu bar's first menu. Hotkeys with HOTKEY ENABLE = Select: Start quick
-// menu, right button menu, R save, L load, R2 fast forward.
+// right, shoulders page, START opens the menu bar's first menu. Hotkeys with
+// HOTKEY ENABLE = Select: Start quick menu, right button menu, R save, L
+// load, R2 fast forward.
 void input_default_gamepad_bindings(InputBindingSet* set);
 
 enum class InputHotkeyMode
 {
     hold,
-    double_tap,
+    one_hotkey,
+    stays_on,
+};
+
+// "hold", "one_hotkey", "stays_on" (for settings files).
+const char* input_hotkey_mode_name(InputHotkeyMode mode);
+bool        input_hotkey_mode_parse(const char* name, InputHotkeyMode* mode);
+
+enum class InputLayer
+{
+    none,
+    interface,
+    hotkey,
+    game,
 };
 
 struct InputSettings
 {
-    bool            keyboard_shares_port1 = true;
-    InputHotkeyMode hotkey_mode = InputHotkeyMode::hold;
-    bool            core_takes_keyboard = false;   // the core reads the keyboard as a keyboard
-    // False while the frontend's own UI is up (a menu or a dialog): no
-    // controller plays or joins (they drive the UI); hotkeys still work. When
-    // it comes back, each controller stays quiet until it lets go of everything,
-    // so the button that closed the menu isn't the game's.
-    bool            game_has_input = true;
+    bool keyboard_shares_port1 = true;
+    bool ui_active = false;   // the frontend's UI is up (a menu or a dialog): the INTERFACE layer
 };
 
 struct InputController
@@ -145,17 +164,18 @@ struct InputController
     std::string     name;               // shown in the UI, editable
     InputBindingSet bindings;
     float           deadzone = 0.15f;   // sticks, 0..1
+    InputHotkeyMode hotkey_mode = InputHotkeyMode::hold;
 
     // Kept between frames by input_update().
-    int32_t  last_port = INPUT_NO_PORT;            // the port it had when its device went away
-    bool     held_last[INPUT_ACTION_COUNT] = {};
-    bool     quiet_until_start_released = false;   // the START that joined is not the game's
-    bool     quiet_until_released = false;         // back from the UI: nothing to the game until all is let go
-    uint64_t enable_down_ms = 0;
-    bool     enable_used = false;                  // a hotkey fired since HOTKEY ENABLE went down
-    uint64_t enable_last_tap_ms = 0;
-    bool     armed = false;                        // DOUBLE TAP: the next hotkey works
-    uint64_t armed_ms = 0;
+    int32_t    last_port = INPUT_NO_PORT;            // the port it had when its device went away
+    bool       held_last[INPUT_ACTION_COUNT] = {};
+    InputLayer layer = InputLayer::none;
+    bool       held_at_switch[INPUT_ACTION_COUNT] = {};   // held when it entered `layer`: ignored until let go
+    uint64_t   modifier_down_ms = 0;
+    uint64_t   modifier_tap_ms = 0;                  // the modifier's last tap (double taps)
+    bool       modifier_on = false;                  // ONE HOTKEY / STAYS ON: turned on
+    uint64_t   modifier_on_ms = 0;
+    bool       modifier_used = false;                // a hotkey fired since the modifier went down
 };
 
 // What is kept of a controller between runs (settings/input.cfg), by id: a
@@ -176,6 +196,7 @@ struct InputProfile
     int32_t                           deadzone_percent = -1;   // -1 = default
     InputIgnore                       ignore = InputIgnore::automatic;   // gamepads
     std::string                       appearance;   // gamepads: how it looks ("xbox", "sony"...); "none" = declined; "" = never asked
+    InputHotkeyMode                   hotkey_mode = InputHotkeyMode::hold;
     std::vector<InputBindingOverride> overrides;
 };
 
@@ -222,7 +243,6 @@ struct InputSystem
     uint32_t    port_devices[INPUT_PORT_COUNT] = {1, 1, 1, 1};   // 1 = the libretro joypad
     int32_t                      ports[INPUT_PORT_COUNT] = {INPUT_NO_PORT, INPUT_NO_PORT, INPUT_NO_PORT, INPUT_NO_PORT};
     InputSettings                settings;
-    bool                         game_had_input = true;   // settings.game_has_input last frame
     InputCapture                 capture;
     // Nothing is routed (no actions, no RetroPad) while set: a controller is
     // being mapped raw, so its presses must not do anything else.
@@ -233,8 +253,9 @@ struct InputFrame
 {
     uint16_t pad_buttons[INPUT_PORT_COUNT] = {};    // bit N = RETRO_DEVICE_ID_JOYPAD_N
     int16_t  analog[INPUT_PORT_COUNT][2][2] = {};   // [port][left/right][x/y], -0x7fff..0x7fff
-    bool     held[INPUT_ACTION_COUNT] = {};         // interface and hotkeys, any controller (hotkeys when allowed)
+    bool     held[INPUT_ACTION_COUNT] = {};         // interface and hotkey actions, from controllers in those layers
     bool     pressed[INPUT_ACTION_COUNT] = {};      // went down this frame
+    bool     keyboard_pressed[INPUT_ACTION_COUNT] = {};   // the same, from the keyboard only
     bool     gamepad_held[INPUT_ACTION_COUNT] = {}; // interface actions held on port 1's gamepad: to drive a UI
     bool     gamepad_enable_alone = false;          // port 1's gamepad holds HOTKEY ENABLE and no hotkey fired with it
     int32_t  joined_port = INPUT_NO_PORT;           // a controller joined this frame (for a message)

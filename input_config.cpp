@@ -175,6 +175,11 @@ void input_config_read(InputSystem* system, const SettingsFile* file)
             InputProfile* profile = profile_for(system, id);
             const char* name = settings_file_get(file, section->name.c_str(), "name");
             profile->name = name != nullptr ? name : "";
+            const char* mode = settings_file_get(file, section->name.c_str(), "hotkey_mode");
+            if (mode != nullptr)
+            {
+                input_hotkey_mode_parse(mode, &profile->hotkey_mode);
+            }
             const char* appearance = settings_file_get(file, section->name.c_str(), "appearance");
             profile->appearance = appearance != nullptr ? appearance : "";
             const char* ignore = settings_file_get(file, section->name.c_str(), "ignore");
@@ -262,6 +267,7 @@ static void take_controllers(InputSystem* system)
         InputProfile* profile = profile_for(system, input_controller_profile_id(system, static_cast<uint32_t>(c)));
         profile->name = controller->name == device->name ? "" : controller->name;
         profile->ignore = device->ignore;
+        profile->hotkey_mode = controller->hotkey_mode;
         int32_t percent = static_cast<int32_t>(controller->deadzone * 100.0f + 0.5f);
         profile->deadzone_percent = percent == DEFAULT_DEADZONE_PERCENT ? -1 : percent;
         profile->overrides.clear();
@@ -311,6 +317,10 @@ void input_config_write(InputSystem* system, SettingsFile* file)
         if (!profile->name.empty())
         {
             settings_file_set(file, controller.c_str(), "name", profile->name.c_str());
+        }
+        if (profile->hotkey_mode != InputHotkeyMode::hold)
+        {
+            settings_file_set(file, controller.c_str(), "hotkey_mode", input_hotkey_mode_name(profile->hotkey_mode));
         }
         if (!profile->appearance.empty())
         {

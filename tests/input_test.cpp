@@ -11,6 +11,7 @@
 #include "input_bindings.h"
 #include "input_config.h"
 #include "input_devices.h"
+#include "input_layouts.h"
 
 static int g_failures = 0;
 
@@ -23,7 +24,7 @@ static void check(bool condition, const char* what)
     }
 }
 
-constexpr uint32_t HID_Z = 29, HID_X = 27, HID_RETURN = 40, HID_F1 = 58, HID_F2 = 59, HID_UP = 82;
+constexpr uint32_t HID_Z = 29, HID_X = 27, HID_RETURN = 40, HID_F1 = 58, HID_F2 = 59, HID_UP = 82, HID_LEFT_SHIFT = 225;
 constexpr uint32_t PAD_BIT_B = 1u << 0, PAD_BIT_START = 1u << 3, PAD_BIT_A = 1u << 8;
 
 static InputSource button(InputButton b)
@@ -124,30 +125,29 @@ static void test_keyboard_join_and_play()
     frame(system, 80, &out);
     check((out.pad_buttons[0] & PAD_BIT_A) == 0, "keyboard: ...once");
 
-    // Keyboard hotkeys work without HOTKEY ENABLE.
+    // Keyboard hotkeys need the modifier (Left Shift): F1 alone is nothing in the game.
     input_devices_set_code(&system->devices, keyboard, HID_F1, true);
     frame(system, 96, &out);
-    check(out.pressed[static_cast<uint32_t>(InputAction::hotkey_quick_menu)], "keyboard: F1 works alone");
+    check(!out.pressed[static_cast<uint32_t>(InputAction::hotkey_quick_menu)], "keyboard: F1 alone is no hotkey");
     input_devices_set_code(&system->devices, keyboard, HID_F1, false);
     frame(system, 112, &out);
-
-    // ...not when the core takes the keyboard.
-    system->settings.core_takes_keyboard = true;
+    input_devices_set_code(&system->devices, keyboard, HID_LEFT_SHIFT, true);
     input_devices_set_code(&system->devices, keyboard, HID_F1, true);
     frame(system, 128, &out);
-    check(!out.pressed[static_cast<uint32_t>(InputAction::hotkey_quick_menu)], "keyboard: F1 needs enable when the core takes the keyboard");
-    input_devices_set_code(&system->devices, keyboard, HID_F1, false);
-    system->settings.core_takes_keyboard = false;
+    check(out.pressed[static_cast<uint32_t>(InputAction::hotkey_quick_menu)], "keyboard: Shift + F1 is the quick menu");
+    check(system->controllers[0].layer == InputLayer::hotkey, "keyboard: in the HOTKEY layer with Shift");
+    input_devices_set_code(&system->devices, keyboard, HID_Z, true);
     frame(system, 144, &out);
-
-    // ...not when the key is also on the RetroPad.
-    InputSource f2 = {};
-    f2.type = InputSourceType::key;
-    f2.code = HID_F2;
-    input_bind(&system->controllers[0].bindings, InputAction::pad_x, f2);
-    input_devices_set_code(&system->devices, keyboard, HID_F2, true);
+    check(out.pad_buttons[0] == 0, "keyboard: no RetroPad in the HOTKEY layer");
+    input_devices_set_code(&system->devices, keyboard, HID_LEFT_SHIFT, false);
+    input_devices_set_code(&system->devices, keyboard, HID_F1, false);
     frame(system, 160, &out);
-    check(!out.pressed[static_cast<uint32_t>(InputAction::hotkey_save_state)], "keyboard: a key on the RetroPad isn't a hotkey");
+    check(out.pad_buttons[0] == 0, "keyboard: back in the game, Z held since the switch is ignored");
+    input_devices_set_code(&system->devices, keyboard, HID_Z, false);
+    frame(system, 176, &out);
+    input_devices_set_code(&system->devices, keyboard, HID_Z, true);
+    frame(system, 192, &out);
+    check((out.pad_buttons[0] & PAD_BIT_B) != 0, "keyboard: pressed again, it plays");
     delete system;
 }
 
@@ -217,12 +217,12 @@ static void test_shared_port_and_reconnects()
     input_devices_set_code(&system->devices, keyboard, HID_Z, false);
 
     // Joining works with the UI up; only port 1's gamepad drives the UI.
-    system->settings.game_has_input = false;
+    system->settings.ui_active = true;
     input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::dpad_down), true);
     frame(system, 64, &out);
     check(!out.gamepad_held[static_cast<uint32_t>(InputAction::ui_down)], "ui: a gamepad without ui bindings doesn't drive it");
     input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::dpad_down), false);
-    system->settings.game_has_input = true;
+    system->settings.ui_active = false;
     frame(system, 72, &out);
 
     // Unplugged: port freed and reported; plugged back: same port, same id.
@@ -286,8 +286,8 @@ static void test_gamepad_hotkeys()
     input_devices_set_code(&system->devices, pad, back, false);
     frame(system, 232, &out);
 
-    // DOUBLE TAP: two SELECT taps arm one hotkey.
-    system->settings.hotkey_mode = InputHotkeyMode::double_tap;
+    // ONE HOTKEY: a double tap of SELECT turns hotkeys on for one hotkey.
+    system->controllers[controller].hotkey_mode = InputHotkeyMode::one_hotkey;
     input_devices_set_code(&system->devices, pad, back, true);
     frame(system, 1000, &out);
     input_devices_set_code(&system->devices, pad, back, false);
@@ -296,36 +296,58 @@ static void test_gamepad_hotkeys()
     frame(system, 1100, &out);
     input_devices_set_code(&system->devices, pad, back, false);
     frame(system, 1150, &out);
-    check(system->controllers[controller].armed, "double tap: armed");
-    check(out.pad_buttons[0] == 0, "double tap: RetroPad quiet while armed");
+    check(system->controllers[controller].layer == InputLayer::hotkey, "one hotkey: on after a double tap");
+    check(out.pad_buttons[0] == 0, "one hotkey: no RetroPad while on");
     input_devices_set_code(&system->devices, pad, start, true);
     frame(system, 1200, &out);
-    check(out.pressed[quick_menu], "double tap: START fires the hotkey");
-    check(!system->controllers[controller].armed, "double tap: back to normal after one");
+    check(out.pressed[quick_menu], "one hotkey: START fires the hotkey");
     input_devices_set_code(&system->devices, pad, start, false);
     frame(system, 1216, &out);
+    check(system->controllers[controller].layer == InputLayer::game, "one hotkey: back to the game after one");
     input_devices_set_code(&system->devices, pad, start, true);
     frame(system, 1232, &out);
-    check(!out.pressed[quick_menu] && (out.pad_buttons[0] & PAD_BIT_START) != 0, "double tap: START is the game's again");
+    check(!out.pressed[quick_menu] && (out.pad_buttons[0] & PAD_BIT_START) != 0, "one hotkey: START is the game's again");
     input_devices_set_code(&system->devices, pad, start, false);
+    frame(system, 1248, &out);
 
-    // Slow taps don't arm; arming times out.
+    // Slow taps don't turn it on; it turns itself off after a while.
     input_devices_set_code(&system->devices, pad, back, true);
     frame(system, 3000, &out);
     input_devices_set_code(&system->devices, pad, back, false);
     frame(system, 3100, &out);
     input_devices_set_code(&system->devices, pad, back, true);
     frame(system, 3500, &out);
-    check(!system->controllers[controller].armed, "double tap: slow taps don't arm");
+    check(system->controllers[controller].layer != InputLayer::hotkey, "one hotkey: slow taps don't turn it on");
     input_devices_set_code(&system->devices, pad, back, false);
     frame(system, 3550, &out);
     input_devices_set_code(&system->devices, pad, back, true);
     frame(system, 3600, &out);
     input_devices_set_code(&system->devices, pad, back, false);
     frame(system, 3650, &out);
-    check(system->controllers[controller].armed, "double tap: armed again");
+    check(system->controllers[controller].layer == InputLayer::hotkey, "one hotkey: on again");
     frame(system, 7000, &out);
-    check(!system->controllers[controller].armed, "double tap: times out");
+    check(system->controllers[controller].layer == InputLayer::game, "one hotkey: times out");
+
+    // STAYS ON: on after a double tap, through hotkeys, off after another.
+    system->controllers[controller].hotkey_mode = InputHotkeyMode::stays_on;
+    for (uint64_t t = 8000; t <= 8150; t += 50)
+    {
+        input_devices_set_code(&system->devices, pad, back, (t / 50) % 2 == 0);
+        frame(system, t, &out);
+    }
+    check(system->controllers[controller].layer == InputLayer::hotkey, "stays on: on after a double tap");
+    input_devices_set_code(&system->devices, pad, start, true);
+    frame(system, 8200, &out);
+    input_devices_set_code(&system->devices, pad, start, false);
+    frame(system, 8250, &out);
+    check(out.pressed[quick_menu] || system->controllers[controller].layer == InputLayer::hotkey, "stays on: a hotkey fires");
+    check(system->controllers[controller].layer == InputLayer::hotkey, "stays on: still on after a hotkey");
+    for (uint64_t t = 9000; t <= 9150; t += 50)
+    {
+        input_devices_set_code(&system->devices, pad, back, (t / 50) % 2 == 0);
+        frame(system, t, &out);
+    }
+    check(system->controllers[controller].layer == InputLayer::game, "stays on: off after another double tap");
     delete system;
 }
 
@@ -389,17 +411,17 @@ static void test_menus_and_defaults()
     InputFrame out = {};
 
     // Menus up: the keyboard neither joins nor plays, but its hotkeys work.
-    system->settings.game_has_input = false;
+    system->settings.ui_active = true;
     input_devices_set_code(&system->devices, keyboard, HID_RETURN, true);
     input_devices_set_code(&system->devices, keyboard, HID_F1, true);
     frame(system, 0, &out);
     check(input_controller_port(system, controller) == 0, "menus: START joins with the UI up too");
-    check(out.pressed[static_cast<uint32_t>(InputAction::hotkey_quick_menu)], "menus: hotkeys still work");
+    check(!out.pressed[static_cast<uint32_t>(InputAction::hotkey_quick_menu)], "menus: F1 alone is no hotkey in the UI either");
     input_devices_set_code(&system->devices, keyboard, HID_RETURN, false);
     input_devices_set_code(&system->devices, keyboard, HID_Z, true);
     frame(system, 16, &out);
     check(out.pad_buttons[0] == 0, "menus: the keyboard doesn't play");
-    system->settings.game_has_input = true;
+    system->settings.ui_active = false;
     frame(system, 32, &out);
     check(out.pad_buttons[0] == 0, "menus closed: quiet while Z is still held");
     input_devices_set_code(&system->devices, keyboard, HID_Z, false);
@@ -420,6 +442,8 @@ static void test_menus_and_defaults()
     uint32_t pad_controller = input_add_controller(system, pad, "Pad", &defaults);
     input_leave_all(system);
     input_join(system, pad_controller);   // port 1 drives the UI
+    system->settings.ui_active = true;   // the INTERFACE layer
+    frame(system, 72, &out);
     input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::dpad_down), true);
     input_devices_set_code(&system->devices, keyboard, HID_UP, true);
     frame(system, 80, &out);
@@ -642,6 +666,31 @@ static void test_core_profiles()
     delete back;
 }
 
+static void test_layouts()
+{
+    InputLayouts layouts = {};
+    static const char GENESIS[] =
+        "[layout]\nname = GENESIS\norder = 40\nsdl_types = segagenesis\ndpad = yes\nsticks = 0\n"
+        "[labels]\na = A\nb = B\nrightshoulder = C\nx = X\ny = Y\nleftshoulder = Z\nstart = START\n";
+    SettingsFile file = {};
+    settings_file_parse(&file, GENESIS, sizeof(GENESIS) - 1, "test");
+    input_layouts_add(&layouts, "Sega", "genesis6", &file);
+    input_layouts_ensure_generic(&layouts);
+    check(layouts.layouts.size() == 2 && layouts.layouts[0].id == "Generic/generic", "layouts: generic built in, sorted first");
+    std::vector<std::string> makers;
+    input_layouts_makers(&layouts, &makers);
+    check(makers.size() == 2 && makers[0] == "Generic" && makers[1] == "Sega", "layouts: makers in order");
+    const InputLayout* genesis = input_layouts_find(&layouts, "Sega/genesis6");
+    check(genesis != nullptr && genesis->name == "GENESIS", "layouts: read by id");
+    check(input_layouts_for_type(&layouts, "segagenesis") == genesis, "layouts: picked by SDL type");
+    check(genesis != nullptr && input_layout_has(genesis, InputMapControl::right_shoulder) &&
+              genesis->labels[static_cast<uint32_t>(InputMapControl::right_shoulder)] == "C",
+          "layouts: a labelled button is on the pad");
+    check(genesis != nullptr && !input_layout_has(genesis, InputMapControl::left_trigger), "layouts: an unlisted button isn't");
+    check(genesis != nullptr && !input_layout_has(genesis, InputMapControl::left_x) && input_layout_has(genesis, InputMapControl::dpad_up),
+          "layouts: no sticks, a d-pad");
+}
+
 int main()
 {
     test_sources();
@@ -655,6 +704,7 @@ int main()
     test_config();
     test_capture_and_remove();
     test_core_profiles();
+    test_layouts();
     if (g_failures == 0)
     {
         std::printf("input: all checks passed\n");

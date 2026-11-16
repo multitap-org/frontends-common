@@ -8,7 +8,8 @@
 //   name = SNES30
 //   deadzone = 15
 //   ignore = yes                          (or no; missing = automatic)
-//   appearance = sony                     (generic, xbox, sony, nintendo; none = declined)
+//   appearance = Sony/dualsense           (a layout id; none = declined)
+//   hotkey_mode = stays_on                (hold, one_hotkey, stays_on; missing = hold)
 //
 //   [retropad/<id>]                       RetroPad bindings that differ from the defaults
 //   pad.y = button:west key:A

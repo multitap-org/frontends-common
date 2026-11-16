@@ -14,6 +14,12 @@ static const char* const SDL_NAMES[INPUT_MAP_CONTROL_COUNT] = {
     "lefttrigger", "righttrigger", "leftstick", "rightstick", "guide", "leftx", "lefty", "rightx", "righty",
 };
 
+const char* input_map_control_sdl_name(InputMapControl control)
+{
+    uint32_t index = static_cast<uint32_t>(control);
+    return index < INPUT_MAP_CONTROL_COUNT ? SDL_NAMES[index] : "";
+}
+
 bool input_map_control_optional(InputMapControl control)
 {
     return static_cast<uint32_t>(control) >= static_cast<uint32_t>(InputMapControl::left_trigger);
@@ -103,14 +109,23 @@ static std::string pressed_element(const InputSdlMapper* mapper, InputMapControl
     return "";
 }
 
+// The next step is the next wanted one.
 static void start_step(InputSdlMapper* mapper, uint64_t now_ms)
 {
+    while (mapper->step < INPUT_MAP_CONTROL_COUNT && !mapper->wanted[mapper->step])
+    {
+        mapper->step++;
+    }
     mapper->waiting_release = true;
     mapper->step_started_ms = now_ms;
 }
 
-bool input_sdl_mapper_begin(InputSdlMapper* mapper, uint32_t joystick_id, uint64_t now_ms)
+bool input_sdl_mapper_begin(InputSdlMapper* mapper, uint32_t joystick_id, const bool* wanted, uint64_t now_ms)
 {
+    for (uint32_t c = 0; c < INPUT_MAP_CONTROL_COUNT; c++)
+    {
+        mapper->wanted[c] = wanted == nullptr || wanted[c];
+    }
     input_sdl_mapper_cancel(mapper);
     SDL_Joystick* joystick = SDL_OpenJoystick(static_cast<SDL_JoystickID>(joystick_id));
     if (joystick == nullptr)
@@ -197,13 +212,20 @@ uint32_t input_sdl_mapper_seconds_left(const InputSdlMapper* mapper, uint64_t no
 
 void input_sdl_mapper_back(InputSdlMapper* mapper, uint64_t now_ms)
 {
-    if (!mapper->active || mapper->step == 0)
+    // The previous wanted step.
+    uint32_t step = mapper->step;
+    while (mapper->active && step > 0)
     {
-        return;
+        step--;
+        if (mapper->wanted[step])
+        {
+            mapper->step = step;
+            mapper->elements[step].clear();
+            mapper->waiting_release = true;
+            mapper->step_started_ms = now_ms;
+            return;
+        }
     }
-    mapper->step--;
-    mapper->elements[mapper->step].clear();
-    start_step(mapper, now_ms);
 }
 
 void input_sdl_mapper_skip(InputSdlMapper* mapper, uint64_t now_ms)

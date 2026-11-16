@@ -49,6 +49,9 @@ constexpr uint32_t INPUT_MAP_CONTROL_COUNT = static_cast<uint32_t>(InputMapContr
 // May the pad lack it? (Then the step is skipped after a few seconds.)
 bool input_map_control_optional(InputMapControl control);
 
+// Its name in SDL's mapping text ("a", "dpup", "leftx"...).
+const char* input_map_control_sdl_name(InputMapControl control);
+
 struct InputSdlMapper
 {
     bool          active = false;
@@ -61,10 +64,12 @@ struct InputSdlMapper
     bool          waiting_release = false;           // a step just ended: wait for everything to be let go
     std::vector<int16_t> rest;                       // each axis at rest (when mapping started)
     std::string   elements[INPUT_MAP_CONTROL_COUNT]; // "b3", "h0.1", "+a2", "a5", "a1~" ("" = none)
+    bool          wanted[INPUT_MAP_CONTROL_COUNT] = {};   // the steps to ask (the controller's layout has them)
 };
 
-// Starts on a connected joystick (any: known to SDL as a gamepad or not).
-bool input_sdl_mapper_begin(InputSdlMapper* mapper, uint32_t joystick_id, uint64_t now_ms);
+// Starts on a connected joystick (any: known to SDL as a gamepad or not),
+// asking for the controls in `wanted` (nullptr = all of them).
+bool input_sdl_mapper_begin(InputSdlMapper* mapper, uint32_t joystick_id, const bool* wanted, uint64_t now_ms);
 
 // Once a frame: looks for the current step's control. Returns true when the
 // mapping is complete (every step answered or skipped).

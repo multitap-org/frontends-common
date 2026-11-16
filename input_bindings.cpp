@@ -5,9 +5,11 @@
 
 // A digital action counts as pressed past this (keys and buttons are 0 or 1).
 constexpr float PRESSED_THRESHOLD = 0.5f;
-// HOLD: how long HOTKEY ENABLE must be held before the RetroPad goes quiet.
+// HOLD: how long the modifier must be held before the HOTKEY layer is on
+// (unless a hotkey is pressed with it).
 constexpr uint64_t HOTKEY_BLOCK_DELAY_MS = 80;
-// DOUBLE TAP: two presses this close arm it; armed for this long at most.
+// ONE HOTKEY / STAYS ON: two presses of the modifier this close turn it on;
+// ONE HOTKEY turns itself off after this long without a hotkey.
 constexpr uint64_t DOUBLE_TAP_MS = 300;
 constexpr uint64_t ARMED_TIMEOUT_MS = 3000;
 
@@ -24,6 +26,31 @@ static const char* const ACTION_NAMES[INPUT_ACTION_COUNT] = {
 static uint32_t index_of(InputAction action)
 {
     return static_cast<uint32_t>(action);
+}
+
+const char* input_hotkey_mode_name(InputHotkeyMode mode)
+{
+    switch (mode)
+    {
+    case InputHotkeyMode::one_hotkey: return "one_hotkey";
+    case InputHotkeyMode::stays_on:   return "stays_on";
+    case InputHotkeyMode::hold:       break;
+    }
+    return "hold";
+}
+
+bool input_hotkey_mode_parse(const char* name, InputHotkeyMode* mode)
+{
+    static const InputHotkeyMode MODES[] = {InputHotkeyMode::hold, InputHotkeyMode::one_hotkey, InputHotkeyMode::stays_on};
+    for (int m = 0; m < 3; m++)
+    {
+        if (std::strcmp(input_hotkey_mode_name(MODES[m]), name) == 0)
+        {
+            *mode = MODES[m];
+            return true;
+        }
+    }
+    return false;
 }
 
 const char* input_action_name(InputAction action)
@@ -125,11 +152,12 @@ static InputSource key(uint16_t code)
 
 // HID usage ids for the defaults.
 constexpr uint16_t HID_A = 4, HID_E = 8, HID_Q = 20, HID_R = 21, HID_S = 22, HID_W = 26, HID_X = 27, HID_Z = 29;
-constexpr uint16_t HID_RETURN = 40, HID_ESCAPE = 41, HID_BACKSPACE = 42, HID_SPACE = 44;
+constexpr uint16_t HID_RETURN = 40, HID_ESCAPE = 41, HID_SPACE = 44;
 constexpr uint16_t HID_F1 = 58, HID_F2 = 59, HID_F4 = 61;
 constexpr uint16_t HID_PAGE_UP = 75, HID_PAGE_DOWN = 78;
 constexpr uint16_t HID_RIGHT = 79, HID_LEFT = 80, HID_DOWN = 81, HID_UP = 82;
 constexpr uint16_t HID_RIGHT_SHIFT = 229;
+constexpr uint16_t HID_LEFT_SHIFT = 225;
 
 void input_default_keyboard_bindings(InputBindingSet* set)
 {
@@ -154,10 +182,12 @@ void input_default_keyboard_bindings(InputBindingSet* set)
     input_bind(set, InputAction::ui_left, key(HID_LEFT));
     input_bind(set, InputAction::ui_right, key(HID_RIGHT));
     input_bind(set, InputAction::ui_accept, key(HID_RETURN));
-    input_bind(set, InputAction::ui_back, key(HID_BACKSPACE));
+    input_bind(set, InputAction::ui_back, key(HID_ESCAPE));   // Backspace is kept for rewind
     input_bind(set, InputAction::ui_page_left, key(HID_PAGE_UP));
     input_bind(set, InputAction::ui_page_right, key(HID_PAGE_DOWN));
 
+    // The modifier: Left Shift ("shift" to the HOTKEY layer; Right Shift is SELECT).
+    input_bind(set, InputAction::hotkey_enable, key(HID_LEFT_SHIFT));
     input_bind(set, InputAction::hotkey_menu, key(HID_ESCAPE));
     input_bind(set, InputAction::hotkey_quick_menu, key(HID_F1));
     input_bind(set, InputAction::hotkey_save_state, key(HID_F2));
@@ -217,6 +247,8 @@ void input_default_gamepad_bindings(InputBindingSet* set)
     input_bind(set, InputAction::ui_left, pad_axis(InputAxis::left_x, false));
     input_bind(set, InputAction::ui_right, pad_button(InputButton::dpad_right));
     input_bind(set, InputAction::ui_right, pad_axis(InputAxis::left_x, true));
+    // The bottom button accepts, the right one goes back (the frontend may
+    // swap them: REVERSE ACCEPT / BACK).
     input_bind(set, InputAction::ui_accept, pad_button(InputButton::south));
     input_bind(set, InputAction::ui_back, pad_button(InputButton::east));
     input_bind(set, InputAction::ui_page_left, pad_button(InputButton::left_shoulder));
@@ -325,6 +357,10 @@ static void add_from_profile(InputSystem* system, const InputDevice* device, con
         deadzone = profile->deadzone_percent;
     }
     uint32_t index = input_add_controller(system, device->id, name.c_str(), &bindings);
+    if (profile != nullptr)
+    {
+        system->controllers[index].hotkey_mode = profile->hotkey_mode;
+    }
     if (deadzone >= 0 && deadzone < 100)
     {
         system->controllers[index].deadzone = static_cast<float>(deadzone) / 100.0f;
@@ -695,35 +731,6 @@ static float action_value(const InputController* controller, const InputDevice* 
     return value;
 }
 
-// Is any of this hotkey's sources usable without HOTKEY ENABLE? (Keyboard
-// keys not bound to the RetroPad, while the core doesn't take the keyboard.)
-static bool hotkey_free(const InputSystem* system, const InputController* controller, const InputDevice* device,
-                        InputAction action)
-{
-    if (device->kind != InputDeviceKind::keyboard || system->settings.core_takes_keyboard)
-    {
-        return false;
-    }
-    const InputSource* slots = controller->bindings.sources[index_of(action)];
-    for (uint32_t s = 0; s < INPUT_SOURCES_PER_ACTION; s++)
-    {
-        if (slots[s].type == InputSourceType::none || input_source_value(device, slots[s]) < PRESSED_THRESHOLD)
-        {
-            continue;
-        }
-        bool on_pad = false;
-        for (uint32_t a = 0; a <= index_of(InputAction::pad_right_y_minus) && !on_pad; a++)
-        {
-            on_pad = input_is_bound(&controller->bindings, static_cast<InputAction>(a), slots[s]);
-        }
-        if (!on_pad)
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
 static int16_t to_axis(float value)
 {
     float scaled = value * 32767.0f;
@@ -753,11 +760,56 @@ static void stick(const InputController* controller, const InputBindingSet* set,
     out[1] = to_axis(y * scale);
 }
 
+// The modifier, by the controller's mode: is the HOTKEY layer on?
+static bool modifier_active(InputController* controller, const bool* held, const bool* pressed, uint64_t now_ms)
+{
+    uint32_t modifier = index_of(InputAction::hotkey_enable);
+    if (pressed[modifier])
+    {
+        controller->modifier_down_ms = now_ms;
+        controller->modifier_used = false;
+    }
+    if (controller->hotkey_mode == InputHotkeyMode::hold)
+    {
+        if (!held[modifier])
+        {
+            return false;
+        }
+        // At once with a hotkey; otherwise after a short delay, so a quick
+        // tap of the modifier (SELECT on a pad) still reaches the game.
+        bool hotkey_pressed = false;
+        for (uint32_t a = index_of(InputAction::hotkey_enable) + 1; a < INPUT_ACTION_COUNT; a++)
+        {
+            hotkey_pressed = hotkey_pressed || pressed[a];
+        }
+        return hotkey_pressed || controller->layer == InputLayer::hotkey ||
+               now_ms - controller->modifier_down_ms >= HOTKEY_BLOCK_DELAY_MS;
+    }
+    // ONE HOTKEY / STAYS ON: a double tap of the modifier.
+    if (pressed[modifier])
+    {
+        if (controller->modifier_tap_ms != 0 && now_ms - controller->modifier_tap_ms <= DOUBLE_TAP_MS)
+        {
+            controller->modifier_on = controller->hotkey_mode == InputHotkeyMode::stays_on ? !controller->modifier_on : true;
+            controller->modifier_on_ms = now_ms;
+            controller->modifier_tap_ms = 0;
+        }
+        else
+        {
+            controller->modifier_tap_ms = now_ms;
+        }
+    }
+    if (controller->hotkey_mode == InputHotkeyMode::one_hotkey && controller->modifier_on &&
+        now_ms - controller->modifier_on_ms > ARMED_TIMEOUT_MS)
+    {
+        controller->modifier_on = false;
+    }
+    return controller->modifier_on;
+}
+
 void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
 {
     *frame = InputFrame{};
-    bool back_to_game = system->settings.game_has_input && !system->game_had_input;
-    system->game_had_input = system->settings.game_has_input;
 
     // Ports of devices that went away; back when they return, if still free.
     for (size_t c = 0; c < system->controllers.size(); c++)
@@ -789,6 +841,7 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         const InputDevice* device = input_devices_find_const(&system->devices, controller->device_id);
         if (device == nullptr || !device->connected || input_devices_ignored(device))
         {
+            controller->layer = InputLayer::none;
             continue;
         }
         uint32_t index = static_cast<uint32_t>(c);
@@ -802,32 +855,19 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             controller->held_last[a] = held[a];
         }
 
-        // While binding by pressing (or mapping), the press is the binding's alone.
+        // Binding by pressing, or mapping: no layer at all.
         if (system->capture.active || system->suspended)
         {
+            controller->layer = InputLayer::none;
             continue;
         }
 
         // Joining (any time: in the UI or in a game).
-        bool plays = system->settings.game_has_input;
         bool keyboard = device->kind == InputDeviceKind::keyboard;
         bool shared = input_controller_shares_port1(system, index);
         if (shared && input_controller_port(system, index) != INPUT_NO_PORT)
         {
             input_leave(system, index);   // it plays on port 1 anyway
-        }
-        bool any_pad_held = false;
-        for (uint32_t a = 0; a <= index_of(InputAction::pad_right_y_minus); a++)
-        {
-            any_pad_held = any_pad_held || held[a];
-        }
-        if (back_to_game)
-        {
-            controller->quiet_until_released = any_pad_held;
-        }
-        else if (controller->quiet_until_released && !any_pad_held)
-        {
-            controller->quiet_until_released = false;
         }
         int32_t port = input_controller_port(system, index);
         if (!shared && port == INPUT_NO_PORT && pressed[index_of(InputAction::pad_start)])
@@ -835,116 +875,132 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             port = join_port(system, index, INPUT_NO_PORT);
             if (port != INPUT_NO_PORT)
             {
-                controller->quiet_until_start_released = true;
                 frame->joined_port = port;
                 frame->joined_controller = static_cast<int32_t>(index);
             }
         }
-        if (controller->quiet_until_start_released && !held[index_of(InputAction::pad_start)])
-        {
-            controller->quiet_until_start_released = false;
-        }
         bool joined = shared || port != INPUT_NO_PORT;
-        if (!joined && !keyboard)
-        {
-            continue;   // a gamepad does nothing until it joins
-        }
-        int32_t play_port = shared ? 0 : port;
 
-        // HOTKEY ENABLE.
-        uint32_t enable = index_of(InputAction::hotkey_enable);
-        bool enabled = false;
-        bool quiet = controller->quiet_until_start_released || controller->quiet_until_released;
-        if (system->settings.hotkey_mode == InputHotkeyMode::hold)
-        {
-            if (pressed[enable])
-            {
-                controller->enable_down_ms = now_ms;
-                controller->enable_used = false;
-            }
-            enabled = held[enable];
-            quiet = quiet || (held[enable] && now_ms - controller->enable_down_ms >= HOTKEY_BLOCK_DELAY_MS);
-        }
-        else
-        {
-            if (pressed[enable])
-            {
-                if (controller->enable_last_tap_ms != 0 && now_ms - controller->enable_last_tap_ms <= DOUBLE_TAP_MS)
-                {
-                    controller->armed = true;
-                    controller->armed_ms = now_ms;
-                    controller->enable_last_tap_ms = 0;
-                }
-                else
-                {
-                    controller->enable_last_tap_ms = now_ms;
-                }
-            }
-            if (controller->armed && now_ms - controller->armed_ms > ARMED_TIMEOUT_MS)
-            {
-                controller->armed = false;
-            }
-            enabled = controller->armed;
-            quiet = quiet || controller->armed;
-        }
-
-        // Interface: the keyboard and port 1's controller. Hotkeys: the
-        // keyboard and every controller that joined.
+        // The layer: HOTKEY > INTERFACE > GAME.
+        bool hotkeys = (joined || keyboard) && modifier_active(controller, held, pressed, now_ms);
         bool drives_ui = keyboard || port == 0;
-        bool fired = false;
-        for (uint32_t a = index_of(InputAction::ui_up); a < INPUT_ACTION_COUNT; a++)
+        InputLayer layer = InputLayer::none;
+        if (hotkeys)
         {
-            InputAction action = static_cast<InputAction>(a);
-            if (action == InputAction::hotkey_enable)
-            {
-                continue;
-            }
-            if (input_action_is_hotkey(action) && !enabled && !hotkey_free(system, controller, device, action))
-            {
-                continue;
-            }
-            if (!input_action_is_hotkey(action) && (enabled || !drives_ui))
-            {
-                continue;   // the hotkey layer is on, or this controller doesn't drive the UI
-            }
-            frame->held[a] = frame->held[a] || held[a];
-            frame->pressed[a] = frame->pressed[a] || pressed[a];
-            if (device->kind != InputDeviceKind::keyboard && !input_action_is_hotkey(action))
-            {
-                frame->gamepad_held[a] = frame->gamepad_held[a] || held[a];
-            }
-            fired = fired || (input_action_is_hotkey(action) && pressed[a]);
+            layer = InputLayer::hotkey;
         }
-        if (fired && controller->armed)
+        else if (system->settings.ui_active)
         {
-            controller->armed = false;   // DOUBLE TAP: one hotkey, then back to normal
+            layer = drives_ui ? InputLayer::interface : InputLayer::none;
         }
-        controller->enable_used = controller->enable_used || (fired && held[enable]);
-        if (!keyboard && port == 0 && held[enable] && !controller->enable_used)
+        else if (joined)
         {
-            frame->gamepad_enable_alone = true;   // SELECT held by itself: the UI may use it (hold to go back)
+            layer = InputLayer::game;
+        }
+        if (layer != controller->layer)
+        {
+            // What's held as it enters a layer stays out of it until let go:
+            // all of it coming from another layer, only the START that joined
+            // when it comes in from nothing. (Into HOTKEY: nothing; the press
+            // that turned it on is the hotkey.)
+            bool from_layer = controller->layer != InputLayer::none;
+            bool joined_now = frame->joined_controller == static_cast<int32_t>(index);
+            for (uint32_t a = 0; a < INPUT_ACTION_COUNT; a++)
+            {
+                bool hold = layer != InputLayer::hotkey && held[a] &&
+                            (from_layer || (joined_now && a == index_of(InputAction::pad_start)));
+                controller->held_at_switch[a] = hold;
+            }
+            controller->layer = layer;
+        }
+        for (uint32_t a = 0; a < INPUT_ACTION_COUNT; a++)
+        {
+            controller->held_at_switch[a] = controller->held_at_switch[a] && held[a];
+            if (controller->held_at_switch[a])
+            {
+                held[a] = false;
+                pressed[a] = false;
+            }
+        }
+        uint32_t modifier = index_of(InputAction::hotkey_enable);
+
+        switch (layer)
+        {
+        case InputLayer::hotkey:
+        {
+            bool fired = false;
+            for (uint32_t a = modifier + 1; a < INPUT_ACTION_COUNT; a++)
+            {
+                frame->held[a] = frame->held[a] || held[a];
+                frame->pressed[a] = frame->pressed[a] || pressed[a];
+                frame->keyboard_pressed[a] = frame->keyboard_pressed[a] || (keyboard && pressed[a]);
+                fired = fired || pressed[a];
+            }
+            if (fired)
+            {
+                controller->modifier_used = true;
+                if (controller->hotkey_mode == InputHotkeyMode::one_hotkey)
+                {
+                    controller->modifier_on = false;   // one hotkey, then back
+                }
+            }
+            break;
+        }
+        case InputLayer::interface:
+            for (uint32_t a = index_of(InputAction::ui_up); a <= index_of(InputAction::ui_open_menu); a++)
+            {
+                frame->held[a] = frame->held[a] || held[a];
+                frame->pressed[a] = frame->pressed[a] || pressed[a];
+                frame->keyboard_pressed[a] = frame->keyboard_pressed[a] || (keyboard && pressed[a]);
+                if (!keyboard)
+                {
+                    frame->gamepad_held[a] = frame->gamepad_held[a] || held[a];
+                }
+            }
+            break;
+        case InputLayer::game:
+        {
+            // The port's RetroPad: the controller's bindings for the running
+            // core and the port's device (its own, unless a custom core profile).
+            int32_t play_port = shared ? 0 : port;
+            InputBindingSet effective = {};
+            input_effective_bindings(system, index, static_cast<uint32_t>(play_port), &effective);
+            uint16_t buttons = 0;
+            for (uint32_t b = 0; b < INPUT_PAD_BUTTON_COUNT; b++)
+            {
+                if (set_value(&effective, device, static_cast<InputAction>(b)) >= PRESSED_THRESHOLD)
+                {
+                    buttons = static_cast<uint16_t>(buttons | (1u << b));
+                }
+            }
+            for (uint32_t b = 0; b < INPUT_PAD_BUTTON_COUNT; b++)
+            {
+                if (controller->held_at_switch[b])
+                {
+                    buttons = static_cast<uint16_t>(buttons & ~(1u << b));   // still held from another layer
+                }
+            }
+            frame->pad_buttons[play_port] = static_cast<uint16_t>(frame->pad_buttons[play_port] | buttons);
+            for (int s = 0; s < 2; s++)
+            {
+                uint32_t first = index_of(s == 0 ? InputAction::pad_left_x_plus : InputAction::pad_right_x_plus);
+                bool stuck = controller->held_at_switch[first] || controller->held_at_switch[first + 1] ||
+                             controller->held_at_switch[first + 2] || controller->held_at_switch[first + 3];
+                if (!stuck)
+                {
+                    stick(controller, &effective, device, static_cast<InputAction>(first), frame->analog[play_port][s]);
+                }
+            }
+            break;
+        }
+        case InputLayer::none:
+            break;
         }
 
-        // The RetroPad of its port.
-        if (!joined || quiet || !plays)
+        // SELECT held by itself on port 1's gamepad (the UI may use it: hold to go back).
+        if (!keyboard && port == 0 && controller->held_last[modifier] && !controller->modifier_used)
         {
-            continue;
+            frame->gamepad_enable_alone = true;
         }
-        port = play_port;
-        // The port's RetroPad: the controller's bindings for the running core
-        // and the port's device (its own, unless a custom core profile).
-        InputBindingSet effective = {};
-        input_effective_bindings(system, index, static_cast<uint32_t>(port), &effective);
-        uint16_t buttons = 0;
-        for (uint32_t b = 0; b < INPUT_PAD_BUTTON_COUNT; b++)
-        {
-            if (set_value(&effective, device, static_cast<InputAction>(b)) >= PRESSED_THRESHOLD)
-            {
-                buttons = static_cast<uint16_t>(buttons | (1u << b));
-            }
-        }
-        frame->pad_buttons[port] = static_cast<uint16_t>(frame->pad_buttons[port] | buttons);
-        stick(controller, &effective, device, InputAction::pad_left_x_plus, frame->analog[port][0]);
-        stick(controller, &effective, device, InputAction::pad_right_x_plus, frame->analog[port][1]);
     }
 }
