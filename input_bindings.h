@@ -175,6 +175,7 @@ struct InputProfile
     std::string                       name;               // "" = the device's own name
     int32_t                           deadzone_percent = -1;   // -1 = default
     InputIgnore                       ignore = InputIgnore::automatic;   // gamepads
+    std::string                       appearance;   // gamepads: how it looks ("xbox", "sony"...); "none" = declined; "" = never asked
     std::vector<InputBindingOverride> overrides;
 };
 
@@ -223,6 +224,9 @@ struct InputSystem
     InputSettings                settings;
     bool                         game_had_input = true;   // settings.game_has_input last frame
     InputCapture                 capture;
+    // Nothing is routed (no actions, no RetroPad) while set: a controller is
+    // being mapped raw, so its presses must not do anything else.
+    bool                         suspended = false;
 };
 
 struct InputFrame
@@ -238,6 +242,10 @@ struct InputFrame
     int32_t  left_port = INPUT_NO_PORT;             // a controller's device went away and freed this port
     int32_t  left_controller = -1;
 };
+
+// The profile with this id, or nullptr; _for makes one.
+const InputProfile* input_profile(const InputSystem* system, const std::string& id);
+InputProfile*       input_profile_for(InputSystem* system, const std::string& id);
 
 // The defaults for a device's kind (keyboard or gamepad).
 void input_default_bindings(InputDeviceKind kind, InputBindingSet* set);

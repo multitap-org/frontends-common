@@ -63,17 +63,31 @@ static void add_gamepad(InputSdl* sdl, InputSystem* system, SDL_JoystickID id)
                                                   : ", ignored: its axes are pinned (not a real gamepad)");
 }
 
+static void forget_unmapped(InputSdl* sdl, uint32_t id)
+{
+    for (size_t i = 0; i < sdl->unmapped.size(); i++)
+    {
+        if (sdl->unmapped[i] == id)
+        {
+            sdl->unmapped.erase(sdl->unmapped.begin() + static_cast<long>(i));
+            return;
+        }
+    }
+}
+
 // A joystick SDL has no gamepad mapping for can't be used until it is mapped.
-static void report_unmapped(SDL_JoystickID id)
+static void report_unmapped(InputSdl* sdl, SDL_JoystickID id)
 {
     if (SDL_IsGamepad(id))
     {
         return;
     }
+    forget_unmapped(sdl, id);
+    sdl->unmapped.push_back(id);
     char guid[64] = {};
     SDL_GUIDToString(SDL_GetJoystickGUIDForID(id), guid, sizeof(guid));
     const char* name = SDL_GetJoystickNameForID(id);
-    SDL_Log("Controller %s (%s) isn't known as a gamepad: map it with piccolo_map_gamepad to use it",
+    SDL_Log("Controller %s (%s) isn't known as a gamepad: map it (SETTINGS > INPUT > DEVICES) to use it",
             name != nullptr ? name : "(no name)", guid);
 }
 
@@ -114,7 +128,7 @@ void input_sdl_init(InputSdl* sdl, InputSystem* system, const char* mappings_pat
         }
         else
         {
-            report_unmapped(ids[i]);
+            report_unmapped(sdl, ids[i]);
         }
     }
     SDL_free(ids);
@@ -152,9 +166,13 @@ void input_sdl_handle_event(InputSdl* sdl, InputSystem* system, const SDL_Event*
         input_devices_release_all(&system->devices, sdl->keyboard_device);
         break;
     case SDL_EVENT_JOYSTICK_ADDED:
-        report_unmapped(event->jdevice.which);
+        report_unmapped(sdl, event->jdevice.which);
+        break;
+    case SDL_EVENT_JOYSTICK_REMOVED:
+        forget_unmapped(sdl, event->jdevice.which);
         break;
     case SDL_EVENT_GAMEPAD_ADDED:
+        forget_unmapped(sdl, event->gdevice.which);   // mapped now
         add_gamepad(sdl, system, event->gdevice.which);
         break;
     case SDL_EVENT_GAMEPAD_REMOVED:
@@ -192,6 +210,31 @@ void input_sdl_handle_event(InputSdl* sdl, InputSystem* system, const SDL_Event*
     default:
         break;
     }
+}
+
+std::string input_sdl_joystick_name(uint32_t joystick_id)
+{
+    const char* name = SDL_GetJoystickNameForID(static_cast<SDL_JoystickID>(joystick_id));
+    return name != nullptr ? name : "";
+}
+
+std::string input_sdl_joystick_guid(uint32_t joystick_id)
+{
+    char guid[64] = {};
+    SDL_GUIDToString(SDL_GetJoystickGUIDForID(static_cast<SDL_JoystickID>(joystick_id)), guid, sizeof(guid));
+    return guid;
+}
+
+uint32_t input_sdl_joystick_of(const InputSdl* sdl, uint32_t device_id)
+{
+    for (size_t i = 0; i < sdl->gamepads.size(); i++)
+    {
+        if (sdl->gamepads[i].device == device_id)
+        {
+            return sdl->gamepads[i].joystick_id;
+        }
+    }
+    return 0;
 }
 
 SDL_Gamepad* input_sdl_gamepad(const InputSdl* sdl, uint32_t device_id)

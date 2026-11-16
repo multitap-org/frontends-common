@@ -175,6 +175,8 @@ void input_config_read(InputSystem* system, const SettingsFile* file)
             InputProfile* profile = profile_for(system, id);
             const char* name = settings_file_get(file, section->name.c_str(), "name");
             profile->name = name != nullptr ? name : "";
+            const char* appearance = settings_file_get(file, section->name.c_str(), "appearance");
+            profile->appearance = appearance != nullptr ? appearance : "";
             const char* ignore = settings_file_get(file, section->name.c_str(), "ignore");
             if (ignore != nullptr)
             {
@@ -309,6 +311,10 @@ void input_config_write(InputSystem* system, SettingsFile* file)
         if (!profile->name.empty())
         {
             settings_file_set(file, controller.c_str(), "name", profile->name.c_str());
+        }
+        if (!profile->appearance.empty())
+        {
+            settings_file_set(file, controller.c_str(), "appearance", profile->appearance.c_str());
         }
         if (profile->ignore != InputIgnore::automatic)
         {

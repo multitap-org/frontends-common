@@ -265,6 +265,33 @@ void input_default_bindings_for(const InputDevice* device, InputBindingSet* set)
     input_bind(set, InputAction::pad_right, pad_axis(InputAxis::left_x, true));
 }
 
+const InputProfile* input_profile(const InputSystem* system, const std::string& id)
+{
+    for (size_t p = 0; p < system->profiles.size(); p++)
+    {
+        if (system->profiles[p].id == id)
+        {
+            return &system->profiles[p];
+        }
+    }
+    return nullptr;
+}
+
+InputProfile* input_profile_for(InputSystem* system, const std::string& id)
+{
+    for (size_t p = 0; p < system->profiles.size(); p++)
+    {
+        if (system->profiles[p].id == id)
+        {
+            return &system->profiles[p];
+        }
+    }
+    InputProfile profile = {};
+    profile.id = id;
+    system->profiles.push_back(profile);
+    return &system->profiles.back();
+}
+
 static const InputProfile* find_profile(const InputSystem* system, const std::string& id)
 {
     for (size_t p = 0; p < system->profiles.size(); p++)
@@ -775,8 +802,8 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             controller->held_last[a] = held[a];
         }
 
-        // While binding by pressing, the press is the binding's alone.
-        if (system->capture.active)
+        // While binding by pressing (or mapping), the press is the binding's alone.
+        if (system->capture.active || system->suspended)
         {
             continue;
         }
