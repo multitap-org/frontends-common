@@ -29,6 +29,51 @@ static bool is_stick(InputMapControl control)
     return static_cast<uint32_t>(control) >= static_cast<uint32_t>(InputMapControl::left_x);
 }
 
+bool input_map_control_is_stick(InputMapControl control)
+{
+    return is_stick(control) && control != InputMapControl::count;
+}
+
+InputMapControl input_map_control_for_source(InputSource source)
+{
+    if (source.type == InputSourceType::button)
+    {
+        switch (static_cast<InputButton>(source.code))
+        {
+        case InputButton::south: return InputMapControl::south;
+        case InputButton::east: return InputMapControl::east;
+        case InputButton::west: return InputMapControl::west;
+        case InputButton::north: return InputMapControl::north;
+        case InputButton::dpad_up: return InputMapControl::dpad_up;
+        case InputButton::dpad_down: return InputMapControl::dpad_down;
+        case InputButton::dpad_left: return InputMapControl::dpad_left;
+        case InputButton::dpad_right: return InputMapControl::dpad_right;
+        case InputButton::left_shoulder: return InputMapControl::left_shoulder;
+        case InputButton::right_shoulder: return InputMapControl::right_shoulder;
+        case InputButton::back: return InputMapControl::back;
+        case InputButton::start: return InputMapControl::start;
+        case InputButton::left_stick: return InputMapControl::left_stick;
+        case InputButton::right_stick: return InputMapControl::right_stick;
+        case InputButton::guide: return InputMapControl::guide;
+        default: return InputMapControl::count;
+        }
+    }
+    if (source.type == InputSourceType::axis_plus || source.type == InputSourceType::axis_minus)
+    {
+        switch (static_cast<InputAxis>(source.code))
+        {
+        case InputAxis::left_x: return InputMapControl::left_x;
+        case InputAxis::left_y: return InputMapControl::left_y;
+        case InputAxis::right_x: return InputMapControl::right_x;
+        case InputAxis::right_y: return InputMapControl::right_y;
+        case InputAxis::left_trigger: return InputMapControl::left_trigger;
+        case InputAxis::right_trigger: return InputMapControl::right_trigger;
+        default: return InputMapControl::count;
+        }
+    }
+    return InputMapControl::count;
+}
+
 // Everything back at rest: buttons up, hats centered, axes near where they started.
 static bool at_rest(const InputSdlMapper* mapper)
 {

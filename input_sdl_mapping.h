@@ -60,6 +60,13 @@ bool input_map_control_optional(InputMapControl control);
 // Its name in SDL's mapping text ("a", "dpup", "leftx"...).
 const char* input_map_control_sdl_name(InputMapControl control);
 
+// One of the four stick axes (not count)?
+bool input_map_control_is_stick(InputMapControl control);
+
+// Where a gamepad source is on the pad (a button, a trigger, a stick pushed
+// either way), or count for anything else (a key, a paddle...).
+InputMapControl input_map_control_for_source(InputSource source);
+
 constexpr uint32_t INPUT_MAP_ROLES_MAX = 16;
 
 struct InputSdlMapper

@@ -279,3 +279,47 @@ void input_sdl_rumble(InputSdl* sdl, const InputSystem* system, const uint16_t r
         }
     }
 }
+
+bool input_sdl_press_poll(InputSdlPress* press, uint32_t joystick_id)
+{
+    if (press->joystick == nullptr || press->joystick_id != joystick_id)
+    {
+        input_sdl_press_close(press);
+        press->joystick = SDL_OpenJoystick(static_cast<SDL_JoystickID>(joystick_id));
+        press->joystick_id = joystick_id;
+        press->held = true;
+    }
+    if (press->joystick == nullptr)
+    {
+        return false;
+    }
+    bool down = false;
+    int buttons = SDL_GetNumJoystickButtons(press->joystick);
+    for (int b = 0; b < buttons && !down; b++)
+    {
+        down = SDL_GetJoystickButton(press->joystick, b);
+    }
+    int hats = SDL_GetNumJoystickHats(press->joystick);
+    for (int h = 0; h < hats && !down; h++)
+    {
+        down = SDL_GetJoystickHat(press->joystick, h) != SDL_HAT_CENTERED;
+    }
+    bool pressed = down && !press->held;
+    press->held = down;
+    return pressed;
+}
+
+void input_sdl_press_wait_release(InputSdlPress* press)
+{
+    press->held = true;
+}
+
+void input_sdl_press_close(InputSdlPress* press)
+{
+    if (press->joystick != nullptr)
+    {
+        SDL_CloseJoystick(press->joystick);
+    }
+    press->joystick = nullptr;
+    press->held = true;
+}

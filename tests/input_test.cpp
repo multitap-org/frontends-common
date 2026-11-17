@@ -696,6 +696,28 @@ static void test_layouts()
           "layouts: no sticks, a d-pad");
 }
 
+static void test_pad_positions()
+{
+    // Where a source is on the drawn pad.
+    check(input_map_control_for_source(button(InputButton::south)) == InputMapControl::south, "pad: bottom button");
+    check(input_map_control_for_source(button(InputButton::guide)) == InputMapControl::guide, "pad: guide");
+    check(input_map_control_for_source(button(InputButton::touchpad)) == InputMapControl::count, "pad: not drawn");
+    InputSource up = {};
+    up.type = InputSourceType::axis_minus;
+    up.code = static_cast<uint16_t>(InputAxis::left_y);
+    check(input_map_control_for_source(up) == InputMapControl::left_y, "pad: stick pushed up");
+    InputSource trigger = {};
+    trigger.type = InputSourceType::axis_plus;
+    trigger.code = static_cast<uint16_t>(InputAxis::right_trigger);
+    check(input_map_control_for_source(trigger) == InputMapControl::right_trigger, "pad: trigger");
+    InputSource key = {};
+    key.type = InputSourceType::key;
+    key.code = HID_F1;
+    check(input_map_control_for_source(key) == InputMapControl::count, "pad: a key isn't on it");
+    check(input_map_control_is_stick(InputMapControl::right_y) && !input_map_control_is_stick(InputMapControl::count),
+          "pad: sticks");
+}
+
 int main()
 {
     test_sources();
@@ -710,6 +732,7 @@ int main()
     test_capture_and_remove();
     test_core_profiles();
     test_layouts();
+    test_pad_positions();
     if (g_failures == 0)
     {
         std::printf("input: all checks passed\n");

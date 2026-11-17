@@ -12,6 +12,7 @@
 #include "input_bindings.h"
 
 struct SDL_Gamepad;
+struct SDL_Joystick;
 union SDL_Event;
 
 struct InputSdlGamepad
@@ -46,6 +47,24 @@ void input_sdl_handle_event(InputSdl* sdl, InputSystem* system, const SDL_Event*
 // A joystick's name and GUID (for one in `unmapped`), "" if it's gone.
 std::string input_sdl_joystick_name(uint32_t joystick_id);
 std::string input_sdl_joystick_guid(uint32_t joystick_id);
+
+// Any button (or hat) of a raw joystick pressed: for a controller SDL
+// doesn't know as a gamepad, which can't drive the interface.
+struct InputSdlPress
+{
+    SDL_Joystick* joystick = nullptr;
+    uint32_t      joystick_id = 0;
+    bool          held = true;   // down at the last look (starts true: a press needs a release first)
+};
+
+// True once per press, when something goes down after everything was up.
+// Opens the joystick on first use (or another id).
+bool input_sdl_press_poll(InputSdlPress* press, uint32_t joystick_id);
+
+// The next press must start from everything let go.
+void input_sdl_press_wait_release(InputSdlPress* press);
+
+void input_sdl_press_close(InputSdlPress* press);
 
 // The SDL joystick behind a gamepad device (to map it again), or 0.
 uint32_t input_sdl_joystick_of(const InputSdl* sdl, uint32_t device_id);
