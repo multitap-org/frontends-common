@@ -185,6 +185,7 @@ void input_default_keyboard_bindings(InputBindingSet* set)
     input_bind(set, InputAction::ui_back, key(HID_ESCAPE));   // Backspace is kept for rewind
     input_bind(set, InputAction::ui_page_left, key(HID_PAGE_UP));
     input_bind(set, InputAction::ui_page_right, key(HID_PAGE_DOWN));
+    input_bind(set, InputAction::ui_open_menu, key(HID_F1));   // like the quick menu's hotkey (Shift + F1) in a game
 
     // The modifier: Left Shift ("shift" to the HOTKEY layer; Right Shift is SELECT).
     input_bind(set, InputAction::hotkey_enable, key(HID_LEFT_SHIFT));

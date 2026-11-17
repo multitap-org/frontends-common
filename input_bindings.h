@@ -120,7 +120,8 @@ void input_unbind_all(InputBindingSet* set, InputAction action);
 bool input_is_bound(const InputBindingSet* set, InputAction action, InputSource source);
 
 // The defaults for the keyboard (arrows, Z X A S Q W E R, Enter, Right Shift;
-// Escape goes back in the UI (Backspace is kept for rewind); the hotkey
+// Escape goes back in the UI (Backspace is kept for rewind), F1 opens the
+// menu bar's first menu; the hotkey
 // modifier is Left Shift:
 // Shift + F1 quick menu, F2 save, F4 load, Escape menu, Space fast forward).
 void input_default_keyboard_bindings(InputBindingSet* set);
@@ -197,6 +198,7 @@ struct InputProfile
     InputIgnore                       ignore = InputIgnore::automatic;   // gamepads
     std::string                       appearance;   // gamepads: how it looks ("xbox", "sony"...); "none" = declined; "" = never asked
     InputHotkeyMode                   hotkey_mode = InputHotkeyMode::hold;
+    std::string                       sdl_mapping;  // gamepads: our SDL mapping line (MAP CONTROLLER); "" = SDL's own
     std::vector<InputBindingOverride> overrides;
 };
 

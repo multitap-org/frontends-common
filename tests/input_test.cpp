@@ -503,6 +503,8 @@ static void test_config()
     input_unbind_all(&gamepad->bindings, InputAction::pad_y);
     input_bind(&gamepad->bindings, InputAction::pad_y, button(InputButton::north));
     input_unbind_all(&gamepad->bindings, InputAction::hotkey_save_state);
+    const char* MAPPING = "pad-guid,Pad,a:b1,b:b0,dpup:h0.1,leftx:a0,platform:Linux,";
+    input_profile_for(first, "pad-guid")->sdl_mapping = MAPPING;
 
     SettingsFile file = {};
     input_config_write(first, &file);
@@ -547,6 +549,9 @@ static void test_config()
     std::string text_again;
     settings_file_to_text(&again, nullptr, &text_again);
     check(text_again.find("[controller/pad-guid]") != std::string::npos, "config: absent controller kept");
+    const InputProfile* kept = input_profile(third, "pad-guid");
+    check(kept != nullptr && kept->sdl_mapping == MAPPING, "config: SDL mapping read back");
+    check(text_again.find(std::string("sdl_mapping = ") + MAPPING) != std::string::npos, "config: SDL mapping kept");
     delete first;
     delete second;
     delete third;

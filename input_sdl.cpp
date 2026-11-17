@@ -105,14 +105,22 @@ static void remove_gamepad(InputSdl* sdl, InputSystem* system, SDL_JoystickID id
     }
 }
 
-void input_sdl_init(InputSdl* sdl, InputSystem* system, const char* mappings_path)
+void input_sdl_init(InputSdl* sdl, InputSystem* system, const char* database_path)
 {
-    if (mappings_path != nullptr)
+    if (database_path != nullptr)
     {
-        int added = SDL_AddGamepadMappingsFromFile(mappings_path);
+        int added = SDL_AddGamepadMappingsFromFile(database_path);
         if (added > 0)
         {
-            SDL_Log("Gamepad mappings: %d from %s", added, mappings_path);
+            SDL_Log("Gamepad mappings: %d from %s", added, database_path);
+        }
+    }
+    for (size_t p = 0; p < system->profiles.size(); p++)
+    {
+        const std::string& mapping = system->profiles[p].sdl_mapping;
+        if (!mapping.empty() && SDL_AddGamepadMapping(mapping.c_str()) < 0)
+        {
+            SDL_Log("Gamepad mapping refused (%s): %s", SDL_GetError(), mapping.c_str());
         }
     }
     sdl->keyboard_device = input_devices_add(&system->devices, InputDeviceKind::keyboard, "keyboard", "Keyboard");

@@ -10,6 +10,8 @@
 //   ignore = yes                          (or no; missing = automatic)
 //   appearance = Sony/dualsense           (a layout id; none = declined)
 //   hotkey_mode = stays_on                (hold, one_hotkey, stays_on; missing = hold)
+//   sdl_mapping = <guid>,SNES30,a:b1,...  (MAP CONTROLLER's SDL mapping, given to SDL
+//                                          at start; missing = SDL's own, if it knows it)
 //
 //   [retropad/<id>]                       RetroPad bindings that differ from the defaults
 //   pad.y = button:west key:A

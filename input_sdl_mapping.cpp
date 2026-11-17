@@ -3,7 +3,6 @@
 #include <SDL3/SDL.h>
 
 #include <cstdio>
-#include <fstream>
 
 constexpr int      AXIS_PUSHED = 16000;          // past this from rest, an axis counts as pushed
 constexpr uint64_t OPTIONAL_WAIT_MS = 5000;      // an optional step is skipped after this long
@@ -109,10 +108,41 @@ static std::string pressed_element(const InputSdlMapper* mapper, InputMapControl
     return "";
 }
 
+static uint32_t total_steps(const InputSdlMapper* mapper)
+{
+    return mapper->role_count + INPUT_MAP_CONTROL_COUNT;
+}
+
+int32_t input_sdl_mapper_role(const InputSdlMapper* mapper)
+{
+    return mapper->step < mapper->role_count ? static_cast<int32_t>(mapper->step) : -1;
+}
+
+InputMapControl input_sdl_mapper_control(const InputSdlMapper* mapper)
+{
+    if (mapper->step < mapper->role_count || mapper->step >= total_steps(mapper))
+    {
+        return InputMapControl::count;
+    }
+    return static_cast<InputMapControl>(mapper->step - mapper->role_count);
+}
+
+// Is this step wanted (a role always; a position if the layout has it)?
+static bool step_wanted(const InputSdlMapper* mapper, uint32_t step)
+{
+    return step < mapper->role_count || mapper->wanted[step - mapper->role_count];
+}
+
+static bool step_optional(const InputSdlMapper* mapper, uint32_t step)
+{
+    return step < mapper->role_count ? mapper->role_optional[step]
+                                     : input_map_control_optional(static_cast<InputMapControl>(step - mapper->role_count));
+}
+
 // The next step is the next wanted one.
 static void start_step(InputSdlMapper* mapper, uint64_t now_ms)
 {
-    while (mapper->step < INPUT_MAP_CONTROL_COUNT && !mapper->wanted[mapper->step])
+    while (mapper->step < total_steps(mapper) && !step_wanted(mapper, mapper->step))
     {
         mapper->step++;
     }
@@ -120,11 +150,18 @@ static void start_step(InputSdlMapper* mapper, uint64_t now_ms)
     mapper->step_started_ms = now_ms;
 }
 
-bool input_sdl_mapper_begin(InputSdlMapper* mapper, uint32_t joystick_id, const bool* wanted, uint64_t now_ms)
+bool input_sdl_mapper_begin(InputSdlMapper* mapper, uint32_t joystick_id, uint32_t role_count, const bool* role_optional,
+                            const bool* wanted, uint64_t now_ms)
 {
     for (uint32_t c = 0; c < INPUT_MAP_CONTROL_COUNT; c++)
     {
         mapper->wanted[c] = wanted == nullptr || wanted[c];
+    }
+    mapper->role_count = role_count < INPUT_MAP_ROLES_MAX ? role_count : INPUT_MAP_ROLES_MAX;
+    for (uint32_t r = 0; r < INPUT_MAP_ROLES_MAX; r++)
+    {
+        mapper->role_optional[r] = role_optional != nullptr && r < mapper->role_count && role_optional[r];
+        mapper->roles[r].clear();
     }
     input_sdl_mapper_cancel(mapper);
     SDL_Joystick* joystick = SDL_OpenJoystick(static_cast<SDL_JoystickID>(joystick_id));
@@ -165,7 +202,7 @@ bool input_sdl_mapper_update(InputSdlMapper* mapper, uint64_t now_ms)
     {
         return false;
     }
-    if (mapper->step >= INPUT_MAP_CONTROL_COUNT)
+    if (mapper->step >= total_steps(mapper))
     {
         return true;
     }
@@ -178,36 +215,57 @@ bool input_sdl_mapper_update(InputSdlMapper* mapper, uint64_t now_ms)
         mapper->waiting_release = false;
         mapper->step_started_ms = now_ms;   // the time to answer starts once all is let go
     }
-    InputMapControl control = static_cast<InputMapControl>(mapper->step);
+    bool role = mapper->step < mapper->role_count;
+    InputMapControl control = role ? InputMapControl::south : static_cast<InputMapControl>(mapper->step - mapper->role_count);
     std::string element = pressed_element(mapper, control);
+    // Positions can't repeat each other (roles may share a button with
+    // anything: the menu's button is also a face button).
     bool used = false;
-    for (uint32_t c = 0; c < mapper->step && !element.empty(); c++)
+    for (uint32_t c = mapper->role_count; !role && c < mapper->step && !element.empty(); c++)
     {
-        used = used || mapper->elements[c] == element;
+        used = used || mapper->elements[c - mapper->role_count] == element;
     }
     if (!element.empty() && !used)
     {
-        mapper->elements[mapper->step] = element;
+        if (role)
+        {
+            mapper->roles[mapper->step] = element;
+        }
+        else
+        {
+            mapper->elements[mapper->step - mapper->role_count] = element;
+        }
         mapper->step++;
         start_step(mapper, now_ms);
     }
-    else if (input_map_control_optional(control) && element.empty() && now_ms - mapper->step_started_ms >= OPTIONAL_WAIT_MS)
+    else if (step_optional(mapper, mapper->step) && element.empty() && now_ms - mapper->step_started_ms >= OPTIONAL_WAIT_MS)
     {
         mapper->step++;   // the pad doesn't have it
         start_step(mapper, now_ms);
     }
-    return mapper->step >= INPUT_MAP_CONTROL_COUNT;
+    return mapper->step >= total_steps(mapper);
 }
 
 uint32_t input_sdl_mapper_seconds_left(const InputSdlMapper* mapper, uint64_t now_ms)
 {
-    if (!mapper->active || mapper->step >= INPUT_MAP_CONTROL_COUNT ||
-        !input_map_control_optional(static_cast<InputMapControl>(mapper->step)) || mapper->waiting_release)
+    if (!mapper->active || mapper->step >= total_steps(mapper) || !step_optional(mapper, mapper->step) || mapper->waiting_release)
     {
         return 0;
     }
     uint64_t elapsed = now_ms - mapper->step_started_ms;
     return elapsed >= OPTIONAL_WAIT_MS ? 0 : static_cast<uint32_t>((OPTIONAL_WAIT_MS - elapsed + 999) / 1000);
+}
+
+static void clear_step(InputSdlMapper* mapper, uint32_t step)
+{
+    if (step < mapper->role_count)
+    {
+        mapper->roles[step].clear();
+    }
+    else if (step < total_steps(mapper))
+    {
+        mapper->elements[step - mapper->role_count].clear();
+    }
 }
 
 void input_sdl_mapper_back(InputSdlMapper* mapper, uint64_t now_ms)
@@ -217,10 +275,10 @@ void input_sdl_mapper_back(InputSdlMapper* mapper, uint64_t now_ms)
     while (mapper->active && step > 0)
     {
         step--;
-        if (mapper->wanted[step])
+        if (step_wanted(mapper, step))
         {
             mapper->step = step;
-            mapper->elements[step].clear();
+            clear_step(mapper, step);
             mapper->waiting_release = true;
             mapper->step_started_ms = now_ms;
             return;
@@ -230,13 +288,19 @@ void input_sdl_mapper_back(InputSdlMapper* mapper, uint64_t now_ms)
 
 void input_sdl_mapper_skip(InputSdlMapper* mapper, uint64_t now_ms)
 {
-    if (!mapper->active || mapper->step >= INPUT_MAP_CONTROL_COUNT)
+    if (!mapper->active || mapper->step >= total_steps(mapper))
     {
         return;
     }
-    mapper->elements[mapper->step].clear();
+    clear_step(mapper, mapper->step);
     mapper->step++;
     start_step(mapper, now_ms);
+}
+
+void input_sdl_mapper_restart_step(InputSdlMapper* mapper, uint64_t now_ms)
+{
+    mapper->waiting_release = true;
+    mapper->step_started_ms = now_ms;
 }
 
 void input_sdl_mapper_cancel(InputSdlMapper* mapper)
@@ -250,29 +314,89 @@ void input_sdl_mapper_cancel(InputSdlMapper* mapper)
 }
 
 // The mappings file with this GUID's line replaced (or added).
-static bool keep_mapping(const char* path, const std::string& guid, const std::string& line)
+// A position as the gamepad source SDL's mapping makes of it.
+static InputSource position_source(InputMapControl control)
 {
-    std::vector<std::string> lines;
-    std::ifstream in(path);
-    std::string existing;
-    while (std::getline(in, existing))
+    static const InputButton BUTTONS[] = {
+        InputButton::south, InputButton::east, InputButton::west, InputButton::north, InputButton::dpad_up,
+        InputButton::dpad_down, InputButton::dpad_left, InputButton::dpad_right, InputButton::left_shoulder,
+        InputButton::right_shoulder, InputButton::back, InputButton::start,
+    };
+    InputSource source = {};
+    uint32_t index = static_cast<uint32_t>(control);
+    if (index < sizeof(BUTTONS) / sizeof(BUTTONS[0]))
     {
-        if (!existing.empty() && existing.compare(0, guid.size(), guid) != 0)
-        {
-            lines.push_back(existing);   // other controllers' mappings stay
-        }
+        source.type = InputSourceType::button;
+        source.code = static_cast<uint16_t>(BUTTONS[index]);
+        return source;
     }
-    in.close();
-    lines.push_back(line);
-    std::ofstream out(path, std::ios::trunc);
-    for (size_t i = 0; i < lines.size(); i++)
+    switch (control)
     {
-        out << lines[i] << "\n";
+    case InputMapControl::left_trigger:
+    case InputMapControl::right_trigger:
+        source.type = InputSourceType::axis_plus;
+        source.code = static_cast<uint16_t>(control == InputMapControl::left_trigger ? InputAxis::left_trigger : InputAxis::right_trigger);
+        break;
+    case InputMapControl::left_stick:
+        source.type = InputSourceType::button;
+        source.code = static_cast<uint16_t>(InputButton::left_stick);
+        break;
+    case InputMapControl::right_stick:
+        source.type = InputSourceType::button;
+        source.code = static_cast<uint16_t>(InputButton::right_stick);
+        break;
+    case InputMapControl::guide:
+        source.type = InputSourceType::button;
+        source.code = static_cast<uint16_t>(InputButton::guide);
+        break;
+    default:
+        break;
     }
-    return static_cast<bool>(out);
+    return source;
 }
 
-bool input_sdl_mapper_finish(InputSdlMapper* mapper, const char* mappings_path, std::string* line)
+InputSource input_sdl_mapper_role_source(const InputSdlMapper* mapper, uint32_t role)
+{
+    InputSource none = {};
+    if (role >= mapper->role_count || mapper->roles[role].empty())
+    {
+        return none;
+    }
+    const std::string& element = mapper->roles[role];
+    for (uint32_t c = 0; c < INPUT_MAP_CONTROL_COUNT; c++)
+    {
+        InputMapControl control = static_cast<InputMapControl>(c);
+        const std::string& mapped = mapper->elements[c];
+        if (mapped.empty())
+        {
+            continue;
+        }
+        if (mapped == element && position_source(control).type != InputSourceType::none)
+        {
+            return position_source(control);
+        }
+        // A role on half of an axis that turned out to be a stick ("+a0" on leftx "a0").
+        bool stick = c >= static_cast<uint32_t>(InputMapControl::left_x);
+        if (stick && element.size() >= 3 && (element[0] == '+' || element[0] == '-'))
+        {
+            std::string axis = element.substr(1);
+            bool inverted = mapped.size() > 1 && mapped[mapped.size() - 1] == '~';
+            std::string base = inverted ? mapped.substr(0, mapped.size() - 1) : mapped;
+            if (base == axis)
+            {
+                static const InputAxis AXES[] = {InputAxis::left_x, InputAxis::left_y, InputAxis::right_x, InputAxis::right_y};
+                bool plus = (element[0] == '+') != inverted;
+                InputSource source = {};
+                source.type = plus ? InputSourceType::axis_plus : InputSourceType::axis_minus;
+                source.code = static_cast<uint16_t>(AXES[c - static_cast<uint32_t>(InputMapControl::left_x)]);
+                return source;
+            }
+        }
+    }
+    return none;
+}
+
+bool input_sdl_mapper_finish(InputSdlMapper* mapper, std::string* line)
 {
     if (!mapper->active)
     {
@@ -289,16 +413,11 @@ bool input_sdl_mapper_finish(InputSdlMapper* mapper, const char* mappings_path, 
         }
     }
     text += std::string("platform:") + SDL_GetPlatform() + ",";
-    std::string guid = mapper->guid;
     input_sdl_mapper_cancel(mapper);
     if (!any || SDL_AddGamepadMapping(text.c_str()) < 0)
     {
         SDL_Log("Mapping refused (%s): %s", SDL_GetError(), text.c_str());
         return false;
-    }
-    if (mappings_path != nullptr && mappings_path[0] != '\0' && !keep_mapping(mappings_path, guid, text))
-    {
-        SDL_Log("Mapping: can't write %s", mappings_path);
     }
     SDL_Log("Mapping kept: %s", text.c_str());
     *line = text;

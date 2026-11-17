@@ -182,6 +182,8 @@ void input_config_read(InputSystem* system, const SettingsFile* file)
             }
             const char* appearance = settings_file_get(file, section->name.c_str(), "appearance");
             profile->appearance = appearance != nullptr ? appearance : "";
+            const char* mapping = settings_file_get(file, section->name.c_str(), "sdl_mapping");
+            profile->sdl_mapping = mapping != nullptr ? mapping : "";
             const char* ignore = settings_file_get(file, section->name.c_str(), "ignore");
             if (ignore != nullptr)
             {
@@ -325,6 +327,10 @@ void input_config_write(InputSystem* system, SettingsFile* file)
         if (!profile->appearance.empty())
         {
             settings_file_set(file, controller.c_str(), "appearance", profile->appearance.c_str());
+        }
+        if (!profile->sdl_mapping.empty())
+        {
+            settings_file_set(file, controller.c_str(), "sdl_mapping", profile->sdl_mapping.c_str());
         }
         if (profile->ignore != InputIgnore::automatic)
         {

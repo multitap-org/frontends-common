@@ -32,9 +32,11 @@ struct InputSdl
 };
 
 // Adds the keyboard (device and controller) and the gamepads already
-// connected. Needs SDL_INIT_GAMEPAD. `mappings_path`: a file of SDL gamepad
-// mappings for controllers SDL doesn't know (may be missing; nullptr = none).
-void input_sdl_init(InputSdl* sdl, InputSystem* system, const char* mappings_path);
+// connected. Needs SDL_INIT_GAMEPAD. Call after the profiles are read: their
+// SDL mappings (MAP CONTROLLER's) are given to SDL first. `database_path`: a
+// gamecontrollerdb.txt the user may drop in (SDL's format, read only; may be
+// missing; nullptr = none); the profiles' mappings win over it.
+void input_sdl_init(InputSdl* sdl, InputSystem* system, const char* database_path);
 void input_sdl_shutdown(InputSdl* sdl);
 
 // Keys, gamepad buttons and axes, gamepads coming and going, focus lost
