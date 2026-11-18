@@ -158,7 +158,7 @@ struct InputSettings
     bool keyboard_shares_port1 = true;
     bool ui_active = false;   // the frontend's UI is up (a menu or a dialog): the INTERFACE layer
     uint64_t press_ms = 5000;   // binding: how long a control waits for a press before going on
-    uint64_t hold_ms = 2000;    // binding with SET: how long a gamepad's control must be held to be taken
+    uint64_t hold_ms = 1000;    // binding with SET: how long a gamepad's control must be held to be taken
 };
 
 struct InputController

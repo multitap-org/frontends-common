@@ -101,7 +101,7 @@ static void test_positions_then_roles()
     check(input_sdl_mapper_held_source(mapper).type == InputSourceType::none, "mapper: nothing held");
 
     uint64_t now = 0;
-    hold(mapper, 1, 1000, &now);   // let go after 1 s: not taken
+    hold(mapper, 1, mapper->role_hold_ms / 2, &now);   // let go halfway: not taken
     check(input_sdl_mapper_role(mapper) == 0, "mapper: a role's button let go too soon isn't taken");
     set_button(1, true);
     input_sdl_mapper_update(mapper, now);

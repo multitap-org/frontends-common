@@ -89,7 +89,7 @@ struct InputSdlMapper
     std::string   roles[INPUT_MAP_ROLES_MAX];        // each role's raw element ("" = skipped)
     std::string   holding;                           // a role's button being held (not taken yet)
     uint64_t      holding_since_ms = 0;
-    uint64_t      role_hold_ms = 2000;               // how long a role's button must be held
+    uint64_t      role_hold_ms = 1000;               // how long a role's button must be held
     uint64_t      optional_wait_ms = 5000;           // an optional step is skipped after this long
 };
 
