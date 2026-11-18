@@ -18,7 +18,7 @@ static const char* const ACTION_NAMES[INPUT_ACTION_COUNT] = {
     "pad.b", "pad.y", "pad.select", "pad.start", "pad.up", "pad.down", "pad.left", "pad.right",
     "pad.a", "pad.x", "pad.l", "pad.r", "pad.l2", "pad.r2", "pad.l3", "pad.r3",
     "pad.left_x+", "pad.left_x-", "pad.left_y+", "pad.left_y-",
-    "pad.right_x+", "pad.right_x-", "pad.right_y+", "pad.right_y-",
+    "pad.right_x+", "pad.right_x-", "pad.right_y+", "pad.right_y-", "pad.turbo",
     "ui.up", "ui.down", "ui.left", "ui.right", "ui.accept", "ui.back", "ui.page_left", "ui.page_right", "ui.open_menu",
     "hotkey.enable", "hotkey.menu", "hotkey.quick_menu", "hotkey.save_state", "hotkey.load_state",
     "hotkey.fast_forward",
@@ -75,7 +75,7 @@ bool input_action_parse(const char* name, InputAction* action)
 
 bool input_action_is_pad(InputAction action)
 {
-    return index_of(action) <= index_of(InputAction::pad_right_y_minus);
+    return index_of(action) <= index_of(InputAction::pad_turbo);
 }
 
 bool input_action_is_hotkey(InputAction action)
@@ -658,6 +658,12 @@ void input_leave_all(InputSystem* system)
         }
     }
     system->keyboard_seated = false;   // back on port 1 on the next update, if it shares it
+    for (size_t c = 0; c < system->controllers.size(); c++)
+    {
+        system->controllers[c].turbo_session.clear();   // a new game: no turbo from TURBO BUTTON
+        system->controllers[c].turbo_states.clear();
+        system->controllers[c].turbo_toggled.clear();
+    }
 }
 
 // The same, from only the axes (`analog`) or only the keys and buttons.
@@ -1231,6 +1237,104 @@ static uint16_t macro_step(InputController* controller, uint32_t port, const Inp
     return buttons;
 }
 
+static bool same_control(InputSource a, InputSource b)
+{
+    return a.type == b.type && a.code == b.code && a.type != InputSourceType::none;
+}
+
+static int32_t find_source(const std::vector<InputSource>* list, InputSource source)
+{
+    for (size_t i = 0; i < list->size(); i++)
+    {
+        if (same_control((*list)[i], source))
+        {
+            return static_cast<int32_t>(i);
+        }
+    }
+    return -1;
+}
+
+// A turbo one step faster (fewer frames) or slower.
+static uint8_t turbo_step(uint8_t frames, bool faster)
+{
+    uint32_t count = sizeof(INPUT_TURBO_STEPS) / sizeof(INPUT_TURBO_STEPS[0]);
+    uint32_t at = 0;
+    while (at + 1 < count && INPUT_TURBO_STEPS[at] < frames)
+    {
+        at++;
+    }
+    if (faster)
+    {
+        return INPUT_TURBO_STEPS[at > 0 ? at - 1 : 0];
+    }
+    return INPUT_TURBO_STEPS[at + 1 < count ? at + 1 : at];
+}
+
+// The turbo frames of a key or button bound on a port now: its row's in the
+// remap, else TURBO BUTTON's for the session, else 0.
+static uint8_t turbo_of(const InputController* controller, InputSource source)
+{
+    if (source.turbo > 0)
+    {
+        return source.turbo;
+    }
+    int32_t at = find_source(&controller->turbo_session, source);
+    return at >= 0 ? controller->turbo_session[static_cast<size_t>(at)].turbo : 0;
+}
+
+static InputTurboState* turbo_state(InputController* controller, uint32_t port, InputSource source)
+{
+    for (size_t i = 0; i < controller->turbo_states.size(); i++)
+    {
+        if (controller->turbo_states[i].port == port && same_control(controller->turbo_states[i].source, source))
+        {
+            return &controller->turbo_states[i];
+        }
+    }
+    InputTurboState fresh = {};
+    fresh.port = port;
+    fresh.source = source;
+    controller->turbo_states.push_back(fresh);
+    return &controller->turbo_states.back();
+}
+
+// A double tap (faster) or triple tap (slower) on a key or button with
+// turbo: into its remap row (every row with it, in the profile playing on
+// the port) or its TURBO BUTTON entry. True if a remap changed.
+static bool turbo_retime(InputSystem* system, InputController* controller, uint32_t controller_index, uint32_t port,
+                         InputSource source, bool faster)
+{
+    bool changed = false;
+    const InputCoreProfile* active = input_active_core_profile(system, controller_index, port);
+    for (size_t p = 0; active != nullptr && p < system->core_profiles.size(); p++)
+    {
+        InputCoreProfile* profile = &system->core_profiles[p];
+        if (profile != active)
+        {
+            continue;
+        }
+        for (size_t o = 0; o < profile->overrides.size(); o++)
+        {
+            for (uint32_t s = 0; s < INPUT_SOURCES_PER_ACTION; s++)
+            {
+                InputSource* row = &profile->overrides[o].sources[s];
+                if (same_control(*row, source) && row->turbo > 0)
+                {
+                    row->turbo = turbo_step(row->turbo, faster);
+                    changed = true;
+                }
+            }
+        }
+    }
+    int32_t at = find_source(&controller->turbo_session, source);
+    if (!changed && at >= 0)
+    {
+        InputSource* entry = &controller->turbo_session[static_cast<size_t>(at)];
+        entry->turbo = turbo_step(entry->turbo, faster);
+    }
+    return changed;
+}
+
 uint16_t input_controller_pad_buttons(const InputSystem* system, uint32_t controller, uint32_t port)
 {
     if (controller >= system->controllers.size())
@@ -1445,13 +1549,98 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
                 }
                 InputBindingSet effective = {};
                 input_effective_bindings(system, index, play_port, &effective);
-                uint16_t buttons = 0;
+                bool turbo_held = set_value(&effective, device, InputAction::pad_turbo) >= PRESSED_THRESHOLD;
+                // Keys and buttons of the RetroPad buttons, once each: TURBO
+                // BUTTON's toggles, and the turbo ones' phase and taps.
+                std::vector<InputSource> seen;
                 for (uint32_t b = 0; b < INPUT_PAD_BUTTON_COUNT; b++)
                 {
-                    if (set_value(&effective, device, static_cast<InputAction>(b)) >= PRESSED_THRESHOLD &&
-                        !controller->held_at_switch[b])   // (not: still held from another layer)
+                    for (uint32_t s = 0; s < INPUT_SOURCES_PER_ACTION; s++)
                     {
+                        InputSource source = effective.sources[b][s];
+                        bool digital = source.type == InputSourceType::key || source.type == InputSourceType::button;
+                        if (!digital || find_source(&seen, source) >= 0)
+                        {
+                            continue;
+                        }
+                        seen.push_back(source);
+                        bool down = input_source_value(device, source) >= PRESSED_THRESHOLD;
+                        int32_t toggled = find_source(&controller->turbo_toggled, source);
+                        if (toggled >= 0 && !down)
+                        {
+                            controller->turbo_toggled.erase(controller->turbo_toggled.begin() + toggled);
+                        }
+                        else if (turbo_held && down && toggled < 0)
+                        {
+                            // TURBO BUTTON + this: its turbo on / off for the session.
+                            int32_t at = find_source(&controller->turbo_session, source);
+                            if (at >= 0)
+                            {
+                                controller->turbo_session.erase(controller->turbo_session.begin() + at);
+                            }
+                            else
+                            {
+                                InputSource entry = source;
+                                entry.turbo = INPUT_TURBO_DEFAULT;
+                                controller->turbo_session.push_back(entry);
+                            }
+                            controller->turbo_toggled.push_back(source);
+                        }
+                        if (turbo_of(controller, source) == 0)
+                        {
+                            continue;
+                        }
+                        InputTurboState* state = turbo_state(controller, play_port, source);
+                        if (down && !state->held)
+                        {
+                            state->held_frames = 0;
+                            state->taps = now_ms - state->last_press_ms <= INPUT_TURBO_TAP_MS ? state->taps + 1 : 1;
+                            state->last_press_ms = now_ms;
+                        }
+                        else if (down)
+                        {
+                            state->held_frames++;
+                        }
+                        state->held = down;
+                        if (state->taps > 0 && !down && now_ms - state->last_press_ms > INPUT_TURBO_TAP_MS)
+                        {
+                            if (state->taps >= 2)
+                            {
+                                frame->profiles_changed =
+                                    turbo_retime(system, controller, index, play_port, source, state->taps == 2) ||
+                                    frame->profiles_changed;
+                            }
+                            state->taps = 0;
+                        }
+                    }
+                }
+                uint16_t buttons = 0;
+                for (uint32_t b = 0; b < INPUT_PAD_BUTTON_COUNT && !turbo_held; b++)
+                {
+                    if (controller->held_at_switch[b])
+                    {
+                        continue;   // still held from another layer
+                    }
+                    for (uint32_t s = 0; s < INPUT_SOURCES_PER_ACTION; s++)
+                    {
+                        InputSource source = effective.sources[b][s];
+                        if (input_source_value(device, source) < PRESSED_THRESHOLD ||
+                            find_source(&controller->turbo_toggled, source) >= 0)
+                        {
+                            continue;
+                        }
+                        uint8_t turbo = turbo_of(controller, source);
+                        if (turbo > 0)
+                        {
+                            // Pressed `turbo` frames, let go as many (pressed from its first frame).
+                            const InputTurboState* state = turbo_state(controller, play_port, source);
+                            if ((state->held_frames / turbo) % 2 != 0)
+                            {
+                                continue;
+                            }
+                        }
                         buttons = static_cast<uint16_t>(buttons | (1u << b));
+                        break;
                     }
                 }
                 // Its combos (any of a combo's inputs presses all its buttons)

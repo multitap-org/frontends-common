@@ -284,6 +284,15 @@ bool input_source_format(InputSource source, char* out, size_t out_size)
     {
         size_t length = std::strlen(out);
         int written = std::snprintf(out + length, out_size - length, "@%u", static_cast<unsigned>(source.percent));
+        if (written <= 0 || static_cast<size_t>(written) >= out_size - length)
+        {
+            return false;
+        }
+    }
+    if (digital && source.turbo > 0)
+    {
+        size_t length = std::strlen(out);
+        int written = std::snprintf(out + length, out_size - length, "*%u", static_cast<unsigned>(source.turbo));
         return written > 0 && static_cast<size_t>(written) < out_size - length;
     }
     return true;
@@ -357,9 +366,9 @@ static bool parse_control(const char* text, InputSource* source)
     return false;
 }
 
-bool input_source_parse(const char* text, InputSource* source)
+// "<control>@<percent>" (the percent optional).
+static bool parse_with_percent(const char* text, InputSource* source)
 {
-    // "<control>@<percent>": the percent apart.
     const char* at = std::strchr(text, '@');
     if (at == nullptr)
     {
@@ -379,5 +388,30 @@ bool input_source_parse(const char* text, InputSource* source)
         return false;
     }
     source->percent = static_cast<uint8_t>(percent);
+    return true;
+}
+
+bool input_source_parse(const char* text, InputSource* source)
+{
+    // "...*<frames>": the turbo apart.
+    const char* star = std::strchr(text, '*');
+    if (star == nullptr)
+    {
+        return parse_with_percent(text, source);
+    }
+    char rest[112] = {};
+    size_t length = static_cast<size_t>(star - text);
+    if (length == 0 || length >= sizeof(rest))
+    {
+        return false;
+    }
+    std::memcpy(rest, text, length);
+    char* end = nullptr;
+    unsigned long frames = std::strtoul(star + 1, &end, 10);
+    if (end == star + 1 || *end != '\0' || frames < 1 || frames > 60 || !parse_with_percent(rest, source))
+    {
+        return false;
+    }
+    source->turbo = static_cast<uint8_t>(frames);
     return true;
 }

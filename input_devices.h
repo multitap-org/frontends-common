@@ -155,6 +155,9 @@ struct InputSource
     // (1..100): D-pad right at 20 = the stick pushed a fifth of the way.
     // Settings text: "button:dpad_right@20". Axes give their own value.
     uint8_t         percent = 100;
+    // A key or button on a RetroPad button with turbo: pressed and let go
+    // every this many frames while held (0 = no turbo). Text: "button:x*2".
+    uint8_t         turbo = 0;
 };
 
 // The same control (the percent doesn't count).

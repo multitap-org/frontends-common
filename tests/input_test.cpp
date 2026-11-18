@@ -1035,6 +1035,121 @@ static void test_macros()
     delete back;
 }
 
+// Turbo: a remap row's (its speed by double / triple taps) and TURBO
+// BUTTON's for the session.
+static void test_turbo()
+{
+    InputSystem* system = new InputSystem{};
+    system->settings.keyboard_shares_port1 = false;
+    uint32_t pad = input_devices_add(&system->devices, InputDeviceKind::gamepad, "pad-guid", "Pad");
+    InputBindingSet pad_set = {};
+    gamepad_bindings(&pad_set);
+    input_add_controller(system, pad, "Pad", &pad_set);
+    input_join(system, 0);
+    system->core_name = "nestopia";
+    InputFrame out = {};
+    uint32_t west = static_cast<uint32_t>(InputButton::west);
+    uint32_t east = static_cast<uint32_t>(InputButton::east);
+    uint32_t r1 = static_cast<uint32_t>(InputButton::right_shoulder);
+
+    // A on east as it is, and on west with turbo (2 frames); TURBO BUTTON on R.
+    InputCoreProfile* profile = input_core_profile_for(system, "nestopia", "", 1, "pad-guid");
+    profile->decided = true;
+    profile->custom = true;
+    InputBindingOverride a = {};
+    a.action = InputAction::pad_a;
+    a.sources[0] = button(InputButton::east);
+    a.sources[1] = button(InputButton::west);
+    a.sources[1].turbo = 2;
+    profile->overrides.push_back(a);
+    InputBindingOverride turbo = {};
+    turbo.action = InputAction::pad_turbo;
+    turbo.sources[0] = button(InputButton::right_shoulder);
+    profile->overrides.push_back(turbo);
+
+    uint64_t now = 0;
+    bool pattern[6] = {};
+    input_devices_set_code(&system->devices, pad, west, true);
+    for (int f = 0; f < 6; f++)
+    {
+        now += 16;
+        frame(system, now, &out);
+        pattern[f] = (out.pad_buttons[0] & PAD_BIT_A) != 0;
+    }
+    check(pattern[0] && pattern[1] && !pattern[2] && !pattern[3] && pattern[4] && pattern[5], "turbo: 2 frames on, 2 off, from the first");
+    input_devices_set_code(&system->devices, pad, west, false);
+    now += 500;
+    frame(system, now, &out);
+
+    // Double tap: faster (1 frame), kept in the remap, saved.
+    for (int t = 0; t < 2; t++)
+    {
+        input_devices_set_code(&system->devices, pad, west, true);
+        now += 16;
+        frame(system, now, &out);
+        input_devices_set_code(&system->devices, pad, west, false);
+        now += 16;
+        frame(system, now, &out);
+    }
+    now += INPUT_TURBO_TAP_MS + 16;
+    frame(system, now, &out);
+    profile = input_core_profile_for(system, "nestopia", "", 1, "pad-guid");
+    check(out.profiles_changed && profile->overrides[0].sources[1].turbo == 1, "turbo: a double tap makes it faster");
+    for (int t = 0; t < 3; t++)
+    {
+        input_devices_set_code(&system->devices, pad, west, true);
+        now += 16;
+        frame(system, now, &out);
+        input_devices_set_code(&system->devices, pad, west, false);
+        now += 16;
+        frame(system, now, &out);
+    }
+    now += INPUT_TURBO_TAP_MS + 16;
+    frame(system, now, &out);
+    check(profile->overrides[0].sources[1].turbo == 2, "turbo: a triple tap makes it slower");
+
+    // TURBO BUTTON + east: east's turbo on for the session, the press not passed on.
+    input_devices_set_code(&system->devices, pad, r1, true);
+    now += 16;
+    frame(system, now, &out);
+    input_devices_set_code(&system->devices, pad, east, true);
+    now += 16;
+    frame(system, now, &out);
+    check(out.pad_buttons[0] == 0 && system->controllers[0].turbo_session.size() == 1, "turbo button: east's turbo on, not passed on");
+    input_devices_set_code(&system->devices, pad, r1, false);
+    input_devices_set_code(&system->devices, pad, east, false);
+    now += 16;
+    frame(system, now, &out);
+    input_devices_set_code(&system->devices, pad, east, true);
+    for (int f = 0; f < 6; f++)
+    {
+        now += 16;
+        frame(system, now, &out);
+        pattern[f] = (out.pad_buttons[0] & PAD_BIT_A) != 0;
+    }
+    check(pattern[0] && pattern[1] && !pattern[2] && !pattern[3], "turbo button: east now pulses");
+    input_devices_set_code(&system->devices, pad, east, false);
+    now += 500;
+    frame(system, now, &out);
+    input_devices_set_code(&system->devices, pad, r1, true);
+    input_devices_set_code(&system->devices, pad, east, true);
+    now += 16;
+    frame(system, now, &out);
+    check(system->controllers[0].turbo_session.empty(), "turbo button: again turns it off");
+    input_leave_all(system);
+    check(system->controllers[0].turbo_session.empty(), "turbo button: a new game forgets it");
+
+    // Text form.
+    InputSource parsed = {};
+    char text[64] = {};
+    InputSource fast = button(InputButton::west);
+    fast.turbo = 3;
+    check(input_source_format(fast, text, sizeof(text)) && std::strcmp(text, "button:west*3") == 0 &&
+              input_source_parse(text, &parsed) && parsed.turbo == 3 && parsed.code == static_cast<uint16_t>(InputButton::west),
+          "turbo: written and read as *frames");
+    delete system;
+}
+
 static void test_layouts()
 {
     InputLayouts layouts = {};
@@ -1108,6 +1223,7 @@ int main()
     test_core_profiles();
     test_combos_and_game_remaps();
     test_macros();
+    test_turbo();
     test_layouts();
     test_pad_positions();
     if (g_failures == 0)

@@ -83,6 +83,9 @@ enum class InputAction
     pad_right_x_minus,
     pad_right_y_plus,
     pad_right_y_minus,
+    // TURBO BUTTON (per core / game, in the remap): held, a button pressed
+    // turns that button's turbo on or off for the session (not passed on).
+    pad_turbo,
     // Interface.
     ui_up,
     ui_down,
@@ -176,6 +179,24 @@ struct InputSettings
     uint64_t hold_ms = 500;     // binding: how long a gamepad's control must be held to be taken
 };
 
+// Turbo: the frame steps (pressed / let go for this many frames each; 2 =
+// 15 a second at 60 fps), the default, and how close taps count as a double
+// (faster) or triple (slower) tap on a button with turbo.
+constexpr uint8_t  INPUT_TURBO_STEPS[] = {1, 2, 3, 4, 6};
+constexpr uint8_t  INPUT_TURBO_DEFAULT = 2;
+constexpr uint64_t INPUT_TURBO_TAP_MS = 300;
+
+// A key or button with turbo, held or tapped on a port (kept per controller).
+struct InputTurboState
+{
+    uint32_t    port = 0;
+    InputSource source;
+    bool        held = false;
+    uint32_t    held_frames = 0;    // since it went down (the turbo's phase)
+    uint32_t    taps = 0;           // presses close together
+    uint64_t    last_press_ms = 0;
+};
+
 // A macro being played on a port (kept per controller).
 struct InputMacroPlay
 {
@@ -206,6 +227,9 @@ struct InputController
     uint64_t   modifier_on_ms = 0;
     bool       modifier_used = false;                // a hotkey fired since the modifier went down
     std::vector<InputMacroPlay> macro_plays;         // its macros' inputs, per port (one frame = one update)
+    std::vector<InputSource>    turbo_session;       // turned on with TURBO BUTTON (until the game closes); .turbo = its frames
+    std::vector<InputTurboState> turbo_states;
+    std::vector<InputSource>    turbo_toggled;       // pressed with TURBO BUTTON held: out of the game until let go
 };
 
 // What is kept of a controller between runs (settings/input.cfg), by id: a
@@ -343,6 +367,7 @@ struct InputFrame
     int32_t  joined_controller = -1;
     int32_t  left_port = INPUT_NO_PORT;             // a controller's device went away and left this port (its first)
     int32_t  left_controller = -1;
+    bool     profiles_changed = false;              // a remap changed (a turbo's speed by taps): save input.cfg
 };
 
 // The profile with this id, or nullptr; _for makes one.
