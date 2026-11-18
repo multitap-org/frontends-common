@@ -265,11 +265,14 @@ void input_sdl_rumble(InputSdl* sdl, const InputSystem* system, const uint16_t r
         uint16_t strong = 0;
         uint16_t weak = 0;
         int32_t controller = input_first_controller(system, gamepad->device);
-        int32_t port = controller >= 0 ? input_controller_port(system, static_cast<uint32_t>(controller)) : INPUT_NO_PORT;
-        if (port != INPUT_NO_PORT && static_cast<uint32_t>(port) < port_count)
+        for (uint32_t port = 0; controller >= 0 && port < port_count && port < INPUT_PORT_COUNT; port++)
         {
-            strong = rumble[port][0];
-            weak = rumble[port][1];
+            // On several ports: the strongest of them.
+            if (input_port_has(system, port, static_cast<uint32_t>(controller)))
+            {
+                strong = rumble[port][0] > strong ? rumble[port][0] : strong;
+                weak = rumble[port][1] > weak ? rumble[port][1] : weak;
+            }
         }
         if (strong != gamepad->rumble[0] || weak != gamepad->rumble[1])
         {

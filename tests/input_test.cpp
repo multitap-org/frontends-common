@@ -146,7 +146,7 @@ static void test_keyboard_join_and_play()
 
     input_devices_set_code(&system->devices, keyboard, HID_RETURN, true);
     frame(system, 16, &out);
-    check(out.joined_port == 0 && system->ports[0] == 0, "keyboard: START joins port 1");
+    check(out.joined_port == 0 && input_port_has(system, 0, 0), "keyboard: START joins port 1");
     check((out.pad_buttons[0] & PAD_BIT_START) == 0, "keyboard: the joining START isn't the game's");
     input_devices_set_code(&system->devices, keyboard, HID_RETURN, false);
     frame(system, 32, &out);
@@ -216,7 +216,7 @@ static void test_split_keyboard()
     input_devices_set_code(&system->devices, keyboard, HID_RETURN, false);
     input_devices_set_code(&system->devices, keyboard, HID_F1, true);
     frame(system, 16, &out);
-    check(system->ports[0] == 0 && system->ports[1] == 1, "split keyboard: two controllers on two ports");
+    check(input_port_has(system, 0, 0) && input_port_has(system, 1, 1), "split keyboard: two controllers on two ports");
     delete system;
 }
 
@@ -233,11 +233,11 @@ static void test_shared_port_and_reconnects()
     uint32_t pad_controller = input_add_controller(system, pad, "Pad", &pad_set);
     InputFrame out = {};
 
-    // The keyboard plays on port 1 without joining.
-    check(input_controller_shares_port1(system, keyboard_controller), "shared: the keyboard shares port 1");
+    // The keyboard is put on port 1 without joining.
     input_devices_set_code(&system->devices, keyboard, HID_Z, true);
     frame(system, 0, &out);
-    check((out.pad_buttons[0] & PAD_BIT_B) != 0 && system->ports[0] == INPUT_NO_PORT, "shared: keyboard on port 1, port still free");
+    check((out.pad_buttons[0] & PAD_BIT_B) != 0 && input_port_has(system, 0, keyboard_controller) && system->ports[0].size() == 1,
+          "shared: the keyboard is on port 1");
     input_devices_set_code(&system->devices, keyboard, HID_Z, false);
 
     // A gamepad does nothing until START; then it's on port 1 too.
@@ -247,7 +247,7 @@ static void test_shared_port_and_reconnects()
     input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::south), false);
     input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::start), true);
     frame(system, 32, &out);
-    check(out.joined_port == 0 && system->ports[0] == static_cast<int32_t>(pad_controller), "shared: the gamepad joins port 1");
+    check(out.joined_port == 0 && input_port_has(system, 0, pad_controller), "shared: the gamepad joins port 1 (only the keyboard there)");
     input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::start), false);
     input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::east), true);
     input_devices_set_code(&system->devices, keyboard, HID_Z, true);
@@ -268,12 +268,12 @@ static void test_shared_port_and_reconnects()
     // Unplugged: port freed and reported; plugged back: same port, same id.
     input_devices_disconnect(&system->devices, pad);
     frame(system, 80, &out);
-    check(system->ports[0] == INPUT_NO_PORT && out.left_port == 0 && out.left_controller == static_cast<int32_t>(pad_controller),
+    check(!input_port_has(system, 0, pad_controller) && out.left_port == 0 && out.left_controller == static_cast<int32_t>(pad_controller),
           "reconnect: unplugging frees the port and says so");
     uint32_t again = input_devices_add(&system->devices, InputDeviceKind::gamepad, "pad-guid", "Pad");
     check(again == pad, "reconnect: same device id");
     frame(system, 96, &out);
-    check(system->ports[0] == static_cast<int32_t>(pad_controller), "reconnect: back on its port");
+    check(input_port_has(system, 0, pad_controller), "reconnect: back on its port");
 
     // Without sharing, the keyboard needs START.
     system->settings.keyboard_shares_port1 = false;
@@ -283,10 +283,11 @@ static void test_shared_port_and_reconnects()
     input_devices_set_code(&system->devices, keyboard, HID_Z, false);
     input_devices_set_code(&system->devices, keyboard, HID_RETURN, true);
     frame(system, 128, &out);
-    check(system->ports[1] == static_cast<int32_t>(keyboard_controller), "not shared: START puts it on the next free port");
+    check(!input_port_has(system, 0, keyboard_controller) && input_port_has(system, 1, keyboard_controller),
+          "not shared: off port 1; START puts it on the next free port");
 
     input_swap_ports(system, 0, 1);
-    check(system->ports[0] == static_cast<int32_t>(keyboard_controller), "swap: ports reordered");
+    check(input_port_has(system, 0, keyboard_controller) && input_port_has(system, 1, pad_controller), "swap: ports reordered");
     delete system;
 }
 
@@ -431,6 +432,100 @@ static void test_combo_and_stick()
     delete system;
 }
 
+// Presses START on a gamepad and lets go (a frame each).
+static void press_start(InputSystem* system, uint32_t pad, uint64_t now_ms, InputFrame* out)
+{
+    input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::start), true);
+    frame(system, now_ms, out);
+    input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::start), false);
+    InputFrame after = {};
+    frame(system, now_ms + 8, &after);
+}
+
+// N:N: several controllers on a port (N:1), a controller on several ports
+// (1:N), START with every port taken, unplugging from several ports.
+static void test_shared_ports()
+{
+    InputSystem* system = new InputSystem{};
+    system->settings.keyboard_shares_port1 = false;
+    InputBindingSet pad_set = {};
+    gamepad_bindings(&pad_set);
+    uint32_t pads[5] = {};
+    const char* guids[5] = {"guid-a", "guid-b", "guid-c", "guid-d", "guid-e"};
+    for (uint32_t i = 0; i < 5; i++)
+    {
+        pads[i] = input_devices_add(&system->devices, InputDeviceKind::gamepad, guids[i], "Pad");
+        input_add_controller(system, pads[i], "Pad", &pad_set);   // controller i
+    }
+    InputFrame out = {};
+    press_start(system, pads[0], 0, &out);
+    check(out.joined_port == 0, "n:n: the first START joins port 1");
+    press_start(system, pads[1], 100, &out);
+    check(out.joined_port == 1, "n:n: the next one port 2");
+
+    // B also on port 1 (N:1 there, 1:N for B).
+    input_port_add(system, 0, 1);
+    input_port_add(system, 0, 1);
+    check(system->ports[0].size() == 2 && system->ports[1].size() == 1, "n:n: added once");
+    input_devices_set_code(&system->devices, pads[0], static_cast<uint32_t>(InputButton::east), true);
+    input_devices_set_code(&system->devices, pads[1], static_cast<uint32_t>(InputButton::south), true);
+    frame(system, 200, &out);
+    check(out.pad_buttons[0] == (PAD_BIT_A | PAD_BIT_B), "n:1: both members' buttons on port 1");
+    check(out.pad_buttons[1] == PAD_BIT_B, "1:n: B plays port 2 as well");
+    input_devices_set_code(&system->devices, pads[0], static_cast<uint32_t>(InputButton::east), false);
+    input_devices_set_code(&system->devices, pads[1], static_cast<uint32_t>(InputButton::south), false);
+
+    // Sticks: the member pushing furthest, not a sum.
+    input_devices_set_axis(&system->devices, pads[1], InputAxis::left_x, -0.5f);   // (a real stick: not pinned from the start)
+    input_devices_set_axis(&system->devices, pads[0], InputAxis::left_x, 0.6f);
+    input_devices_set_axis(&system->devices, pads[1], InputAxis::left_x, -1.0f);
+    frame(system, 216, &out);
+    check(out.analog[0][0][0] == -32767, "n:1: the stick pushed furthest wins");
+    input_devices_set_axis(&system->devices, pads[1], InputAxis::left_x, -0.3f);
+    frame(system, 232, &out);
+    check(out.analog[0][0][0] > 16000, "n:1: ...whichever it is now");
+    check(out.analog[1][0][0] < 0 && out.analog[1][0][0] > -16000, "1:n: port 2 has B's stick alone");
+    input_devices_set_axis(&system->devices, pads[0], InputAxis::left_x, 0.0f);
+    input_devices_set_axis(&system->devices, pads[1], InputAxis::left_x, 0.0f);
+
+    // B drives the UI now (a member of port 1).
+    system->settings.ui_active = true;
+    input_bind(&system->controllers[1].bindings, InputAction::ui_down, button(InputButton::dpad_down));
+    frame(system, 248, &out);
+    input_devices_set_code(&system->devices, pads[1], static_cast<uint32_t>(InputButton::dpad_down), true);
+    frame(system, 264, &out);
+    check(out.gamepad_held[static_cast<uint32_t>(InputAction::ui_down)], "n:n: any member of port 1 drives the UI");
+    input_devices_set_code(&system->devices, pads[1], static_cast<uint32_t>(InputButton::dpad_down), false);
+    system->settings.ui_active = false;
+    frame(system, 280, &out);
+
+    // Unplugged: off both ports; back on both.
+    input_devices_disconnect(&system->devices, pads[1]);
+    frame(system, 300, &out);
+    check(!input_port_has(system, 0, 1) && !input_port_has(system, 1, 1) && out.left_port == 0, "n:n: unplugged leaves every port");
+    input_devices_add(&system->devices, InputDeviceKind::gamepad, guids[1], "Pad");
+    frame(system, 316, &out);
+    check(input_port_has(system, 0, 1) && input_port_has(system, 1, 1), "n:n: plugged back on every port");
+
+    // Off one port only.
+    input_port_remove(system, 0, 1);
+    check(!input_port_has(system, 0, 1) && input_port_has(system, 1, 1) && input_port_has(system, 0, 0), "n:n: - leaves that port only");
+
+    // Every port taken: START doesn't join (it can still be added by hand).
+    press_start(system, pads[2], 400, &out);
+    press_start(system, pads[3], 500, &out);
+    check(input_port_has(system, 2, 2) && input_port_has(system, 3, 3), "n:n: ports 3 and 4 taken");
+    press_start(system, pads[4], 600, &out);
+    check(out.joined_port == INPUT_NO_PORT && input_controller_port(system, 4) == INPUT_NO_PORT, "n:n: all taken, START doesn't join");
+    input_port_add(system, 2, 4);
+    check(input_port_has(system, 2, 4), "n:n: added by hand to a taken port");
+
+    // Swapping ports moves whole member lists.
+    input_swap_ports(system, 1, 2);
+    check(input_port_has(system, 1, 2) && input_port_has(system, 1, 4) && input_port_has(system, 2, 1), "n:n: swap moves the lists");
+    delete system;
+}
+
 static void test_fake_gamepad()
 {
     InputSystem* system = new InputSystem{};
@@ -485,7 +580,7 @@ static void test_menus_and_defaults()
     check((out.pad_buttons[0] & PAD_BIT_B) != 0, "menus closed: it plays again once let go");
 
     input_leave_all(system);
-    check(system->ports[0] == INPUT_NO_PORT && input_first_controller(system, keyboard) == static_cast<int32_t>(controller),
+    check(system->ports[0].empty() && input_first_controller(system, keyboard) == static_cast<int32_t>(controller),
           "leave all: ports free, controller kept");
 
     // A gamepad's interface actions are reported apart (to drive the UI).
@@ -671,7 +766,8 @@ static void test_capture_and_remove()
     // still held when the capture ends, it does nothing (BACK mustn't close
     // the window it was bound in) until pressed again.
     system->settings.ui_active = true;
-    system->ports[0] = 1;   // the gamepad drives the interface
+    system->ports[0].clear();
+    input_port_add(system, 0, 1);   // the gamepad drives the interface
     uint32_t back = static_cast<uint32_t>(InputAction::ui_back);
     input_capture_begin(system, pad);
     frame(system, 10000, &out);
@@ -706,10 +802,13 @@ static void test_capture_and_remove()
     // Removing a keyboard part renumbers the ports after it.
     InputBindingSet empty = {};
     uint32_t part = input_add_controller(system, keyboard, "Keyboard 2", &empty);
-    system->ports[0] = static_cast<int32_t>(part);
-    system->ports[1] = 1;   // the gamepad
-    input_remove_controller(system, 0);   // the first keyboard controller
-    check(system->ports[0] == static_cast<int32_t>(part) - 1 && system->ports[1] == 0, "remove: ports renumbered");
+    input_leave_all(system);
+    input_port_add(system, 0, part);
+    input_port_add(system, 1, 1);   // the gamepad
+    input_port_add(system, 1, 0);   // the first keyboard controller, removed next
+    input_remove_controller(system, 0);
+    check(input_port_has(system, 0, part - 1) && system->ports[1].size() == 1 && input_port_has(system, 1, 0),
+          "remove: off its ports, the others renumbered");
 
     // Ignoring by hand, and using a fake one anyway.
     InputDevice* device = input_devices_find(&system->devices, pad);
@@ -840,6 +939,7 @@ int main()
     test_shared_port_and_reconnects();
     test_gamepad_hotkeys();
     test_combo_and_stick();
+    test_shared_ports();
     test_fake_gamepad();
     test_menus_and_defaults();
     test_config();

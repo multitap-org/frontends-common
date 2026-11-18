@@ -520,12 +520,54 @@ int32_t input_controller_port(const InputSystem* system, uint32_t controller)
 {
     for (uint32_t p = 0; p < INPUT_PORT_COUNT; p++)
     {
-        if (system->ports[p] == static_cast<int32_t>(controller))
+        if (input_port_has(system, p, controller))
         {
             return static_cast<int32_t>(p);
         }
     }
     return INPUT_NO_PORT;
+}
+
+bool input_port_has(const InputSystem* system, uint32_t port, uint32_t controller)
+{
+    if (port >= INPUT_PORT_COUNT)
+    {
+        return false;
+    }
+    const std::vector<uint32_t>* members = &system->ports[port];
+    for (size_t m = 0; m < members->size(); m++)
+    {
+        if ((*members)[m] == controller)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void input_port_add(InputSystem* system, uint32_t port, uint32_t controller)
+{
+    if (port < INPUT_PORT_COUNT && controller < system->controllers.size() && !input_port_has(system, port, controller))
+    {
+        system->ports[port].push_back(controller);
+    }
+}
+
+void input_port_remove(InputSystem* system, uint32_t port, uint32_t controller)
+{
+    if (port >= INPUT_PORT_COUNT)
+    {
+        return;
+    }
+    std::vector<uint32_t>* members = &system->ports[port];
+    for (size_t m = 0; m < members->size(); m++)
+    {
+        if ((*members)[m] == controller)
+        {
+            members->erase(members->begin() + static_cast<long>(m));
+            return;
+        }
+    }
 }
 
 static bool is_keyboard(const InputSystem* system, int32_t controller)
@@ -538,37 +580,50 @@ static bool is_keyboard(const InputSystem* system, int32_t controller)
     return device != nullptr && device->kind == InputDeviceKind::keyboard;
 }
 
-static int32_t join_port(InputSystem* system, uint32_t controller, int32_t preferred)
+// The keyboard's first player (the one keyboard_shares_port1 puts on port 1), or -1.
+static int32_t keyboard_player(const InputSystem* system)
+{
+    for (size_t c = 0; c < system->controllers.size(); c++)
+    {
+        if (is_keyboard(system, static_cast<int32_t>(c)))
+        {
+            return static_cast<int32_t>(c);
+        }
+    }
+    return -1;
+}
+
+// Free for START: no members but the keyboard put there to share it.
+static bool port_free(const InputSystem* system, uint32_t port)
+{
+    const std::vector<uint32_t>* members = &system->ports[port];
+    int32_t keyboard = system->keyboard_seated ? keyboard_player(system) : -1;
+    for (size_t m = 0; m < members->size(); m++)
+    {
+        if (static_cast<int32_t>((*members)[m]) != keyboard)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+// START: the first free port, if it is on none. INPUT_NO_PORT if none was free.
+static int32_t join_port(InputSystem* system, uint32_t controller)
 {
     if (input_controller_port(system, controller) != INPUT_NO_PORT)
     {
-        return input_controller_port(system, controller);
-    }
-    int32_t index = static_cast<int32_t>(controller);
-    if (preferred >= 0 && preferred < static_cast<int32_t>(INPUT_PORT_COUNT) && system->ports[preferred] == INPUT_NO_PORT)
-    {
-        system->ports[preferred] = index;
-        return preferred;
+        return INPUT_NO_PORT;
     }
     for (uint32_t p = 0; p < INPUT_PORT_COUNT; p++)
     {
-        if (system->ports[p] == INPUT_NO_PORT)
+        if (port_free(system, p))
         {
-            system->ports[p] = index;
+            system->ports[p].push_back(controller);
             return static_cast<int32_t>(p);
         }
     }
     return INPUT_NO_PORT;
-}
-
-bool input_controller_shares_port1(const InputSystem* system, uint32_t controller)
-{
-    if (!system->settings.keyboard_shares_port1 || controller >= system->controllers.size())
-    {
-        return false;
-    }
-    return is_keyboard(system, static_cast<int32_t>(controller)) &&
-           input_first_controller(system, system->controllers[controller].device_id) == static_cast<int32_t>(controller);
 }
 
 bool input_join(InputSystem* system, uint32_t controller)
@@ -577,15 +632,14 @@ bool input_join(InputSystem* system, uint32_t controller)
     {
         return false;
     }
-    return join_port(system, controller, 0) != INPUT_NO_PORT;
+    return join_port(system, controller) != INPUT_NO_PORT;
 }
 
 void input_leave(InputSystem* system, uint32_t controller)
 {
-    int32_t port = input_controller_port(system, controller);
-    if (port != INPUT_NO_PORT)
+    for (uint32_t p = 0; p < INPUT_PORT_COUNT; p++)
     {
-        system->ports[port] = INPUT_NO_PORT;
+        input_port_remove(system, p, controller);
     }
 }
 
@@ -593,12 +647,16 @@ void input_leave_all(InputSystem* system)
 {
     for (uint32_t p = 0; p < INPUT_PORT_COUNT; p++)
     {
-        system->ports[p] = INPUT_NO_PORT;
+        system->ports[p].clear();
     }
     for (size_t c = 0; c < system->controllers.size(); c++)
     {
-        system->controllers[c].last_port = INPUT_NO_PORT;
+        for (uint32_t p = 0; p < INPUT_PORT_COUNT; p++)
+        {
+            system->controllers[c].last_ports[p] = false;
+        }
     }
+    system->keyboard_seated = false;   // back on port 1 on the next update, if it shares it
 }
 
 // The same, from only the axes (`analog`) or only the keys and buttons.
@@ -705,12 +763,14 @@ void input_remove_controller(InputSystem* system, uint32_t controller)
     }
     input_leave(system, controller);
     system->controllers.erase(system->controllers.begin() + static_cast<long>(controller));
-    int32_t removed = static_cast<int32_t>(controller);
     for (uint32_t p = 0; p < INPUT_PORT_COUNT; p++)
     {
-        if (system->ports[p] > removed)
+        for (size_t m = 0; m < system->ports[p].size(); m++)
         {
-            system->ports[p]--;
+            if (system->ports[p][m] > controller)
+            {
+                system->ports[p][m]--;
+            }
         }
     }
 }
@@ -836,9 +896,7 @@ void input_swap_ports(InputSystem* system, uint32_t a, uint32_t b)
 {
     if (a < INPUT_PORT_COUNT && b < INPUT_PORT_COUNT)
     {
-        int32_t controller = system->ports[a];
-        system->ports[a] = system->ports[b];
-        system->ports[b] = controller;
+        system->ports[a].swap(system->ports[b]);
     }
 }
 
@@ -966,29 +1024,55 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
 {
     *frame = InputFrame{};
 
-    // Ports of devices that went away; back when they return, if still free.
+    // The keyboard on port 1 when it shares it (once it is there to put),
+    // off it when that's turned off.
+    int32_t keyboard_shared = keyboard_player(system);
+    if (system->settings.keyboard_shares_port1 && !system->keyboard_seated && keyboard_shared >= 0)
+    {
+        input_port_add(system, 0, static_cast<uint32_t>(keyboard_shared));
+        system->keyboard_seated = true;
+    }
+    else if (!system->settings.keyboard_shares_port1 && system->keyboard_seated)
+    {
+        if (keyboard_shared >= 0)
+        {
+            input_port_remove(system, 0, static_cast<uint32_t>(keyboard_shared));
+        }
+        system->keyboard_seated = false;
+    }
+
+    // Devices that went away leave their ports; back on all of them when they return.
     for (size_t c = 0; c < system->controllers.size(); c++)
     {
         InputController* controller = &system->controllers[c];
+        uint32_t index = static_cast<uint32_t>(c);
         const InputDevice* device = input_devices_find_const(&system->devices, controller->device_id);
-        int32_t port = input_controller_port(system, static_cast<uint32_t>(c));
+        int32_t port = input_controller_port(system, index);
         bool connected = device != nullptr && device->connected;
         if (!connected && port != INPUT_NO_PORT)
         {
-            controller->last_port = port;
-            system->ports[port] = INPUT_NO_PORT;
+            for (uint32_t p = 0; p < INPUT_PORT_COUNT; p++)
+            {
+                controller->last_ports[p] = input_port_has(system, p, index);
+            }
+            input_leave(system, index);
             frame->left_port = port;
             frame->left_controller = static_cast<int32_t>(c);
         }
-        else if (connected && port == INPUT_NO_PORT && controller->last_port != INPUT_NO_PORT)
+        else if (connected && port == INPUT_NO_PORT)
         {
-            if (system->ports[controller->last_port] == INPUT_NO_PORT)
+            for (uint32_t p = 0; p < INPUT_PORT_COUNT; p++)
             {
-                system->ports[controller->last_port] = static_cast<int32_t>(c);
+                if (controller->last_ports[p])
+                {
+                    input_port_add(system, p, index);
+                }
+                controller->last_ports[p] = false;
             }
-            controller->last_port = INPUT_NO_PORT;
         }
     }
+    // Sticks so far, per port: the member pushing furthest wins.
+    int32_t stick_reach[INPUT_PORT_COUNT][2] = {};
 
     for (size_t c = 0; c < system->controllers.size(); c++)
     {
@@ -1020,26 +1104,22 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
 
         // Joining (any time: in the UI or in a game).
         bool keyboard = device->kind == InputDeviceKind::keyboard;
-        bool shared = input_controller_shares_port1(system, index);
-        if (shared && input_controller_port(system, index) != INPUT_NO_PORT)
-        {
-            input_leave(system, index);   // it plays on port 1 anyway
-        }
         int32_t port = input_controller_port(system, index);
-        if (!shared && port == INPUT_NO_PORT && pressed[index_of(InputAction::pad_start)])
+        if (port == INPUT_NO_PORT && pressed[index_of(InputAction::pad_start)])
         {
-            port = join_port(system, index, INPUT_NO_PORT);
+            port = join_port(system, index);
             if (port != INPUT_NO_PORT)
             {
                 frame->joined_port = port;
                 frame->joined_controller = static_cast<int32_t>(index);
             }
         }
-        bool joined = shared || port != INPUT_NO_PORT;
+        bool joined = port != INPUT_NO_PORT;
+        bool on_port1 = input_port_has(system, 0, index);
 
         // The layer: HOTKEY > INTERFACE > GAME.
         bool hotkeys = (joined || keyboard) && modifier_active(controller, held, pressed, now_ms);
-        bool drives_ui = keyboard || port == 0;
+        bool drives_ui = keyboard || on_port1;
         InputLayer layer = InputLayer::none;
         if (hotkeys)
         {
@@ -1119,35 +1199,45 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             break;
         case InputLayer::game:
         {
-            // The port's RetroPad: the controller's bindings for the running
-            // core and the port's device (its own, unless a custom core profile).
-            int32_t play_port = shared ? 0 : port;
-            InputBindingSet effective = {};
-            input_effective_bindings(system, index, static_cast<uint32_t>(play_port), &effective);
-            uint16_t buttons = 0;
-            for (uint32_t b = 0; b < INPUT_PAD_BUTTON_COUNT; b++)
+            // The RetroPad of each port it is on: the controller's bindings for
+            // the running core and the port's device (its own, unless a custom
+            // core profile), together with the port's other members.
+            for (uint32_t play_port = 0; play_port < INPUT_PORT_COUNT; play_port++)
             {
-                if (set_value(&effective, device, static_cast<InputAction>(b)) >= PRESSED_THRESHOLD)
+                if (!input_port_has(system, play_port, index))
                 {
-                    buttons = static_cast<uint16_t>(buttons | (1u << b));
+                    continue;
                 }
-            }
-            for (uint32_t b = 0; b < INPUT_PAD_BUTTON_COUNT; b++)
-            {
-                if (controller->held_at_switch[b])
+                InputBindingSet effective = {};
+                input_effective_bindings(system, index, play_port, &effective);
+                uint16_t buttons = 0;
+                for (uint32_t b = 0; b < INPUT_PAD_BUTTON_COUNT; b++)
                 {
-                    buttons = static_cast<uint16_t>(buttons & ~(1u << b));   // still held from another layer
+                    if (set_value(&effective, device, static_cast<InputAction>(b)) >= PRESSED_THRESHOLD &&
+                        !controller->held_at_switch[b])   // (not: still held from another layer)
+                    {
+                        buttons = static_cast<uint16_t>(buttons | (1u << b));
+                    }
                 }
-            }
-            frame->pad_buttons[play_port] = static_cast<uint16_t>(frame->pad_buttons[play_port] | buttons);
-            for (int s = 0; s < 2; s++)
-            {
-                uint32_t first = index_of(s == 0 ? InputAction::pad_left_x_plus : InputAction::pad_right_x_plus);
-                bool stuck = controller->held_at_switch[first] || controller->held_at_switch[first + 1] ||
-                             controller->held_at_switch[first + 2] || controller->held_at_switch[first + 3];
-                if (!stuck)
+                frame->pad_buttons[play_port] = static_cast<uint16_t>(frame->pad_buttons[play_port] | buttons);
+                for (int s = 0; s < 2; s++)
                 {
-                    stick(controller, &effective, device, static_cast<InputAction>(first), frame->analog[play_port][s]);
+                    uint32_t first = index_of(s == 0 ? InputAction::pad_left_x_plus : InputAction::pad_right_x_plus);
+                    bool stuck = controller->held_at_switch[first] || controller->held_at_switch[first + 1] ||
+                                 controller->held_at_switch[first + 2] || controller->held_at_switch[first + 3];
+                    if (stuck)
+                    {
+                        continue;
+                    }
+                    int16_t axes[2] = {};
+                    stick(controller, &effective, device, static_cast<InputAction>(first), axes);
+                    int32_t reach = static_cast<int32_t>(axes[0]) * axes[0] / 2 + static_cast<int32_t>(axes[1]) * axes[1] / 2;
+                    if (reach > stick_reach[play_port][s])
+                    {
+                        stick_reach[play_port][s] = reach;
+                        frame->analog[play_port][s][0] = axes[0];
+                        frame->analog[play_port][s][1] = axes[1];
+                    }
                 }
             }
             break;
@@ -1157,7 +1247,7 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         }
 
         // SELECT held by itself on port 1's gamepad (the UI may use it: hold to go back).
-        if (!keyboard && port == 0 && controller->held_last[modifier] && !controller->modifier_used)
+        if (!keyboard && on_port1 && controller->held_last[modifier] && !controller->modifier_used)
         {
             frame->gamepad_enable_alone = true;
         }

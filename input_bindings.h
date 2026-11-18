@@ -10,17 +10,24 @@
 // keys and its own START), for any number of players.
 //
 // Rules (decided for milestone 3, docs/plan-milestones.md):
-//   - A controller does nothing until it joins a port: START (its pad_start
-//     binding) while it has none, into the first free port, in the UI or in
-//     a game. The press that joins is not passed on.
+//   - Ports are N:N: each port has a list of members (controllers), and a
+//     controller can be on several ports. A port's RetroPad is all its
+//     members together: a button is down if any member holds it, each stick
+//     is the member's that pushes it furthest.
+//   - A controller does nothing until it is on a port: START (its pad_start
+//     binding) while it is on none puts it on the first free port (none
+//     free: it stays out), in the UI or in a game. The press that joins is
+//     not passed on. The frontend can add and remove members by hand
+//     (input_port_add / input_port_remove), on any port.
 //   - With keyboard_shares_port1 (the default) the keyboard's first player
-//     plays on port 1 without joining, together with whatever controller
-//     joined port 1. Without it, it joins with START like the others. The
-//     keyboard's interface and hotkey keys always work.
-//   - Only the controller on port 1 drives the UI (interface actions); the
-//     keyboard always does.
-//   - A disconnected device frees its port (reported in the frame); when it
-//     comes back it gets that port again if it is still free.
+//     is put on port 1 (at start, and after input_leave_all), an ordinary
+//     member from then on; a port with only it still counts as free, so the
+//     first gamepad's START joins it there. Without it, it joins with START
+//     like the others. The keyboard's interface and hotkey keys always work.
+//   - Only port 1's members drive the UI (interface actions); the keyboard
+//     always does.
+//   - A disconnected device leaves its ports (reported in the frame); when
+//     it comes back it is put on all of them again.
 //   - Layers (inspired by Steam Input and reWASD): each controller is in one
 //     layer at a time and only that layer's bindings do anything:
 //       HOTKEY     its modifier (hotkey_enable) is active: hotkeys only;
@@ -178,7 +185,7 @@ struct InputController
     InputHotkeyMode hotkey_mode = InputHotkeyMode::hold;
 
     // Kept between frames by input_update().
-    int32_t    last_port = INPUT_NO_PORT;            // the port it had when its device went away
+    bool       last_ports[INPUT_PORT_COUNT] = {};    // the ports it was on when its device went away
     bool       held_last[INPUT_ACTION_COUNT] = {};
     InputLayer layer = InputLayer::none;
     bool       held_at_switch[INPUT_ACTION_COUNT] = {};   // held when it entered `layer`: ignored until let go
@@ -259,7 +266,8 @@ struct InputSystem
     // InputCoreProfile for them, when it is custom.
     std::string core_name;
     uint32_t    port_devices[INPUT_PORT_COUNT] = {1, 1, 1, 1};   // 1 = the libretro joypad
-    int32_t                      ports[INPUT_PORT_COUNT] = {INPUT_NO_PORT, INPUT_NO_PORT, INPUT_NO_PORT, INPUT_NO_PORT};
+    std::vector<uint32_t>        ports[INPUT_PORT_COUNT];   // each port's members (controller indexes), in the order they came
+    bool                         keyboard_seated = false;   // the keyboard was put on port 1 for keyboard_shares_port1
     InputSettings                settings;
     InputCapture                 capture;
     // Nothing is routed (no actions, no RetroPad) while set: a controller is
@@ -278,7 +286,7 @@ struct InputFrame
     bool     gamepad_enable_alone = false;          // port 1's gamepad holds HOTKEY ENABLE and no hotkey fired with it
     int32_t  joined_port = INPUT_NO_PORT;           // a controller joined this frame (for a message)
     int32_t  joined_controller = -1;
-    int32_t  left_port = INPUT_NO_PORT;             // a controller's device went away and freed this port
+    int32_t  left_port = INPUT_NO_PORT;             // a controller's device went away and left this port (its first)
     int32_t  left_controller = -1;
 };
 
@@ -307,19 +315,26 @@ uint32_t input_add_controller(InputSystem* system, uint32_t device_id, const cha
 // The first controller on a device, or -1.
 int32_t input_first_controller(const InputSystem* system, uint32_t device_id);
 
-// The controller's port, or INPUT_NO_PORT.
+// The first port the controller is on, or INPUT_NO_PORT.
 int32_t input_controller_port(const InputSystem* system, uint32_t controller);
 
-// Is this controller the keyboard's first player while it shares port 1?
-bool input_controller_shares_port1(const InputSystem* system, uint32_t controller);
+// Is the controller on this port?
+bool input_port_has(const InputSystem* system, uint32_t port, uint32_t controller);
+
+// Puts a controller on a port, after its members (nothing if it is there),
+// or takes it off that port only.
+void input_port_add(InputSystem* system, uint32_t port, uint32_t controller);
+void input_port_remove(InputSystem* system, uint32_t port, uint32_t controller);
 
 // Joins a controller now (as START would), preferring port 1. False if no
-// port could be had.
-
+// port was free (or it is already on one: nothing changes).
 bool input_join(InputSystem* system, uint32_t controller);
+
+// Takes a controller off every port.
 void input_leave(InputSystem* system, uint32_t controller);
 
-// Every port free, nothing remembered for devices that come back (a new game).
+// Every port empty, nothing remembered for devices that come back (a new
+// game); the keyboard is put back on port 1 if it shares it.
 void input_leave_all(InputSystem* system);
 
 // The controller's profile for a core and device, or nullptr. _for makes one.
@@ -355,7 +370,7 @@ void input_capture_cancel(InputSystem* system);
 bool  input_capture_candidate(const InputSystem* system, InputSource* source);
 float input_capture_hold_progress(const InputSystem* system, uint64_t now_ms);
 
-// Swaps two ports' controllers (reordering from the quick menu).
+// Swaps two ports' members (reordering from the quick menu).
 void input_swap_ports(InputSystem* system, uint32_t a, uint32_t b);
 
 // One frame: joins, ports of devices that left or came back, hotkey state,
