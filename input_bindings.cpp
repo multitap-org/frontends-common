@@ -779,16 +779,9 @@ InputCombo* input_combo_add(InputSystem* system, const char* core, const std::st
     return &system->combos.back();
 }
 
-void input_combo_remove(InputSystem* system, const char* core, const std::string& id)
+// A combo's or macro's bindings out of every remap of its core.
+static void unbind_everywhere(InputSystem* system, const char* core, const std::string& id)
 {
-    for (size_t c = 0; c < system->combos.size(); c++)
-    {
-        if (system->combos[c].core == core && system->combos[c].id == id)
-        {
-            system->combos.erase(system->combos.begin() + static_cast<long>(c));
-            break;
-        }
-    }
     for (size_t p = 0; p < system->core_profiles.size(); p++)
     {
         InputCoreProfile* profile = &system->core_profiles[p];
@@ -804,6 +797,75 @@ void input_combo_remove(InputSystem* system, const char* core, const std::string
             }
         }
     }
+}
+
+void input_combo_remove(InputSystem* system, const char* core, const std::string& id)
+{
+    for (size_t c = 0; c < system->combos.size(); c++)
+    {
+        if (system->combos[c].core == core && system->combos[c].id == id)
+        {
+            system->combos.erase(system->combos.begin() + static_cast<long>(c));
+            break;
+        }
+    }
+    unbind_everywhere(system, core, id);
+}
+
+const InputMacro* input_macro(const InputSystem* system, const char* core, const std::string& id)
+{
+    for (size_t m = 0; m < system->macros.size(); m++)
+    {
+        if (system->macros[m].core == core && system->macros[m].id == id)
+        {
+            return &system->macros[m];
+        }
+    }
+    return nullptr;
+}
+
+InputMacro* input_macro_add(InputSystem* system, const char* core, const std::string& name)
+{
+    // The next free "m<n>" of the core.
+    unsigned long next = 1;
+    for (size_t m = 0; m < system->macros.size(); m++)
+    {
+        const InputMacro* macro = &system->macros[m];
+        if (macro->core == core && macro->id.size() > 1 && macro->id[0] == 'm')
+        {
+            unsigned long number = std::strtoul(macro->id.c_str() + 1, nullptr, 10);
+            next = number >= next ? number + 1 : next;
+        }
+    }
+    InputMacro macro = {};
+    macro.core = core;
+    macro.id = "m" + std::to_string(next);
+    macro.name = name;
+    system->macros.push_back(macro);
+    return &system->macros.back();
+}
+
+void input_macro_remove(InputSystem* system, const char* core, const std::string& id)
+{
+    for (size_t m = 0; m < system->macros.size(); m++)
+    {
+        if (system->macros[m].core == core && system->macros[m].id == id)
+        {
+            system->macros.erase(system->macros.begin() + static_cast<long>(m));
+            break;
+        }
+    }
+    unbind_everywhere(system, core, id);
+}
+
+uint32_t input_macro_frames(const InputMacro* macro)
+{
+    uint32_t total = 0;
+    for (size_t s = 0; s < macro->steps.size(); s++)
+    {
+        total += macro->steps[s].frames;
+    }
+    return total;
 }
 
 void input_effective_bindings(const InputSystem* system, uint32_t controller, uint32_t port, InputBindingSet* out)
@@ -1110,6 +1172,89 @@ static bool modifier_active(InputController* controller, const bool* held, const
     return controller->modifier_on;
 }
 
+// One frame of a macro on a port: starts when its input goes down, plays
+// to the end (and again while held, if it repeats). Its buttons this frame.
+static uint16_t macro_step(InputController* controller, uint32_t port, const InputMacro* macro, bool down)
+{
+    InputMacroPlay* play = nullptr;
+    for (size_t p = 0; p < controller->macro_plays.size(); p++)
+    {
+        if (controller->macro_plays[p].port == port && controller->macro_plays[p].macro == macro->id)
+        {
+            play = &controller->macro_plays[p];
+        }
+    }
+    if (play == nullptr)
+    {
+        InputMacroPlay fresh = {};
+        fresh.port = port;
+        fresh.macro = macro->id;
+        controller->macro_plays.push_back(fresh);
+        play = &controller->macro_plays.back();
+    }
+    bool pressed = down && !play->held_last;
+    play->held_last = down;
+    uint32_t total = input_macro_frames(macro);
+    if (!play->playing && pressed && total > 0)
+    {
+        play->playing = true;
+        play->frame = 0;
+    }
+    if (!play->playing)
+    {
+        return 0;
+    }
+    if (play->frame >= total)
+    {
+        if (macro->repeat && down)
+        {
+            play->frame = 0;   // again, while held
+        }
+        else
+        {
+            play->playing = false;
+            return 0;
+        }
+    }
+    uint32_t at = 0;
+    uint16_t buttons = 0;
+    for (size_t s = 0; s < macro->steps.size(); s++)
+    {
+        if (play->frame < at + macro->steps[s].frames)
+        {
+            buttons = macro->steps[s].buttons;
+            break;
+        }
+        at += macro->steps[s].frames;
+    }
+    play->frame++;
+    return buttons;
+}
+
+uint16_t input_controller_pad_buttons(const InputSystem* system, uint32_t controller, uint32_t port)
+{
+    if (controller >= system->controllers.size())
+    {
+        return 0;
+    }
+    const InputDevice* device = input_devices_find_const(&system->devices, system->controllers[controller].device_id);
+    if (device == nullptr || !device->connected)
+    {
+        return 0;
+    }
+    InputBindingSet effective = {};
+    input_effective_bindings(system, controller, port, &effective);
+    uint16_t buttons = 0;
+    for (uint32_t b = 0; b < INPUT_PAD_BUTTON_COUNT; b++)
+    {
+        if (set_value(&effective, device, static_cast<InputAction>(b)) >= PRESSED_THRESHOLD)
+        {
+            buttons = static_cast<uint16_t>(buttons | (1u << b));
+        }
+    }
+    return buttons;
+}
+
 void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
 {
     *frame = InputFrame{};
@@ -1309,26 +1454,35 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
                         buttons = static_cast<uint16_t>(buttons | (1u << b));
                     }
                 }
-                // Its combos: any of a combo's inputs presses all its buttons.
+                // Its combos (any of a combo's inputs presses all its buttons)
+                // and macros (an input plays its steps, a frame per update).
                 const InputCoreProfile* profile = input_active_core_profile(system, index, play_port);
                 for (size_t k = 0; profile != nullptr && k < profile->combos.size(); k++)
                 {
                     const InputComboBinding* binding = &profile->combos[k];
                     const InputCombo* combo = input_combo(system, system->core_name.c_str(), binding->combo);
+                    const InputMacro* macro = input_macro(system, system->core_name.c_str(), binding->combo);
                     float value = 0.0f;
-                    for (uint32_t s = 0; combo != nullptr && s < INPUT_SOURCES_PER_ACTION; s++)
+                    for (uint32_t s = 0; (combo != nullptr || macro != nullptr) && s < INPUT_SOURCES_PER_ACTION; s++)
                     {
                         float v = input_source_value(device, binding->sources[s]);
                         value = v > value ? v : value;
                     }
-                    if (value >= PRESSED_THRESHOLD)
+                    bool down = value >= PRESSED_THRESHOLD;
+                    uint16_t adds = 0;
+                    if (combo != nullptr && down)
                     {
-                        for (uint32_t b = 0; b < INPUT_PAD_BUTTON_COUNT; b++)
+                        adds = combo->buttons;
+                    }
+                    if (macro != nullptr)
+                    {
+                        adds = macro_step(controller, play_port, macro, down);
+                    }
+                    for (uint32_t b = 0; b < INPUT_PAD_BUTTON_COUNT; b++)
+                    {
+                        if ((adds & (1u << b)) != 0 && !controller->held_at_switch[b])
                         {
-                            if ((combo->buttons & (1u << b)) != 0 && !controller->held_at_switch[b])
-                            {
-                                buttons = static_cast<uint16_t>(buttons | (1u << b));
-                            }
+                            buttons = static_cast<uint16_t>(buttons | (1u << b));
                         }
                     }
                 }

@@ -948,6 +948,93 @@ static void test_combos_and_game_remaps()
     delete back;
 }
 
+// Macros: steps over frames, once or again while held, written and read back.
+static void test_macros()
+{
+    InputSystem* system = new InputSystem{};
+    system->settings.keyboard_shares_port1 = false;
+    uint32_t pad = input_devices_add(&system->devices, InputDeviceKind::gamepad, "pad-guid", "Pad");
+    InputBindingSet pad_set = {};
+    gamepad_bindings(&pad_set);
+    input_add_controller(system, pad, "Pad", &pad_set);
+    input_join(system, 0);
+    system->core_name = "fbneo";
+    InputFrame out = {};
+    constexpr uint32_t DOWN = 1u << 5, RIGHT = 1u << 7;
+
+    InputMacro* macro = input_macro_add(system, "fbneo", "HADOUKEN");
+    InputMacroStep steps[4] = {{static_cast<uint16_t>(DOWN), 2}, {static_cast<uint16_t>(DOWN | RIGHT), 2},
+                               {static_cast<uint16_t>(RIGHT | PAD_BIT_A), 2}, {0, 1}};
+    for (int i = 0; i < 4; i++)
+    {
+        macro->steps.push_back(steps[i]);
+    }
+    std::string id = macro->id;
+    check(id == "m1" && input_macro_frames(macro) == 7, "macros: id and length");
+    InputCoreProfile* core = input_core_profile_for(system, "fbneo", "", 1, "pad-guid");
+    InputComboBinding binding = {};
+    binding.combo = id;
+    binding.sources[0] = button(InputButton::north);
+    core->combos.push_back(binding);
+
+    // Pressed once (and let go at once): the whole sequence plays.
+    uint16_t seen[9] = {};
+    input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::north), true);
+    for (int f = 0; f < 9; f++)
+    {
+        frame(system, static_cast<uint64_t>(f) * 16, &out);
+        seen[f] = out.pad_buttons[0];
+        input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::north), false);
+    }
+    check(seen[0] == DOWN && seen[1] == DOWN && seen[2] == (DOWN | RIGHT) && seen[4] == (RIGHT | PAD_BIT_A) &&
+              seen[6] == 0 && seen[7] == 0 && seen[8] == 0,
+          "macros: plays its steps once");
+
+    // Repeat: again while held, not after.
+    system->macros[0].repeat = true;
+    input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::north), true);
+    for (int f = 0; f < 9; f++)
+    {
+        frame(system, 200 + static_cast<uint64_t>(f) * 16, &out);
+        seen[f] = out.pad_buttons[0];
+    }
+    check(seen[7] == DOWN && seen[8] == DOWN, "macros: repeat plays again while held");
+    input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::north), false);
+    for (int f = 0; f < 9; f++)
+    {
+        frame(system, 400 + static_cast<uint64_t>(f) * 16, &out);
+    }
+    check(out.pad_buttons[0] == 0, "macros: ...and stops at the end once let go");
+
+    // Written and read back.
+    SettingsFile file = {};
+    input_config_write(system, &file);
+    std::string text;
+    settings_file_to_text(&file, nullptr, &text);
+    check(text.find("m1 = pad.down:2 pad.down+pad.right:2 pad.right+pad.a:2 -:1 | repeat | HADOUKEN") != std::string::npos &&
+              text.find("macro.m1 = button:north") != std::string::npos,
+          "macros: written");
+    SettingsFile parsed = {};
+    settings_file_parse(&parsed, text.c_str(), text.size(), "test");
+    InputSystem* back = new InputSystem{};
+    input_config_read(back, &parsed);
+    const InputMacro* read = input_macro(back, "fbneo", "m1");
+    check(read != nullptr && read->repeat && read->name == "HADOUKEN" && read->steps.size() == 4 && read->steps[3].buttons == 0 &&
+              read->steps[1].buttons == (DOWN | RIGHT) && input_macro_frames(read) == 7,
+          "macros: read back");
+    const InputCoreProfile* read_core = input_core_profile(back, "fbneo", "", 1, "pad-guid");
+    check(read_core != nullptr && read_core->combos.size() == 1 && read_core->combos[0].combo == "m1", "macros: binding read back");
+
+    // The controller's RetroPad as a recording sees it (no layers).
+    input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::east), true);
+    check(input_controller_pad_buttons(system, 0, 0) == PAD_BIT_A, "macros: what a recording takes");
+    input_macro_remove(system, "fbneo", "m1");
+    core = input_core_profile_for(system, "fbneo", "", 1, "pad-guid");
+    check(input_macro(system, "fbneo", "m1") == nullptr && core->combos.empty(), "macros: removed and unbound");
+    delete system;
+    delete back;
+}
+
 static void test_layouts()
 {
     InputLayouts layouts = {};
@@ -1020,6 +1107,7 @@ int main()
     test_capture_and_remove();
     test_core_profiles();
     test_combos_and_game_remaps();
+    test_macros();
     test_layouts();
     test_pad_positions();
     if (g_failures == 0)

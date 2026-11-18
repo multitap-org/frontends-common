@@ -12,6 +12,7 @@ static const char PREFIX_UI[] = "ui/";
 static const char PREFIX_CORE[] = "core:";
 static const char PREFIX_GAME[] = "game:";      // game:<core>/<device>/<controller>/<game> (a game's own remap)
 static const char PREFIX_COMBOS[] = "combos:";  // combos:<core>, <id> = pad.x+pad.y | NAME
+static const char PREFIX_MACROS[] = "macros:";  // macros:<core>, <id> = pad.down:3 pad.down+pad.right:3 -:4 | once | NAME
 
 static void write_core_profiles(const InputSystem* system, SettingsFile* file);
 
@@ -164,7 +165,9 @@ static void read_core_profile(InputSystem* system, const SettingsFileSection* se
             profile->custom = entry->value == "custom";
             continue;
         }
-        if (entry->key.compare(0, 6, "combo.") == 0 && entry->key.size() > 6)
+        bool combo_key = entry->key.compare(0, 6, "combo.") == 0 && entry->key.size() > 6;
+        bool macro_key = entry->key.compare(0, 6, "macro.") == 0 && entry->key.size() > 6;
+        if (combo_key || macro_key)
         {
             InputComboBinding binding = {};
             binding.combo = entry->key.substr(6);
@@ -188,6 +191,107 @@ static void read_core_profile(InputSystem* system, const SettingsFileSection* se
         }
         change.action = action;
         profile->overrides.push_back(change);
+    }
+}
+
+// "pad.x+pad.y" as RetroPad button bits; false if not understood.
+static bool parse_buttons(const std::string& text, uint16_t* buttons)
+{
+    *buttons = 0;
+    size_t at = 0;
+    while (at <= text.size())
+    {
+        size_t plus = text.find('+', at);
+        std::string part = text.substr(at, plus == std::string::npos ? std::string::npos : plus - at);
+        size_t first = part.find_first_not_of(' ');
+        size_t last = part.find_last_not_of(' ');
+        part = first != std::string::npos ? part.substr(first, last - first + 1) : std::string();
+        InputAction action = InputAction::count;
+        if (!input_action_parse(part.c_str(), &action) || static_cast<uint32_t>(action) >= INPUT_PAD_BUTTON_COUNT)
+        {
+            return false;
+        }
+        *buttons = static_cast<uint16_t>(*buttons | (1u << static_cast<uint32_t>(action)));
+        if (plus == std::string::npos)
+        {
+            return true;
+        }
+        at = plus + 1;
+    }
+    return true;
+}
+
+static std::string buttons_text(uint16_t buttons)
+{
+    std::string text;
+    for (uint32_t b = 0; b < INPUT_PAD_BUTTON_COUNT; b++)
+    {
+        if ((buttons & (1u << b)) != 0)
+        {
+            text += text.empty() ? "" : "+";
+            text += input_action_name(static_cast<InputAction>(b));
+        }
+    }
+    return text;
+}
+
+static std::string trimmed(const std::string& text)
+{
+    size_t first = text.find_first_not_of(' ');
+    size_t last = text.find_last_not_of(' ');
+    return first != std::string::npos ? text.substr(first, last - first + 1) : std::string();
+}
+
+// <id> = pad.down:3 pad.down+pad.right:3 -:4 | once | HADOUKEN ("-" = a
+// pause; "repeat" = again while held; the name may be missing).
+static void read_macros(InputSystem* system, const SettingsFileSection* section, const std::string& core)
+{
+    for (size_t e = 0; e < section->entries.size(); e++)
+    {
+        const SettingsFileEntry* entry = &section->entries[e];
+        const std::string& value = entry->value;
+        size_t bar = value.find('|');
+        size_t bar2 = bar != std::string::npos ? value.find('|', bar + 1) : std::string::npos;
+        std::string steps_text = value.substr(0, bar);
+        std::string mode = bar != std::string::npos ? trimmed(value.substr(bar + 1, bar2 == std::string::npos ? std::string::npos
+                                                                                                            : bar2 - bar - 1))
+                                                    : std::string("once");
+        InputMacro macro = {};
+        macro.core = core;
+        macro.id = entry->key;
+        macro.name = bar2 != std::string::npos ? trimmed(value.substr(bar2 + 1)) : std::string();
+        macro.repeat = mode == "repeat";
+        bool understood = !entry->key.empty() && (mode == "once" || mode == "repeat");
+        size_t at = 0;
+        while (understood && at < steps_text.size())
+        {
+            size_t end = steps_text.find(' ', at);
+            end = end == std::string::npos ? steps_text.size() : end;
+            std::string word = steps_text.substr(at, end - at);
+            at = end + 1;
+            if (word.empty())
+            {
+                continue;
+            }
+            size_t colon = word.rfind(':');
+            InputMacroStep step = {};
+            char* number_end = nullptr;
+            unsigned long frames = colon != std::string::npos ? std::strtoul(word.c_str() + colon + 1, &number_end, 10) : 0;
+            understood = colon != std::string::npos && number_end != nullptr && *number_end == '\0' && frames >= 1 && frames <= 9999;
+            std::string buttons = colon != std::string::npos ? word.substr(0, colon) : std::string();
+            understood = understood && (buttons == "-" || parse_buttons(buttons, &step.buttons));
+            step.frames = static_cast<uint16_t>(frames);
+            if (understood)
+            {
+                macro.steps.push_back(step);
+            }
+        }
+        if (!understood || macro.steps.empty())
+        {
+            std::fprintf(stderr, "input.cfg: [%s] %s: not understood, ignored\n", section->name.c_str(), entry->key.c_str());
+            continue;
+        }
+        system->macros.push_back(macro);
     }
 }
 
@@ -245,6 +349,7 @@ void input_config_read(InputSystem* system, const SettingsFile* file)
     system->profiles.clear();
     system->core_profiles.clear();
     system->combos.clear();
+    system->macros.clear();
     for (size_t s = 0; s < file->sections.size(); s++)
     {
         const SettingsFileSection* section = &file->sections[s];
@@ -308,6 +413,10 @@ void input_config_read(InputSystem* system, const SettingsFile* file)
         else if (starts_with(section->name, PREFIX_COMBOS, &id))
         {
             read_combos(system, section, id);
+        }
+        else if (starts_with(section->name, PREFIX_MACROS, &id))
+        {
+            read_macros(system, section, id);
         }
     }
 }
@@ -481,7 +590,8 @@ static void write_core_profiles(const InputSystem* system, SettingsFile* file)
         for (size_t k = 0; k < profile->combos.size(); k++)
         {
             const InputComboBinding* binding = &profile->combos[k];
-            settings_file_set(file, section.c_str(), ("combo." + binding->combo).c_str(), sources_text(binding->sources).c_str());
+            const char* kind = !binding->combo.empty() && binding->combo[0] == 'm' ? "macro." : "combo.";
+            settings_file_set(file, section.c_str(), (kind + binding->combo).c_str(), sources_text(binding->sources).c_str());
         }
     }
     for (size_t c = 0; c < system->combos.size(); c++)
@@ -498,6 +608,24 @@ static void write_core_profiles(const InputSystem* system, SettingsFile* file)
         }
         std::string value = combo->name.empty() ? buttons : buttons + " | " + combo->name;
         settings_file_set(file, (PREFIX_COMBOS + combo->core).c_str(), combo->id.c_str(), value.c_str());
+    }
+    for (size_t m = 0; m < system->macros.size(); m++)
+    {
+        const InputMacro* macro = &system->macros[m];
+        std::string value;
+        for (size_t s = 0; s < macro->steps.size(); s++)
+        {
+            const InputMacroStep* step = &macro->steps[s];
+            value += value.empty() ? "" : " ";
+            value += (step->buttons == 0 ? std::string("-") : buttons_text(step->buttons)) + ":" + std::to_string(step->frames);
+        }
+        if (value.empty())
+        {
+            continue;   // (nothing to play)
+        }
+        value += macro->repeat ? " | repeat" : " | once";
+        value += macro->name.empty() ? std::string() : " | " + macro->name;
+        settings_file_set(file, (PREFIX_MACROS + macro->core).c_str(), macro->id.c_str(), value.c_str());
     }
 }
 

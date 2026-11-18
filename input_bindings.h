@@ -176,6 +176,16 @@ struct InputSettings
     uint64_t hold_ms = 500;     // binding: how long a gamepad's control must be held to be taken
 };
 
+// A macro being played on a port (kept per controller).
+struct InputMacroPlay
+{
+    uint32_t    port = 0;
+    std::string macro;
+    bool        held_last = false;   // its input, last frame
+    bool        playing = false;
+    uint32_t    frame = 0;           // into the macro
+};
+
 struct InputController
 {
     uint32_t        device_id = 0;
@@ -195,6 +205,7 @@ struct InputController
     bool       modifier_on = false;                  // ONE HOTKEY / STAYS ON: turned on
     uint64_t   modifier_on_ms = 0;
     bool       modifier_used = false;                // a hotkey fired since the modifier went down
+    std::vector<InputMacroPlay> macro_plays;         // its macros' inputs, per port (one frame = one update)
 };
 
 // What is kept of a controller between runs (settings/input.cfg), by id: a
@@ -231,7 +242,27 @@ struct InputCombo
     uint16_t    buttons = 0;   // bit N = RETRO_DEVICE_ID_JOYPAD_N
 };
 
-// An input bound to a combo (in a remap).
+// A macro: RetroPad buttons in sequence (a special move), per core like
+// combos. Each step holds its buttons (directions too) for some frames; a
+// step with none is a pause. Played when its input is pressed: once, or
+// over and over while it's held (`repeat`, each time to the end).
+struct InputMacroStep
+{
+    uint16_t buttons = 0;   // bit N = RETRO_DEVICE_ID_JOYPAD_N; 0 = a pause
+    uint16_t frames = 1;
+};
+
+struct InputMacro
+{
+    std::string                 core;
+    std::string                 id;     // "m1", "m2"... (unique per core)
+    std::string                 name;   // "" = shown by its steps
+    std::vector<InputMacroStep> steps;
+    bool                        repeat = false;
+};
+
+// An input bound to a combo or a macro (in a remap), by its id: "c..." a
+// combo, "m..." a macro.
 struct InputComboBinding
 {
     std::string combo;   // its id
@@ -254,7 +285,7 @@ struct InputCoreProfile
     bool                              decided = false;
     bool                              custom = false;
     std::vector<InputBindingOverride> overrides;     // RetroPad actions only
-    std::vector<InputComboBinding>    combos;        // the core's combos bound (whether custom or not)
+    std::vector<InputComboBinding>    combos;        // the core's combos and macros bound (whether custom or not)
 };
 
 // Waiting for the next control pressed on one device, to bind it
@@ -282,6 +313,7 @@ struct InputSystem
     std::vector<InputProfile>    profiles;   // loaded, plus what input_config_write took from the controllers
     std::vector<InputCoreProfile> core_profiles;
     std::vector<InputCombo>       combos;    // every core's, in the order they were made
+    std::vector<InputMacro>       macros;    // the same
 
     // What runs now (set by the frontend): the core and the emulated device
     // on each port. The RetroPad of a port comes from the controller's
@@ -379,6 +411,18 @@ void input_core_profile_remove(InputSystem* system, const InputCoreProfile* prof
 const InputCombo* input_combo(const InputSystem* system, const char* core, const std::string& id);
 InputCombo*       input_combo_add(InputSystem* system, const char* core, const std::string& name, uint16_t buttons);
 void              input_combo_remove(InputSystem* system, const char* core, const std::string& id);
+
+// Macros of a core, the same way.
+const InputMacro* input_macro(const InputSystem* system, const char* core, const std::string& id);
+InputMacro*       input_macro_add(InputSystem* system, const char* core, const std::string& name);
+void              input_macro_remove(InputSystem* system, const char* core, const std::string& id);
+
+// How many frames a macro lasts.
+uint32_t input_macro_frames(const InputMacro* macro);
+
+// The RetroPad buttons a controller holds now through its bindings for a
+// port (no layers, combos or macros): what a recording takes.
+uint16_t input_controller_pad_buttons(const InputSystem* system, uint32_t controller, uint32_t port);
 
 // The bindings a controller plays with on a port now: its own, with the
 // RetroPad changes of its custom profile for the running core and the
