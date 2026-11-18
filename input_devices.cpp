@@ -215,7 +215,7 @@ constexpr size_t KEY_NAME_COUNT = sizeof(KEY_NAMES) / sizeof(KEY_NAMES[0]);
 static const char* const BUTTON_NAMES[INPUT_BUTTON_COUNT] = {
     "south", "east", "west", "north", "back", "guide", "start", "left_stick", "right_stick",
     "left_shoulder", "right_shoulder", "dpad_up", "dpad_down", "dpad_left", "dpad_right", "misc1",
-    "right_paddle1", "left_paddle1", "right_paddle2", "left_paddle2", "touchpad",
+    "right_paddle1", "left_paddle1", "right_paddle2", "left_paddle2", "touchpad", "misc2", "misc3", "misc4", "misc5", "misc6",
 };
 
 static const char* const AXIS_NAMES[INPUT_AXIS_COUNT] = {

@@ -75,6 +75,8 @@ bool input_layouts_add(InputLayouts* layouts, const char* maker, const char* mod
     }
     const char* dpad = settings_file_get(file, "layout", "dpad");
     layout.dpad = dpad == nullptr || std::strcmp(dpad, "no") != 0;
+    const char* face = settings_file_get(file, "layout", "face");
+    layout.six_face = face != nullptr && std::strcmp(face, "six") == 0;
     const char* sticks = settings_file_get(file, "layout", "sticks");
     if (sticks != nullptr)
     {

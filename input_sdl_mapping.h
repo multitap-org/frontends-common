@@ -52,8 +52,21 @@ enum class InputMapControl
     left_y,    // the stick pushed down
     right_x,
     right_y,
+    // Extra buttons (MAP CONTROLLER's STEP 3; no layout names them, so STEP 1 never asks them):
+    paddle1,   // SDL's paddle1 .. paddle4: InputButton right_paddle1, left_paddle1, right_paddle2, left_paddle2
+    paddle2,
+    paddle3,
+    paddle4,
+    l4,        // the extra shoulders, kept as SDL's misc5 / misc6
+    r4,
+    misc1,     // any other buttons, one after the other (misc1 .. misc4)
+    misc2,
+    misc3,
+    misc4,
     count,
 };
+
+constexpr InputMapControl INPUT_MAP_FIRST_EXTRA = InputMapControl::paddle1;
 
 constexpr uint32_t INPUT_MAP_CONTROL_COUNT = static_cast<uint32_t>(InputMapControl::count);
 
@@ -90,18 +103,29 @@ struct InputSdlMapper
     std::string   roles[INPUT_MAP_ROLES_MAX];        // each role's raw element ("" = skipped)
     std::string   holding;                           // the control being held (not taken yet)
     uint64_t      holding_since_ms = 0;
-    uint64_t      hold_ms = 500;                // how long a step's control must be held (positions and roles)
+    uint64_t      hold_ms = 500;                     // how long a step's control must be held (positions and roles)
     uint64_t      optional_wait_ms = 5000;           // an optional step is skipped after this long
+    InputMapControl end_on_skip_from = InputMapControl::count;   // an optional step from here skipped by time ends the mapping
+    std::string   kept;                              // fields of a loaded mapping this mapper doesn't know ("touchpad:b20,")
 };
 
 // Starts on a connected joystick (any: known to SDL as a gamepad or not):
-// first the position steps in `wanted` (nullptr = all of them), then
+// first the position steps in `wanted` (nullptr = all but the extras), then
 // `role_count` role steps (optional ones skip after a few seconds).
 bool input_sdl_mapper_begin(InputSdlMapper* mapper, uint32_t joystick_id, uint32_t role_count, const bool* role_optional,
                             const bool* wanted, uint64_t now_ms);
 
 // The role being asked (0 ..), or -1 during the position steps (and once done).
 int32_t input_sdl_mapper_role(const InputSdlMapper* mapper);
+
+// Keeps an SDL mapping's controls (from SDL_GetGamepadMapping...) for every
+// position the mapper isn't asking (call after begin): skipping STEP 1, or
+// adding extra buttons to a mapping. Fields it doesn't know are written back
+// as they were.
+void input_sdl_mapper_load(InputSdlMapper* mapper, const char* mapping);
+
+// Every role left: none (STEP 2 skipped). The mapping is complete then.
+void input_sdl_mapper_skip_roles(InputSdlMapper* mapper);
 
 // The position being asked, or InputMapControl::count once the roles have begun.
 InputMapControl input_sdl_mapper_control(const InputSdlMapper* mapper);

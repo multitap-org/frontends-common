@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstdio>
+#include <cstring>
 
 constexpr int      AXIS_PUSHED = 16000;          // past this from rest, an axis counts as pushed
 
@@ -10,6 +11,7 @@ constexpr int      AXIS_PUSHED = 16000;          // past this from rest, an axis
 static const char* const SDL_NAMES[INPUT_MAP_CONTROL_COUNT] = {
     "a", "b", "x", "y", "dpup", "dpdown", "dpleft", "dpright", "leftshoulder", "rightshoulder", "back", "start",
     "lefttrigger", "righttrigger", "leftstick", "rightstick", "guide", "leftx", "lefty", "rightx", "righty",
+    "paddle1", "paddle2", "paddle3", "paddle4", "misc5", "misc6", "misc1", "misc2", "misc3", "misc4",
 };
 
 const char* input_map_control_sdl_name(InputMapControl control)
@@ -25,12 +27,13 @@ bool input_map_control_optional(InputMapControl control)
 
 static bool is_stick(InputMapControl control)
 {
-    return static_cast<uint32_t>(control) >= static_cast<uint32_t>(InputMapControl::left_x);
+    return static_cast<uint32_t>(control) >= static_cast<uint32_t>(InputMapControl::left_x) &&
+           static_cast<uint32_t>(control) <= static_cast<uint32_t>(InputMapControl::right_y);
 }
 
 bool input_map_control_is_stick(InputMapControl control)
 {
-    return is_stick(control) && control != InputMapControl::count;
+    return is_stick(control);
 }
 
 InputMapControl input_map_control_for_source(InputSource source)
@@ -54,6 +57,16 @@ InputMapControl input_map_control_for_source(InputSource source)
         case InputButton::left_stick: return InputMapControl::left_stick;
         case InputButton::right_stick: return InputMapControl::right_stick;
         case InputButton::guide: return InputMapControl::guide;
+        case InputButton::right_paddle1: return InputMapControl::paddle1;
+        case InputButton::left_paddle1: return InputMapControl::paddle2;
+        case InputButton::right_paddle2: return InputMapControl::paddle3;
+        case InputButton::left_paddle2: return InputMapControl::paddle4;
+        case InputButton::misc5: return InputMapControl::l4;
+        case InputButton::misc6: return InputMapControl::r4;
+        case InputButton::misc1: return InputMapControl::misc1;
+        case InputButton::misc2: return InputMapControl::misc2;
+        case InputButton::misc3: return InputMapControl::misc3;
+        case InputButton::misc4: return InputMapControl::misc4;
         default: return InputMapControl::count;
         }
     }
@@ -206,7 +219,7 @@ bool input_sdl_mapper_begin(InputSdlMapper* mapper, uint32_t joystick_id, uint32
 {
     for (uint32_t c = 0; c < INPUT_MAP_CONTROL_COUNT; c++)
     {
-        mapper->wanted[c] = wanted == nullptr || wanted[c];
+        mapper->wanted[c] = wanted != nullptr ? wanted[c] : c < static_cast<uint32_t>(INPUT_MAP_FIRST_EXTRA);
     }
     mapper->role_count = role_count < INPUT_MAP_ROLES_MAX ? role_count : INPUT_MAP_ROLES_MAX;
     for (uint32_t r = 0; r < INPUT_MAP_ROLES_MAX; r++)
@@ -242,6 +255,8 @@ bool input_sdl_mapper_begin(InputSdlMapper* mapper, uint32_t joystick_id, uint32
     {
         mapper->elements[c].clear();
     }
+    mapper->kept.clear();
+    mapper->end_on_skip_from = InputMapControl::count;
     mapper->step = 0;
     start_step(mapper, now_ms);
     return true;
@@ -318,6 +333,14 @@ bool input_sdl_mapper_update(InputSdlMapper* mapper, uint64_t now_ms)
     }
     else if (step_optional(mapper, mapper->step) && element.empty() && now_ms - mapper->step_started_ms >= mapper->optional_wait_ms)
     {
+        if (!is_role_step(mapper->step) && mapper->step >= static_cast<uint32_t>(mapper->end_on_skip_from))
+        {
+            // "Any other buttons": none came, so there are no more. Nothing after it either.
+            for (uint32_t c = mapper->step; c < INPUT_MAP_CONTROL_COUNT; c++)
+            {
+                mapper->wanted[c] = false;
+            }
+        }
         mapper->step++;   // the pad doesn't have it
         start_step(mapper, now_ms);
     }
@@ -432,6 +455,17 @@ static InputSource position_source(InputMapControl control)
     default:
         break;
     }
+    // The extras: buttons, in the order of InputMapControl's extras.
+    static const InputButton EXTRAS[] = {
+        InputButton::right_paddle1, InputButton::left_paddle1, InputButton::right_paddle2, InputButton::left_paddle2,
+        InputButton::misc5, InputButton::misc6, InputButton::misc1, InputButton::misc2, InputButton::misc3, InputButton::misc4,
+    };
+    uint32_t first_extra = static_cast<uint32_t>(INPUT_MAP_FIRST_EXTRA);
+    if (index >= first_extra && index < INPUT_MAP_CONTROL_COUNT)
+    {
+        source.type = InputSourceType::button;
+        source.code = static_cast<uint16_t>(EXTRAS[index - first_extra]);
+    }
     return source;
 }
 
@@ -457,7 +491,7 @@ static InputSource element_source(const InputSdlMapper* mapper, const std::strin
             return position_source(control);
         }
         // A role on half of an axis that turned out to be a stick ("+a0" on leftx "a0").
-        bool stick = c >= static_cast<uint32_t>(InputMapControl::left_x);
+        bool stick = is_stick(control);
         if (stick && element.size() >= 3 && (element[0] == '+' || element[0] == '-'))
         {
             std::string axis = element.substr(1);
@@ -513,6 +547,7 @@ bool input_sdl_mapper_finish(InputSdlMapper* mapper, std::string* line)
             any = true;
         }
     }
+    text += mapper->kept;   // what a loaded mapping had that this mapper doesn't know
     text += std::string("platform:") + SDL_GetPlatform() + ",";
     input_sdl_mapper_cancel(mapper);
     if (!any || SDL_AddGamepadMapping(text.c_str()) < 0)
@@ -533,4 +568,67 @@ float input_sdl_mapper_hold_progress(const InputSdlMapper* mapper, uint64_t now_
     }
     uint64_t held = now_ms - mapper->holding_since_ms;
     return held >= mapper->hold_ms ? 1.0f : static_cast<float>(held) / static_cast<float>(mapper->hold_ms);
+}
+
+void input_sdl_mapper_load(InputSdlMapper* mapper, const char* mapping)
+{
+    mapper->kept.clear();
+    if (mapping == nullptr)
+    {
+        return;
+    }
+    // "<guid>,<name>,field:value,...": skip the GUID and the name.
+    const char* field = mapping;
+    for (int commas = 0; commas < 2 && field != nullptr; commas++)
+    {
+        field = std::strchr(field, ',');
+        field = field != nullptr ? field + 1 : nullptr;
+    }
+    while (field != nullptr && *field != '\0')
+    {
+        const char* end = std::strchr(field, ',');
+        std::string text = end != nullptr ? std::string(field, static_cast<size_t>(end - field)) : std::string(field);
+        field = end != nullptr ? end + 1 : nullptr;
+        size_t colon = text.find(':');
+        if (colon == std::string::npos)
+        {
+            continue;
+        }
+        std::string name = text.substr(0, colon);
+        std::string value = text.substr(colon + 1);
+        if (name == "platform")
+        {
+            continue;   // finish writes this platform's
+        }
+        bool known = false;
+        for (uint32_t c = 0; c < INPUT_MAP_CONTROL_COUNT && !known; c++)
+        {
+            if (name == SDL_NAMES[c])
+            {
+                known = true;
+                if (!mapper->wanted[c])
+                {
+                    mapper->elements[c] = value;   // a position asked keeps what is pressed now
+                }
+            }
+        }
+        if (!known)
+        {
+            mapper->kept += text + ",";
+        }
+    }
+}
+
+void input_sdl_mapper_skip_roles(InputSdlMapper* mapper)
+{
+    if (!mapper->active)
+    {
+        return;
+    }
+    for (uint32_t r = 0; r < mapper->role_count; r++)
+    {
+        mapper->roles[r].clear();
+    }
+    mapper->step = total_steps(mapper);
+    mapper->holding.clear();
 }

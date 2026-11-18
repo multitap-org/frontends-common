@@ -51,6 +51,11 @@ enum class InputButton
     right_paddle2,
     left_paddle2,
     touchpad,
+    misc2,          // SDL3's extra buttons; MAP CONTROLLER's L4 / R4 are misc5 / misc6
+    misc3,
+    misc4,
+    misc5,
+    misc6,
     count,
 };
 

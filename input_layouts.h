@@ -17,6 +17,10 @@
 //   sdl_types = switchpro joyconpair   SDL_GetGamepadStringForType names it is preselected for
 //   dpad = yes                      (no: it has none)
 //   sticks = 2                      (0, 1 or 2)
+//   face = six                      six face buttons: A B C on x a b (left, bottom,
+//                                   right), X Y Z on leftshoulder y rightshoulder
+//                                   (the RetroPad's usual places for them);
+//                                   L / R, if any, on the triggers
 //
 //   [labels]                        by SDL's position names; a control left out isn't on the pad
 //   a = B                           the bottom face button
@@ -49,6 +53,7 @@ struct InputLayout
     std::vector<std::string> sdl_types;
     bool                     dpad = true;
     uint32_t                 sticks = 2;
+    bool                     six_face = false;   // face = six: A B C below, X Y Z above (Genesis, Saturn)
     std::string              labels[INPUT_MAP_CONTROL_COUNT];   // "" = no label (d-pad, sticks) or not on the pad
 };
 

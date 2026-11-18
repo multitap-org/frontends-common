@@ -5,6 +5,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstdio>
+#include <string>
 
 #include "input_sdl_mapping.h"
 
@@ -122,6 +123,71 @@ static void test_positions_then_roles()
     SDL_DetachVirtualJoystick(id);
 }
 
+// STEP 3 on a mapping that exists: the extras are added, the rest (and what
+// the mapper doesn't know, like the touchpad) is written back as it was;
+// "other buttons" end when one doesn't come.
+static void test_extras_and_skipping()
+{
+    SDL_VirtualJoystickDesc desc;
+    SDL_INIT_INTERFACE(&desc);
+    desc.type = SDL_JOYSTICK_TYPE_UNKNOWN;
+    desc.nbuttons = 12;
+    desc.name = "Virtual extras pad";
+    SDL_JoystickID id = SDL_AttachVirtualJoystick(&desc);
+    g_joystick = SDL_OpenJoystick(id);
+    check(g_joystick != nullptr, "extras: opened");
+    if (g_joystick == nullptr)
+    {
+        return;
+    }
+    const char* existing = "03000000000000000000000000000000,Pad,a:b0,b:b1,touchpad:b11,platform:Linux,";
+
+    bool wanted[INPUT_MAP_CONTROL_COUNT] = {};
+    wanted[static_cast<uint32_t>(InputMapControl::paddle1)] = true;
+    wanted[static_cast<uint32_t>(InputMapControl::misc1)] = true;
+    wanted[static_cast<uint32_t>(InputMapControl::misc2)] = true;
+    wanted[static_cast<uint32_t>(InputMapControl::misc3)] = true;
+    InputSdlMapper* mapper = new InputSdlMapper;
+    check(input_sdl_mapper_begin(mapper, id, 0, nullptr, wanted, g_now), "extras: begins");
+    mapper->end_on_skip_from = InputMapControl::misc1;
+    input_sdl_mapper_load(mapper, existing);
+    input_sdl_mapper_update(mapper, g_now);
+    check(input_sdl_mapper_control(mapper) == InputMapControl::paddle1, "extras: the paddles first");
+    press(mapper, 0);   // already the bottom button: not a paddle
+    check(input_sdl_mapper_control(mapper) == InputMapControl::paddle1, "extras: a mapped button isn't an extra");
+    press(mapper, 5);
+    press(mapper, 6);   // misc1
+    check(input_sdl_mapper_control(mapper) == InputMapControl::misc2, "extras: then the other buttons");
+    g_now += mapper->optional_wait_ms;   // none comes
+    bool done = input_sdl_mapper_update(mapper, g_now);
+    check(done, "extras: an other button that doesn't come ends them");
+    std::string line;
+    check(input_sdl_mapper_finish(mapper, &line), "extras: finished");
+    check(line.find("a:b0,") != std::string::npos && line.find("b:b1,") != std::string::npos, "extras: the mapping kept");
+    check(line.find("paddle1:b5,") != std::string::npos && line.find("misc1:b6,") != std::string::npos, "extras: added");
+    check(line.find("touchpad:b11,") != std::string::npos, "extras: a field the mapper doesn't know, kept");
+    check(line.find("misc2:") == std::string::npos, "extras: none for the one that didn't come");
+
+    // STEP 1 skipped (SDL's mapping loaded), STEP 2 skipped: complete, no roles.
+    bool none[INPUT_MAP_CONTROL_COUNT] = {};
+    bool optional[1] = {false};
+    check(input_sdl_mapper_begin(mapper, id, 1, optional, none, g_now), "skip: begins");
+    input_sdl_mapper_load(mapper, existing);
+    input_sdl_mapper_update(mapper, g_now);
+    check(input_sdl_mapper_role(mapper) == 0, "skip: no positions, straight to the roles");
+    press(mapper, 1);   // on the loaded mapping: the right button
+    check(is_button(input_sdl_mapper_role_source(mapper, 0), InputButton::east), "skip: a role found on the loaded mapping");
+    check(input_sdl_mapper_begin(mapper, id, 1, optional, none, g_now), "skip: again");
+    input_sdl_mapper_skip_roles(mapper);
+    check(input_sdl_mapper_update(mapper, g_now), "skip: all roles skipped, complete");
+    check(input_sdl_mapper_role_source(mapper, 0).type == InputSourceType::none, "skip: a skipped role is none");
+
+    input_sdl_mapper_cancel(mapper);
+    delete mapper;
+    SDL_CloseJoystick(g_joystick);
+    SDL_DetachVirtualJoystick(id);
+}
+
 int main()
 {
     if (!SDL_Init(SDL_INIT_JOYSTICK))
@@ -130,6 +196,7 @@ int main()
         return 1;
     }
     test_positions_then_roles();
+    test_extras_and_skipping();
     SDL_Quit();
     if (g_failures == 0)
     {

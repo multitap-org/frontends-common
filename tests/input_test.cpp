@@ -715,7 +715,7 @@ static void test_layouts()
 {
     InputLayouts layouts = {};
     static const char GENESIS[] =
-        "[layout]\nname = GENESIS\norder = 40\nsdl_types = segagenesis\ndpad = yes\nsticks = 0\n"
+        "[layout]\nname = GENESIS\norder = 40\nsdl_types = segagenesis\ndpad = yes\nsticks = 0\nface = six\n"
         "[labels]\na = A\nb = B\nrightshoulder = C\nx = X\ny = Y\nleftshoulder = Z\nstart = START\n";
     SettingsFile file = {};
     settings_file_parse(&file, GENESIS, sizeof(GENESIS) - 1, "test");
@@ -734,6 +734,8 @@ static void test_layouts()
     check(genesis != nullptr && !input_layout_has(genesis, InputMapControl::left_trigger), "layouts: an unlisted button isn't");
     check(genesis != nullptr && !input_layout_has(genesis, InputMapControl::left_x) && input_layout_has(genesis, InputMapControl::dpad_up),
           "layouts: no sticks, a d-pad");
+    check(genesis != nullptr && genesis->six_face && !layouts.layouts[0].six_face, "layouts: a six-button face");
+    check(!input_layout_has(&layouts.layouts[0], InputMapControl::paddle1), "layouts: extras aren't on a layout");
 }
 
 static void test_pad_positions()
@@ -742,6 +744,10 @@ static void test_pad_positions()
     check(input_map_control_for_source(button(InputButton::south)) == InputMapControl::south, "pad: bottom button");
     check(input_map_control_for_source(button(InputButton::guide)) == InputMapControl::guide, "pad: guide");
     check(input_map_control_for_source(button(InputButton::touchpad)) == InputMapControl::count, "pad: not drawn");
+    check(input_map_control_for_source(button(InputButton::left_paddle1)) == InputMapControl::paddle2 &&
+              input_map_control_for_source(button(InputButton::misc5)) == InputMapControl::l4,
+          "pad: the extras");
+    check(!input_map_control_is_stick(InputMapControl::paddle1), "pad: an extra isn't a stick");
     InputSource up = {};
     up.type = InputSourceType::axis_minus;
     up.code = static_cast<uint16_t>(InputAxis::left_y);

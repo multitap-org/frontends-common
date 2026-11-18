@@ -190,7 +190,7 @@ void input_sdl_handle_event(InputSdl* sdl, InputSystem* system, const SDL_Event*
     case SDL_EVENT_GAMEPAD_BUTTON_UP:
     {
         InputSdlGamepad* gamepad = find_gamepad(sdl, event->gbutton.which);
-        // SDL's buttons up to the touchpad are InputButton in the same order.
+        // SDL's buttons are InputButton in the same order (up to MISC6).
         if (gamepad == nullptr || event->gbutton.button >= INPUT_BUTTON_COUNT)
         {
             break;
