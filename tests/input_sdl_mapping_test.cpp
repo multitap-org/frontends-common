@@ -86,13 +86,22 @@ static void test_positions_then_roles()
           "mapper: the positions come first");
     press_for(mapper, 0, mapper->hold_ms / 2);   // let go halfway: not taken
     check(input_sdl_mapper_control(mapper) == InputMapControl::south, "mapper: a position let go too soon isn't taken");
+    check(input_sdl_mapper_at_phase_start(mapper), "mapper: the first position is the phase's start");
     press(mapper, 0);   // bottom
+    check(!input_sdl_mapper_at_phase_start(mapper), "mapper: past the phase's start");
+    input_sdl_mapper_restart_phase(mapper, g_now);
+    input_sdl_mapper_update(mapper, g_now);
+    check(input_sdl_mapper_control(mapper) == InputMapControl::south &&
+              mapper->elements[static_cast<uint32_t>(InputMapControl::south)].empty(),
+          "mapper: RESET goes back to the phase's first input, cleared");
+    press(mapper, 0);   // bottom again
     press(mapper, 1);   // right
     press(mapper, 1);   // the same button again: not a second position
     check(input_sdl_mapper_control(mapper) == InputMapControl::west, "mapper: a position can't repeat another");
     press(mapper, 2);   // left
     press(mapper, 3);   // top
     check(input_sdl_mapper_role(mapper) == 0, "mapper: then the roles");
+    check(input_sdl_mapper_at_phase_start(mapper), "mapper: the first role is its phase's start (BACK goes no further)");
 
     press(mapper, 9);   // not on the mapping
     check(input_sdl_mapper_role(mapper) == 0, "mapper: a role ignores a button the positions didn't map");

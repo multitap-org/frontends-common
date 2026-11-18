@@ -531,12 +531,8 @@ InputSource input_sdl_mapper_held_source(const InputSdlMapper* mapper)
     return element_source(mapper, pressed_element(mapper, InputMapControl::south));
 }
 
-bool input_sdl_mapper_finish(InputSdlMapper* mapper, std::string* line)
+bool input_sdl_mapper_line(const InputSdlMapper* mapper, std::string* line)
 {
-    if (!mapper->active)
-    {
-        return false;
-    }
     std::string text = mapper->guid + "," + mapper->name + ",";
     bool any = false;
     for (uint32_t c = 0; c < INPUT_MAP_CONTROL_COUNT; c++)
@@ -549,15 +545,54 @@ bool input_sdl_mapper_finish(InputSdlMapper* mapper, std::string* line)
     }
     text += mapper->kept;   // what a loaded mapping had that this mapper doesn't know
     text += std::string("platform:") + SDL_GetPlatform() + ",";
-    input_sdl_mapper_cancel(mapper);
-    if (!any || SDL_AddGamepadMapping(text.c_str()) < 0)
+    if (!any || mapper->guid.empty())
     {
-        SDL_Log("Mapping refused (%s): %s", SDL_GetError(), text.c_str());
         return false;
     }
-    SDL_Log("Mapping kept: %s", text.c_str());
     *line = text;
     return true;
+}
+
+bool input_sdl_mapper_finish(InputSdlMapper* mapper, std::string* line)
+{
+    bool made = input_sdl_mapper_line(mapper, line);
+    input_sdl_mapper_cancel(mapper);
+    return made;
+}
+
+bool input_sdl_mapper_at_phase_start(const InputSdlMapper* mapper)
+{
+    if (is_role_step(mapper->step))
+    {
+        return mapper->step <= INPUT_MAP_CONTROL_COUNT;
+    }
+    for (uint32_t step = 0; step < mapper->step; step++)
+    {
+        if (step_wanted(mapper, step))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+void input_sdl_mapper_restart_phase(InputSdlMapper* mapper, uint64_t now_ms)
+{
+    if (!mapper->active)
+    {
+        return;
+    }
+    uint32_t first = is_role_step(mapper->step) ? INPUT_MAP_CONTROL_COUNT : 0;
+    uint32_t last = is_role_step(mapper->step) ? total_steps(mapper) : INPUT_MAP_CONTROL_COUNT;
+    for (uint32_t step = first; step < last; step++)
+    {
+        if (step_wanted(mapper, step))
+        {
+            clear_step(mapper, step);   // a loaded position (not asked) stays
+        }
+    }
+    mapper->step = first;
+    start_step(mapper, now_ms);
 }
 
 float input_sdl_mapper_hold_progress(const InputSdlMapper* mapper, uint64_t now_ms)

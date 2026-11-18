@@ -157,6 +157,17 @@ void input_sdl_mapper_cancel(InputSdlMapper* mapper);
 // waits for everything to be let go, and an optional step's time restarts).
 void input_sdl_mapper_restart_step(InputSdlMapper* mapper, uint64_t now_ms);
 
-// The mapping as SDL's text (`line`, for the controller's profile), given to
-// SDL now. False if SDL refused it or nothing was mapped.
+// The mapping made so far as SDL's text (positions, loaded fields, this
+// platform). Nothing is given to SDL: the caller does (SDL_SetGamepadMapping).
+// False if nothing is mapped.
+bool input_sdl_mapper_line(const InputSdlMapper* mapper, std::string* line);
+
+// The line, and the mapper stops (its roles stay readable).
 bool input_sdl_mapper_finish(InputSdlMapper* mapper, std::string* line);
+
+// Is the current step the first of its phase (the positions, or the roles)?
+// (A step's BACK goes no further.)
+bool input_sdl_mapper_at_phase_start(const InputSdlMapper* mapper);
+
+// The current phase from its first step again, what it took cleared.
+void input_sdl_mapper_restart_phase(InputSdlMapper* mapper, uint64_t now_ms);
