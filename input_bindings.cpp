@@ -628,11 +628,10 @@ void input_remove_controller(InputSystem* system, uint32_t controller)
     }
 }
 
-void input_capture_begin(InputSystem* system, uint32_t device_id, bool hold)
+void input_capture_begin(InputSystem* system, uint32_t device_id)
 {
     InputCapture* capture = &system->capture;
     *capture = InputCapture{};
-    capture->hold = hold;
     const InputDevice* device = input_devices_find_const(&system->devices, device_id);
     if (device == nullptr)
     {
@@ -699,7 +698,7 @@ bool input_capture_poll(InputSystem* system, uint64_t now_ms, InputSource* sourc
         capture->candidate = InputSource{};   // let go before it was taken
         return false;
     }
-    if (capture->hold && device->kind != InputDeviceKind::keyboard)
+    if (device->kind != InputDeviceKind::keyboard)
     {
         if (capture->candidate.type == InputSourceType::none || !input_source_equal(capture->candidate, found))
         {

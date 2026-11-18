@@ -9,8 +9,9 @@
 //
 // The position steps come first; then optional *role* steps (the
 // interface's controls: navigate, accept, back, the hotkey modifier...): the
-// button for each, whatever its position, but only one the positions mapped,
-// held for role_hold_ms (let go sooner and it isn't taken).
+// button for each, whatever its position, but only one the positions mapped.
+// Every step takes a control held hold_ms (the drawn pad shows it
+// meanwhile, to confirm it; let go sooner and it isn't taken).
 // Each role is told as the position (or axis half) it is
 // (input_sdl_mapper_role_source).
 //
@@ -87,9 +88,9 @@ struct InputSdlMapper
     uint32_t      role_count = 0;
     bool          role_optional[INPUT_MAP_ROLES_MAX] = {};
     std::string   roles[INPUT_MAP_ROLES_MAX];        // each role's raw element ("" = skipped)
-    std::string   holding;                           // a role's button being held (not taken yet)
+    std::string   holding;                           // the control being held (not taken yet)
     uint64_t      holding_since_ms = 0;
-    uint64_t      role_hold_ms = 1000;               // how long a role's button must be held
+    uint64_t      hold_ms = 500;                // how long a step's control must be held (positions and roles)
     uint64_t      optional_wait_ms = 5000;           // an optional step is skipped after this long
 };
 
@@ -113,7 +114,7 @@ InputSource input_sdl_mapper_role_source(const InputSdlMapper* mapper, uint32_t 
 // during the roles), or a none source.
 InputSource input_sdl_mapper_held_source(const InputSdlMapper* mapper);
 
-// How far a role's hold has come: 0 (nothing held) .. 1 (taken).
+// How far the current step's hold has come: 0 (nothing held) .. 1 (taken).
 float input_sdl_mapper_hold_progress(const InputSdlMapper* mapper, uint64_t now_ms);
 
 // Once a frame: looks for the current step's control. Returns true when the

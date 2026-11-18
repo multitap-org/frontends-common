@@ -283,17 +283,17 @@ bool input_sdl_mapper_update(InputSdlMapper* mapper, uint64_t now_ms)
     {
         used = true;   // not on the mapping: wait for one that is
     }
-    // A role takes a button held for role_hold_ms (the drawn pad
-    // shows which one meanwhile): let go sooner and nothing is taken.
-    if (role && !element.empty() && !used)
+    // A step takes a control held for hold_ms (the drawn pad shows
+    // which one meanwhile): let go sooner and nothing is taken.
+    if (!element.empty() && !used)
     {
         if (element != mapper->holding)
         {
             mapper->holding = element;
             mapper->holding_since_ms = now_ms;
         }
-        mapper->step_started_ms = now_ms;   // an optional role doesn't skip while a button is held
-        if (now_ms - mapper->holding_since_ms < mapper->role_hold_ms)
+        mapper->step_started_ms = now_ms;   // an optional step doesn't skip while a control is held
+        if (now_ms - mapper->holding_since_ms < mapper->hold_ms)
         {
             return false;
         }
@@ -527,10 +527,10 @@ bool input_sdl_mapper_finish(InputSdlMapper* mapper, std::string* line)
 
 float input_sdl_mapper_hold_progress(const InputSdlMapper* mapper, uint64_t now_ms)
 {
-    if (!mapper->active || mapper->holding.empty() || !is_role_step(mapper->step))
+    if (!mapper->active || mapper->holding.empty())
     {
         return 0.0f;
     }
     uint64_t held = now_ms - mapper->holding_since_ms;
-    return held >= mapper->role_hold_ms ? 1.0f : static_cast<float>(held) / static_cast<float>(mapper->role_hold_ms);
+    return held >= mapper->hold_ms ? 1.0f : static_cast<float>(held) / static_cast<float>(mapper->hold_ms);
 }

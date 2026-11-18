@@ -570,7 +570,7 @@ static void test_capture_and_remove()
 
     // A key held when capture starts doesn't count until pressed again.
     input_devices_set_code(&system->devices, keyboard, HID_RETURN, true);
-    input_capture_begin(system, keyboard, true);
+    input_capture_begin(system, keyboard);
     frame(system, 0, &out);
     check(!input_capture_poll(system, 0, &source), "capture: a key already held doesn't count");
     input_devices_set_code(&system->devices, keyboard, HID_F1, true);
@@ -582,7 +582,7 @@ static void test_capture_and_remove()
 
     // An axis pushed past half.
     input_devices_set_axis(&system->devices, pad, InputAxis::left_trigger, 0.0f);
-    input_capture_begin(system, pad, true);
+    input_capture_begin(system, pad);
     input_devices_set_axis(&system->devices, pad, InputAxis::left_trigger, 0.8f);
     check(!input_capture_poll(system, 1000, &source), "capture: a gamepad's control isn't taken at once");
     check(input_capture_poll(system, 1000 + system->settings.hold_ms, &source) && source.type == InputSourceType::axis_plus &&
@@ -591,7 +591,7 @@ static void test_capture_and_remove()
     // An axis held when it starts: going back to the center is not the
     // other direction (the d-pad of a pad that reports it as an axis).
     input_devices_set_axis(&system->devices, pad, InputAxis::left_x, -1.0f);
-    input_capture_begin(system, pad, true);
+    input_capture_begin(system, pad);
     input_devices_set_axis(&system->devices, pad, InputAxis::left_x, 0.0f);
     check(!input_capture_poll(system, 5000, &source), "capture: an axis let go is not a push");
     input_devices_set_axis(&system->devices, pad, InputAxis::left_x, -1.0f);
@@ -599,7 +599,7 @@ static void test_capture_and_remove()
     check(input_capture_poll(system, 5000 + system->settings.hold_ms, &source) && source.type == InputSourceType::axis_minus,
           "capture: pushed again after letting go");
     input_devices_set_axis(&system->devices, pad, InputAxis::left_x, 0.0f);
-    input_capture_begin(system, pad, true);
+    input_capture_begin(system, pad);
     input_capture_cancel(system);
     check(!input_capture_poll(system, 9000, &source), "capture: cancelled");
 
@@ -609,7 +609,7 @@ static void test_capture_and_remove()
     system->settings.ui_active = true;
     system->ports[0] = 1;   // the gamepad drives the interface
     uint32_t back = static_cast<uint32_t>(InputAction::ui_back);
-    input_capture_begin(system, pad, true);
+    input_capture_begin(system, pad);
     frame(system, 10000, &out);
     input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::east), true);
     frame(system, 10016, &out);
@@ -637,14 +637,6 @@ static void test_capture_and_remove()
     input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::east), false);
     frame(system, 14500, &out);
 
-    // BIND ALL names each control: without `hold`, a press is enough.
-    input_capture_begin(system, pad, false);
-    input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::north), true);
-    frame(system, 15000, &out);
-    check(input_capture_poll(system, 15000, &source) && source.type == InputSourceType::button &&
-              source.code == static_cast<uint16_t>(InputButton::north),
-          "capture: without hold, a gamepad's press counts at once");
-    input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::north), false);
     system->settings.ui_active = false;
 
     // Removing a keyboard part renumbers the ports after it.
