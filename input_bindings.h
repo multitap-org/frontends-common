@@ -221,19 +221,40 @@ struct InputProfile
     std::vector<InputBindingOverride> overrides;
 };
 
+// A combo: RetroPad buttons pressed together by one input (THREE PUNCHES =
+// X + Y + L). Defined per core, so every game of that core can bind it.
+struct InputCombo
+{
+    std::string core;
+    std::string id;            // "c1", "c2"... (unique per core; what bindings name)
+    std::string name;          // the user's label ("GRAB"); "" = shown by its buttons
+    uint16_t    buttons = 0;   // bit N = RETRO_DEVICE_ID_JOYPAD_N
+};
+
+// An input bound to a combo (in a remap).
+struct InputComboBinding
+{
+    std::string combo;   // its id
+    InputSource sources[INPUT_SOURCES_PER_ACTION] = {};
+};
+
 // A controller's bindings for one core and one emulated device (step 5 of
 // milestone 3): what it does when that core asks for that device on its
 // port. `custom` = changes to its RetroPad bindings (the overrides apply);
 // otherwise the RetroPad bindings are used as they are, and `decided` says
 // the user was asked and chose that (so they aren't asked again).
+// A remap is the core's (`game` "") unless a game has its own: then, in
+// that game, the game's is used instead (a whole copy, combos included).
 struct InputCoreProfile
 {
     std::string                       core;          // the core's short name
+    std::string                       game;          // "" = every game of the core; else only this one's
     uint32_t                          device = 0;    // the emulated device's id (the core's own numbers)
     std::string                       profile_id;    // the controller's (input_controller_profile_id)
     bool                              decided = false;
     bool                              custom = false;
     std::vector<InputBindingOverride> overrides;     // RetroPad actions only
+    std::vector<InputComboBinding>    combos;        // the core's combos bound (whether custom or not)
 };
 
 // Waiting for the next control pressed on one device, to bind it
@@ -260,11 +281,13 @@ struct InputSystem
     std::vector<InputController> controllers;
     std::vector<InputProfile>    profiles;   // loaded, plus what input_config_write took from the controllers
     std::vector<InputCoreProfile> core_profiles;
+    std::vector<InputCombo>       combos;    // every core's, in the order they were made
 
     // What runs now (set by the frontend): the core and the emulated device
     // on each port. The RetroPad of a port comes from the controller's
     // InputCoreProfile for them, when it is custom.
     std::string core_name;
+    std::string game_name;    // "" = no game (the core's remaps only)
     uint32_t    port_devices[INPUT_PORT_COUNT] = {1, 1, 1, 1};   // 1 = the libretro joypad
     std::vector<uint32_t>        ports[INPUT_PORT_COUNT];   // each port's members (controller indexes), in the order they came
     bool                         keyboard_seated = false;   // the keyboard was put on port 1 for keyboard_shares_port1
@@ -337,11 +360,25 @@ void input_leave(InputSystem* system, uint32_t controller);
 // game); the keyboard is put back on port 1 if it shares it.
 void input_leave_all(InputSystem* system);
 
-// The controller's profile for a core and device, or nullptr. _for makes one.
-const InputCoreProfile* input_core_profile(const InputSystem* system, const char* core, uint32_t device,
+// The controller's profile for a core (and game: "" = the core's) and
+// device, or nullptr. _for makes one.
+const InputCoreProfile* input_core_profile(const InputSystem* system, const char* core, const char* game, uint32_t device,
                                            const std::string& profile_id);
-InputCoreProfile*       input_core_profile_for(InputSystem* system, const char* core, uint32_t device,
+InputCoreProfile*       input_core_profile_for(InputSystem* system, const char* core, const char* game, uint32_t device,
                                                const std::string& profile_id);
+
+// The profile a controller plays with on a port now: the running game's,
+// else the core's; nullptr if neither exists.
+const InputCoreProfile* input_active_core_profile(const InputSystem* system, uint32_t controller, uint32_t port);
+
+// Removes a profile (a game's going back to the core's remap).
+void input_core_profile_remove(InputSystem* system, const InputCoreProfile* profile);
+
+// Combos of a core. _add makes one (its id the next free) and returns it;
+// _remove also unbinds it from every remap.
+const InputCombo* input_combo(const InputSystem* system, const char* core, const std::string& id);
+InputCombo*       input_combo_add(InputSystem* system, const char* core, const std::string& name, uint16_t buttons);
+void              input_combo_remove(InputSystem* system, const char* core, const std::string& id);
 
 // The bindings a controller plays with on a port now: its own, with the
 // RetroPad changes of its custom profile for the running core and the

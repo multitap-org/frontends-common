@@ -1,6 +1,7 @@
 #include "input_bindings.h"
 
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 // A digital action counts as pressed past this (keys and buttons are 0 or 1).
@@ -679,13 +680,13 @@ static float set_value_of(const InputBindingSet* set, const InputDevice* device,
 
 static float action_value(const InputController* controller, const InputDevice* device, InputAction action);
 
-const InputCoreProfile* input_core_profile(const InputSystem* system, const char* core, uint32_t device,
+const InputCoreProfile* input_core_profile(const InputSystem* system, const char* core, const char* game, uint32_t device,
                                            const std::string& profile_id)
 {
     for (size_t p = 0; p < system->core_profiles.size(); p++)
     {
         const InputCoreProfile* profile = &system->core_profiles[p];
-        if (profile->device == device && profile->core == core && profile->profile_id == profile_id)
+        if (profile->device == device && profile->core == core && profile->game == game && profile->profile_id == profile_id)
         {
             return profile;
         }
@@ -693,22 +694,116 @@ const InputCoreProfile* input_core_profile(const InputSystem* system, const char
     return nullptr;
 }
 
-InputCoreProfile* input_core_profile_for(InputSystem* system, const char* core, uint32_t device, const std::string& profile_id)
+InputCoreProfile* input_core_profile_for(InputSystem* system, const char* core, const char* game, uint32_t device,
+                                         const std::string& profile_id)
 {
     for (size_t p = 0; p < system->core_profiles.size(); p++)
     {
         InputCoreProfile* profile = &system->core_profiles[p];
-        if (profile->device == device && profile->core == core && profile->profile_id == profile_id)
+        if (profile->device == device && profile->core == core && profile->game == game && profile->profile_id == profile_id)
         {
             return profile;
         }
     }
     InputCoreProfile profile = {};
     profile.core = core;
+    profile.game = game;
     profile.device = device;
     profile.profile_id = profile_id;
     system->core_profiles.push_back(profile);
     return &system->core_profiles.back();
+}
+
+const InputCoreProfile* input_active_core_profile(const InputSystem* system, uint32_t controller, uint32_t port)
+{
+    if (system->core_name.empty() || port >= INPUT_PORT_COUNT || controller >= system->controllers.size())
+    {
+        return nullptr;
+    }
+    std::string id = input_controller_profile_id(system, controller);
+    const InputCoreProfile* profile = nullptr;
+    if (!system->game_name.empty())
+    {
+        profile = input_core_profile(system, system->core_name.c_str(), system->game_name.c_str(), system->port_devices[port], id);
+    }
+    if (profile == nullptr)
+    {
+        profile = input_core_profile(system, system->core_name.c_str(), "", system->port_devices[port], id);
+    }
+    return profile;
+}
+
+void input_core_profile_remove(InputSystem* system, const InputCoreProfile* profile)
+{
+    for (size_t p = 0; p < system->core_profiles.size(); p++)
+    {
+        if (&system->core_profiles[p] == profile)
+        {
+            system->core_profiles.erase(system->core_profiles.begin() + static_cast<long>(p));
+            return;
+        }
+    }
+}
+
+const InputCombo* input_combo(const InputSystem* system, const char* core, const std::string& id)
+{
+    for (size_t c = 0; c < system->combos.size(); c++)
+    {
+        if (system->combos[c].core == core && system->combos[c].id == id)
+        {
+            return &system->combos[c];
+        }
+    }
+    return nullptr;
+}
+
+InputCombo* input_combo_add(InputSystem* system, const char* core, const std::string& name, uint16_t buttons)
+{
+    // The next free "c<n>" of the core.
+    unsigned long next = 1;
+    for (size_t c = 0; c < system->combos.size(); c++)
+    {
+        const InputCombo* combo = &system->combos[c];
+        if (combo->core == core && combo->id.size() > 1 && combo->id[0] == 'c')
+        {
+            unsigned long number = std::strtoul(combo->id.c_str() + 1, nullptr, 10);
+            next = number >= next ? number + 1 : next;
+        }
+    }
+    InputCombo combo = {};
+    combo.core = core;
+    combo.id = "c" + std::to_string(next);
+    combo.name = name;
+    combo.buttons = buttons;
+    system->combos.push_back(combo);
+    return &system->combos.back();
+}
+
+void input_combo_remove(InputSystem* system, const char* core, const std::string& id)
+{
+    for (size_t c = 0; c < system->combos.size(); c++)
+    {
+        if (system->combos[c].core == core && system->combos[c].id == id)
+        {
+            system->combos.erase(system->combos.begin() + static_cast<long>(c));
+            break;
+        }
+    }
+    for (size_t p = 0; p < system->core_profiles.size(); p++)
+    {
+        InputCoreProfile* profile = &system->core_profiles[p];
+        if (profile->core != core)
+        {
+            continue;
+        }
+        for (size_t b = profile->combos.size(); b > 0; b--)
+        {
+            if (profile->combos[b - 1].combo == id)
+            {
+                profile->combos.erase(profile->combos.begin() + static_cast<long>(b - 1));
+            }
+        }
+    }
 }
 
 void input_effective_bindings(const InputSystem* system, uint32_t controller, uint32_t port, InputBindingSet* out)
@@ -719,12 +814,7 @@ void input_effective_bindings(const InputSystem* system, uint32_t controller, ui
         return;
     }
     *out = system->controllers[controller].bindings;
-    if (system->core_name.empty() || port >= INPUT_PORT_COUNT)
-    {
-        return;
-    }
-    const InputCoreProfile* profile = input_core_profile(system, system->core_name.c_str(), system->port_devices[port],
-                                                         input_controller_profile_id(system, controller));
+    const InputCoreProfile* profile = input_active_core_profile(system, controller, port);
     if (profile == nullptr || !profile->custom)
     {
         return;
@@ -1217,6 +1307,29 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
                         !controller->held_at_switch[b])   // (not: still held from another layer)
                     {
                         buttons = static_cast<uint16_t>(buttons | (1u << b));
+                    }
+                }
+                // Its combos: any of a combo's inputs presses all its buttons.
+                const InputCoreProfile* profile = input_active_core_profile(system, index, play_port);
+                for (size_t k = 0; profile != nullptr && k < profile->combos.size(); k++)
+                {
+                    const InputComboBinding* binding = &profile->combos[k];
+                    const InputCombo* combo = input_combo(system, system->core_name.c_str(), binding->combo);
+                    float value = 0.0f;
+                    for (uint32_t s = 0; combo != nullptr && s < INPUT_SOURCES_PER_ACTION; s++)
+                    {
+                        float v = input_source_value(device, binding->sources[s]);
+                        value = v > value ? v : value;
+                    }
+                    if (value >= PRESSED_THRESHOLD)
+                    {
+                        for (uint32_t b = 0; b < INPUT_PAD_BUTTON_COUNT; b++)
+                        {
+                            if ((combo->buttons & (1u << b)) != 0 && !controller->held_at_switch[b])
+                            {
+                                buttons = static_cast<uint16_t>(buttons | (1u << b));
+                            }
+                        }
                     }
                 }
                 frame->pad_buttons[play_port] = static_cast<uint16_t>(frame->pad_buttons[play_port] | buttons);

@@ -830,7 +830,7 @@ static void test_core_profiles()
     InputFrame out = {};
 
     // A custom profile for snes9x's device 257 on this pad: B on the top button.
-    InputCoreProfile* profile = input_core_profile_for(system, "snes9x", 257, "pad-guid");
+    InputCoreProfile* profile = input_core_profile_for(system, "snes9x", "", 257, "pad-guid");
     profile->decided = true;
     profile->custom = true;
     InputBindingOverride change = {};
@@ -866,10 +866,84 @@ static void test_core_profiles()
     settings_file_parse(&parsed, text.c_str(), text.size(), "test");
     InputSystem* back = new InputSystem{};
     input_config_read(back, &parsed);
-    const InputCoreProfile* read = input_core_profile(back, "snes9x", 257, "pad-guid");
+    const InputCoreProfile* read = input_core_profile(back, "snes9x", "", 257, "pad-guid");
     check(read != nullptr && read->decided && read->custom && read->overrides.size() == 1 &&
               read->overrides[0].action == InputAction::pad_b,
           "core profile: read back");
+    delete system;
+    delete back;
+}
+
+// Combos (per core, bound in a remap) and a game's own remap over the core's.
+static void test_combos_and_game_remaps()
+{
+    InputSystem* system = new InputSystem{};
+    system->settings.keyboard_shares_port1 = false;
+    uint32_t pad = input_devices_add(&system->devices, InputDeviceKind::gamepad, "pad-guid", "Pad");
+    InputBindingSet pad_set = {};
+    gamepad_bindings(&pad_set);
+    input_add_controller(system, pad, "Pad", &pad_set);
+    input_join(system, 0);
+    system->core_name = "fbneo";
+    InputFrame out = {};
+    constexpr uint32_t PAD_BIT_Y = 1u << 1, PAD_BIT_X = 1u << 9, PAD_BIT_L = 1u << 10;
+
+    // THREE PUNCHES on the core, bound to R1 in the core's remap (not custom: combos work anyway).
+    std::string id = input_combo_add(system, "fbneo", "THREE PUNCHES", static_cast<uint16_t>(PAD_BIT_Y | PAD_BIT_X | PAD_BIT_L))->id;
+    check(id == "c1" && input_combo_add(system, "fbneo", "", static_cast<uint16_t>(PAD_BIT_A))->id == "c2" &&
+              input_combo_add(system, "snes9x", "", static_cast<uint16_t>(PAD_BIT_A))->id == "c1",
+          "combos: ids per core");
+    InputCoreProfile* core = input_core_profile_for(system, "fbneo", "", 1, "pad-guid");
+    InputComboBinding binding = {};
+    binding.combo = id;
+    binding.sources[0] = button(InputButton::right_shoulder);
+    core->combos.push_back(binding);
+    input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::right_shoulder), true);
+    frame(system, 0, &out);
+    check(out.pad_buttons[0] == (PAD_BIT_Y | PAD_BIT_X | PAD_BIT_L), "combos: one input presses all its buttons");
+    system->core_name = "snes9x";
+    frame(system, 16, &out);
+    check(out.pad_buttons[0] == 0, "combos: only for its core");
+    system->core_name = "fbneo";
+
+    // sf2's own remap (a copy, then changed): used in sf2 only.
+    system->game_name = "sf2";
+    InputCoreProfile copy = *core;
+    copy.game = "sf2";
+    copy.combos.clear();
+    system->core_profiles.push_back(copy);
+    frame(system, 32, &out);
+    check(out.pad_buttons[0] == 0, "game remap: the game's, without the combo");
+    system->game_name = "kof98";
+    frame(system, 48, &out);
+    check(out.pad_buttons[0] == (PAD_BIT_Y | PAD_BIT_X | PAD_BIT_L), "game remap: other games use the core's");
+
+    // Written and read back.
+    SettingsFile file = {};
+    input_config_write(system, &file);
+    std::string text;
+    settings_file_to_text(&file, nullptr, &text);
+    check(text.find("[combos:fbneo]") != std::string::npos && text.find("c1 = pad.y+pad.x+pad.l | THREE PUNCHES") != std::string::npos &&
+              text.find("[game:fbneo/1/pad-guid/sf2]") != std::string::npos &&
+              text.find("combo.c1 = button:right_shoulder") != std::string::npos,
+          "combos: written");
+    SettingsFile parsed = {};
+    settings_file_parse(&parsed, text.c_str(), text.size(), "test");
+    InputSystem* back = new InputSystem{};
+    input_config_read(back, &parsed);
+    const InputCombo* combo = input_combo(back, "fbneo", "c1");
+    check(combo != nullptr && combo->name == "THREE PUNCHES" && combo->buttons == (PAD_BIT_Y | PAD_BIT_X | PAD_BIT_L) &&
+              back->combos.size() == 3,
+          "combos: read back");
+    const InputCoreProfile* read = input_core_profile(back, "fbneo", "", 1, "pad-guid");
+    check(read != nullptr && read->combos.size() == 1 && read->combos[0].combo == "c1" &&
+              input_core_profile(back, "fbneo", "sf2", 1, "pad-guid") != nullptr,
+          "game remap: read back");
+
+    // Removing a combo unbinds it everywhere.
+    input_combo_remove(system, "fbneo", "c1");
+    core = input_core_profile_for(system, "fbneo", "", 1, "pad-guid");   // (the list grew since: look it up again)
+    check(input_combo(system, "fbneo", "c1") == nullptr && core->combos.empty(), "combos: removed and unbound");
     delete system;
     delete back;
 }
@@ -945,6 +1019,7 @@ int main()
     test_config();
     test_capture_and_remove();
     test_core_profiles();
+    test_combos_and_game_remaps();
     test_layouts();
     test_pad_positions();
     if (g_failures == 0)

@@ -10,6 +10,8 @@ static const char PREFIX_CONTROLLER[] = "controller/";
 static const char PREFIX_RETROPAD[] = "retropad/";
 static const char PREFIX_UI[] = "ui/";
 static const char PREFIX_CORE[] = "core:";
+static const char PREFIX_GAME[] = "game:";      // game:<core>/<device>/<controller>/<game> (a game's own remap)
+static const char PREFIX_COMBOS[] = "combos:";  // combos:<core>, <id> = pad.x+pad.y | NAME
 
 static void write_core_profiles(const InputSystem* system, SettingsFile* file);
 
@@ -129,17 +131,30 @@ static void read_bindings(InputProfile* profile, const SettingsFileSection* sect
     }
 }
 
-static void read_core_profile(InputSystem* system, const SettingsFileSection* section, const std::string& rest)
+// `with_game`: game:<core>/<device>/<controller>/<game>, else core:<core>/<device>/<controller>.
+static void read_core_profile(InputSystem* system, const SettingsFileSection* section, const std::string& rest, bool with_game)
 {
     std::string core;
     uint32_t device = 0;
     std::string profile_id;
-    if (!split_core_section(rest, &core, &device, &profile_id))
+    std::string game;
+    bool understood = split_core_section(rest, &core, &device, &profile_id);
+    if (understood && with_game)
     {
-        std::fprintf(stderr, "input.cfg: [%s]: not core/device/controller, ignored\n", section->name.c_str());
+        size_t slash = profile_id.find('/');
+        understood = slash != std::string::npos && slash > 0 && slash + 1 < profile_id.size();
+        if (understood)
+        {
+            game = profile_id.substr(slash + 1);
+            profile_id = profile_id.substr(0, slash);
+        }
+    }
+    if (!understood)
+    {
+        std::fprintf(stderr, "input.cfg: [%s]: not core/device/controller(/game), ignored\n", section->name.c_str());
         return;
     }
-    InputCoreProfile* profile = input_core_profile_for(system, core.c_str(), device, profile_id);
+    InputCoreProfile* profile = input_core_profile_for(system, core.c_str(), game.c_str(), device, profile_id);
     for (size_t e = 0; e < section->entries.size(); e++)
     {
         const SettingsFileEntry* entry = &section->entries[e];
@@ -147,6 +162,20 @@ static void read_core_profile(InputSystem* system, const SettingsFileSection* se
         {
             profile->decided = true;
             profile->custom = entry->value == "custom";
+            continue;
+        }
+        if (entry->key.compare(0, 6, "combo.") == 0 && entry->key.size() > 6)
+        {
+            InputComboBinding binding = {};
+            binding.combo = entry->key.substr(6);
+            if (parse_sources(entry->value, binding.sources))
+            {
+                profile->combos.push_back(binding);
+            }
+            else
+            {
+                std::fprintf(stderr, "input.cfg: [%s] %s: not understood, ignored\n", section->name.c_str(), entry->key.c_str());
+            }
             continue;
         }
         InputAction action = InputAction::count;
@@ -162,10 +191,60 @@ static void read_core_profile(InputSystem* system, const SettingsFileSection* se
     }
 }
 
+// <id> = pad.x+pad.y+pad.l | THREE PUNCHES (the name may be missing).
+static void read_combos(InputSystem* system, const SettingsFileSection* section, const std::string& core)
+{
+    for (size_t e = 0; e < section->entries.size(); e++)
+    {
+        const SettingsFileEntry* entry = &section->entries[e];
+        const std::string& value = entry->value;
+        size_t bar = value.find('|');
+        std::string buttons_text = value.substr(0, bar);
+        std::string name = bar != std::string::npos ? value.substr(bar + 1) : std::string();
+        size_t name_start = name.find_first_not_of(' ');
+        name = name_start != std::string::npos ? name.substr(name_start) : std::string();
+        uint16_t buttons = 0;
+        size_t at = 0;
+        bool understood = true;
+        while (at <= buttons_text.size())
+        {
+            size_t plus = buttons_text.find('+', at);
+            std::string part = buttons_text.substr(at, plus == std::string::npos ? std::string::npos : plus - at);
+            size_t first = part.find_first_not_of(' ');
+            size_t last = part.find_last_not_of(' ');
+            part = first != std::string::npos ? part.substr(first, last - first + 1) : std::string();
+            InputAction action = InputAction::count;
+            if (!input_action_parse(part.c_str(), &action) || static_cast<uint32_t>(action) >= INPUT_PAD_BUTTON_COUNT)
+            {
+                understood = false;
+                break;
+            }
+            buttons = static_cast<uint16_t>(buttons | (1u << static_cast<uint32_t>(action)));
+            if (plus == std::string::npos)
+            {
+                break;
+            }
+            at = plus + 1;
+        }
+        if (!understood || buttons == 0 || entry->key.empty())
+        {
+            std::fprintf(stderr, "input.cfg: [%s] %s: not understood, ignored\n", section->name.c_str(), entry->key.c_str());
+            continue;
+        }
+        InputCombo combo = {};
+        combo.core = core;
+        combo.id = entry->key;
+        combo.name = name;
+        combo.buttons = buttons;
+        system->combos.push_back(combo);
+    }
+}
+
 void input_config_read(InputSystem* system, const SettingsFile* file)
 {
     system->profiles.clear();
     system->core_profiles.clear();
+    system->combos.clear();
     for (size_t s = 0; s < file->sections.size(); s++)
     {
         const SettingsFileSection* section = &file->sections[s];
@@ -220,7 +299,15 @@ void input_config_read(InputSystem* system, const SettingsFile* file)
         }
         else if (starts_with(section->name, PREFIX_CORE, &id))
         {
-            read_core_profile(system, section, id);
+            read_core_profile(system, section, id, false);
+        }
+        else if (starts_with(section->name, PREFIX_GAME, &id))
+        {
+            read_core_profile(system, section, id, true);
+        }
+        else if (starts_with(section->name, PREFIX_COMBOS, &id))
+        {
+            read_combos(system, section, id);
         }
     }
 }
@@ -378,17 +465,39 @@ static void write_core_profiles(const InputSystem* system, SettingsFile* file)
     for (size_t p = 0; p < system->core_profiles.size(); p++)
     {
         const InputCoreProfile* profile = &system->core_profiles[p];
-        if (!profile->decided && profile->overrides.empty())
+        bool game = !profile->game.empty();
+        if (!game && !profile->decided && profile->overrides.empty() && profile->combos.empty())
         {
-            continue;
+            continue;   // (a game's is kept even untouched: it was asked for)
         }
-        std::string section = PREFIX_CORE + profile->core + "/" + std::to_string(profile->device) + "/" + profile->profile_id;
+        std::string section = (game ? PREFIX_GAME : PREFIX_CORE) + profile->core + "/" + std::to_string(profile->device) + "/" +
+                              profile->profile_id + (game ? "/" + profile->game : std::string());
         settings_file_set(file, section.c_str(), "remap", profile->custom ? "custom" : "retropad");
         for (size_t o = 0; o < profile->overrides.size(); o++)
         {
             const InputBindingOverride* change = &profile->overrides[o];
             settings_file_set(file, section.c_str(), input_action_name(change->action), sources_text(change->sources).c_str());
         }
+        for (size_t k = 0; k < profile->combos.size(); k++)
+        {
+            const InputComboBinding* binding = &profile->combos[k];
+            settings_file_set(file, section.c_str(), ("combo." + binding->combo).c_str(), sources_text(binding->sources).c_str());
+        }
+    }
+    for (size_t c = 0; c < system->combos.size(); c++)
+    {
+        const InputCombo* combo = &system->combos[c];
+        std::string buttons;
+        for (uint32_t b = 0; b < INPUT_PAD_BUTTON_COUNT; b++)
+        {
+            if ((combo->buttons & (1u << b)) != 0)
+            {
+                buttons += (buttons.empty() ? "" : "+");
+                buttons += input_action_name(static_cast<InputAction>(b));
+            }
+        }
+        std::string value = combo->name.empty() ? buttons : buttons + " | " + combo->name;
+        settings_file_set(file, (PREFIX_COMBOS + combo->core).c_str(), combo->id.c_str(), value.c_str());
     }
 }
 
