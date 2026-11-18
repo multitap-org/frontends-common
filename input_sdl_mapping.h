@@ -52,21 +52,22 @@ enum class InputMapControl
     left_y,    // the stick pushed down
     right_x,
     right_y,
-    // Extra buttons (MAP CONTROLLER's STEP 3; no layout names them, so STEP 1 never asks them):
-    paddle1,   // SDL's paddle1 .. paddle4: InputButton right_paddle1, left_paddle1, right_paddle2, left_paddle2
-    paddle2,
-    paddle3,
-    paddle4,
-    l4,        // the extra shoulders, kept as SDL's misc5 / misc6
-    r4,
-    misc1,     // any other buttons, one after the other (misc1 .. misc4)
+    // Extra buttons (MAP CONTROLLER's STEP 4; no layout names them, so STEP 2 never asks them),
+    // in the order asked:
+    left_paddle1,    // the paddles, upper left, upper right, lower left, lower right
+    right_paddle1,   // (SDL's paddle2, paddle1, paddle4, paddle3)
+    left_paddle2,
+    right_paddle2,
+    misc1,           // any other buttons, one after the other (SDL's misc1 .. misc4)
     misc2,
     misc3,
     misc4,
+    l4,              // the extra shoulders, kept as SDL's misc5 / misc6 (or a 5th and 6th other button)
+    r4,
     count,
 };
 
-constexpr InputMapControl INPUT_MAP_FIRST_EXTRA = InputMapControl::paddle1;
+constexpr InputMapControl INPUT_MAP_FIRST_EXTRA = InputMapControl::left_paddle1;
 
 constexpr uint32_t INPUT_MAP_CONTROL_COUNT = static_cast<uint32_t>(InputMapControl::count);
 

@@ -152,7 +152,7 @@ static void test_extras_and_skipping()
     const char* existing = "03000000000000000000000000000000,Pad,a:b0,b:b1,touchpad:b11,platform:Linux,";
 
     bool wanted[INPUT_MAP_CONTROL_COUNT] = {};
-    wanted[static_cast<uint32_t>(InputMapControl::paddle1)] = true;
+    wanted[static_cast<uint32_t>(InputMapControl::right_paddle1)] = true;
     wanted[static_cast<uint32_t>(InputMapControl::misc1)] = true;
     wanted[static_cast<uint32_t>(InputMapControl::misc2)] = true;
     wanted[static_cast<uint32_t>(InputMapControl::misc3)] = true;
@@ -161,9 +161,9 @@ static void test_extras_and_skipping()
     mapper->end_on_skip_from = InputMapControl::misc1;
     input_sdl_mapper_load(mapper, existing);
     input_sdl_mapper_update(mapper, g_now);
-    check(input_sdl_mapper_control(mapper) == InputMapControl::paddle1, "extras: the paddles first");
+    check(input_sdl_mapper_control(mapper) == InputMapControl::right_paddle1, "extras: the paddles first");
     press(mapper, 0);   // already the bottom button: not a paddle
-    check(input_sdl_mapper_control(mapper) == InputMapControl::paddle1, "extras: a mapped button isn't an extra");
+    check(input_sdl_mapper_control(mapper) == InputMapControl::right_paddle1, "extras: a mapped button isn't an extra");
     press(mapper, 5);
     press(mapper, 6);   // misc1
     check(input_sdl_mapper_control(mapper) == InputMapControl::misc2, "extras: then the other buttons");

@@ -799,7 +799,7 @@ static void test_layouts()
     check(genesis != nullptr && !input_layout_has(genesis, InputMapControl::left_x) && input_layout_has(genesis, InputMapControl::dpad_up),
           "layouts: no sticks, a d-pad");
     check(genesis != nullptr && genesis->six_face && !layouts.layouts[0].six_face, "layouts: a six-button face");
-    check(!input_layout_has(&layouts.layouts[0], InputMapControl::paddle1), "layouts: extras aren't on a layout");
+    check(!input_layout_has(&layouts.layouts[0], InputMapControl::right_paddle1), "layouts: extras aren't on a layout");
 }
 
 static void test_pad_positions()
@@ -808,10 +808,14 @@ static void test_pad_positions()
     check(input_map_control_for_source(button(InputButton::south)) == InputMapControl::south, "pad: bottom button");
     check(input_map_control_for_source(button(InputButton::guide)) == InputMapControl::guide, "pad: guide");
     check(input_map_control_for_source(button(InputButton::touchpad)) == InputMapControl::count, "pad: not drawn");
-    check(input_map_control_for_source(button(InputButton::left_paddle1)) == InputMapControl::paddle2 &&
+    check(input_map_control_for_source(button(InputButton::left_paddle1)) == InputMapControl::left_paddle1 &&
               input_map_control_for_source(button(InputButton::misc5)) == InputMapControl::l4,
           "pad: the extras");
-    check(!input_map_control_is_stick(InputMapControl::paddle1), "pad: an extra isn't a stick");
+    check(!input_map_control_is_stick(InputMapControl::right_paddle1), "pad: an extra isn't a stick");
+    check(std::strcmp(input_map_control_sdl_name(InputMapControl::left_paddle1), "paddle2") == 0 &&
+              static_cast<uint32_t>(InputMapControl::left_paddle1) < static_cast<uint32_t>(InputMapControl::right_paddle1) &&
+              std::strcmp(input_map_control_sdl_name(InputMapControl::l4), "misc5") == 0,
+          "pad: the paddles asked left first (SDL's paddle2), L4 on misc5");
     InputSource up = {};
     up.type = InputSourceType::axis_minus;
     up.code = static_cast<uint16_t>(InputAxis::left_y);

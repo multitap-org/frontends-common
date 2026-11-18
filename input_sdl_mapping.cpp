@@ -11,7 +11,7 @@ constexpr int      AXIS_PUSHED = 16000;          // past this from rest, an axis
 static const char* const SDL_NAMES[INPUT_MAP_CONTROL_COUNT] = {
     "a", "b", "x", "y", "dpup", "dpdown", "dpleft", "dpright", "leftshoulder", "rightshoulder", "back", "start",
     "lefttrigger", "righttrigger", "leftstick", "rightstick", "guide", "leftx", "lefty", "rightx", "righty",
-    "paddle1", "paddle2", "paddle3", "paddle4", "misc5", "misc6", "misc1", "misc2", "misc3", "misc4",
+    "paddle2", "paddle1", "paddle4", "paddle3", "misc1", "misc2", "misc3", "misc4", "misc5", "misc6",
 };
 
 const char* input_map_control_sdl_name(InputMapControl control)
@@ -57,10 +57,10 @@ InputMapControl input_map_control_for_source(InputSource source)
         case InputButton::left_stick: return InputMapControl::left_stick;
         case InputButton::right_stick: return InputMapControl::right_stick;
         case InputButton::guide: return InputMapControl::guide;
-        case InputButton::right_paddle1: return InputMapControl::paddle1;
-        case InputButton::left_paddle1: return InputMapControl::paddle2;
-        case InputButton::right_paddle2: return InputMapControl::paddle3;
-        case InputButton::left_paddle2: return InputMapControl::paddle4;
+        case InputButton::right_paddle1: return InputMapControl::right_paddle1;
+        case InputButton::left_paddle1: return InputMapControl::left_paddle1;
+        case InputButton::right_paddle2: return InputMapControl::right_paddle2;
+        case InputButton::left_paddle2: return InputMapControl::left_paddle2;
         case InputButton::misc5: return InputMapControl::l4;
         case InputButton::misc6: return InputMapControl::r4;
         case InputButton::misc1: return InputMapControl::misc1;
@@ -457,8 +457,8 @@ static InputSource position_source(InputMapControl control)
     }
     // The extras: buttons, in the order of InputMapControl's extras.
     static const InputButton EXTRAS[] = {
-        InputButton::right_paddle1, InputButton::left_paddle1, InputButton::right_paddle2, InputButton::left_paddle2,
-        InputButton::misc5, InputButton::misc6, InputButton::misc1, InputButton::misc2, InputButton::misc3, InputButton::misc4,
+        InputButton::left_paddle1, InputButton::right_paddle1, InputButton::left_paddle2, InputButton::right_paddle2,
+        InputButton::misc1, InputButton::misc2, InputButton::misc3, InputButton::misc4, InputButton::misc5, InputButton::misc6,
     };
     uint32_t first_extra = static_cast<uint32_t>(INPUT_MAP_FIRST_EXTRA);
     if (index >= first_extra && index < INPUT_MAP_CONTROL_COUNT)
