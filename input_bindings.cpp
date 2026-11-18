@@ -650,14 +650,9 @@ void input_capture_begin(InputSystem* system, uint32_t device_id)
     }
 }
 
-bool input_capture_poll(InputSystem* system, InputSource* source)
+// The first control pressed since the capture started (nothing taken yet).
+static bool capture_pressed(InputCapture* capture, const InputDevice* device, InputSource* source)
 {
-    InputCapture* capture = &system->capture;
-    const InputDevice* device = input_devices_find_const(&system->devices, capture->device_id);
-    if (!capture->active || device == nullptr || !device->connected)
-    {
-        return false;
-    }
     for (uint32_t code = 0; code < INPUT_KEY_COUNT; code++)
     {
         if (device->held[code] == 0 && device->tapped[code] == 0)
@@ -669,7 +664,6 @@ bool input_capture_poll(InputSystem* system, InputSource* source)
         {
             source->type = device->kind == InputDeviceKind::keyboard ? InputSourceType::key : InputSourceType::button;
             source->code = static_cast<uint16_t>(code);
-            capture->active = false;
             return true;
         }
     }
@@ -684,11 +678,65 @@ bool input_capture_poll(InputSystem* system, InputSource* source)
         {
             source->type = plus ? InputSourceType::axis_plus : InputSourceType::axis_minus;
             source->code = static_cast<uint16_t>(a);
-            capture->active = false;
             return true;
         }
     }
     return false;
+}
+
+bool input_capture_poll(InputSystem* system, uint64_t now_ms, InputSource* source)
+{
+    InputCapture* capture = &system->capture;
+    const InputDevice* device = input_devices_find_const(&system->devices, capture->device_id);
+    if (!capture->active || device == nullptr || !device->connected)
+    {
+        return false;
+    }
+    InputSource found = {};
+    if (!capture_pressed(capture, device, &found))
+    {
+        capture->candidate = InputSource{};   // let go before it was taken
+        return false;
+    }
+    if (device->kind != InputDeviceKind::keyboard)
+    {
+        if (capture->candidate.type == InputSourceType::none || !input_source_equal(capture->candidate, found))
+        {
+            capture->candidate = found;
+            capture->candidate_since_ms = now_ms;
+            return false;
+        }
+        if (now_ms - capture->candidate_since_ms < INPUT_CAPTURE_HOLD_MS)
+        {
+            return false;
+        }
+    }
+    *source = found;
+    capture->candidate = InputSource{};
+    capture->active = false;
+    return true;
+}
+
+bool input_capture_candidate(const InputSystem* system, InputSource* source)
+{
+    const InputCapture* capture = &system->capture;
+    if (!capture->active || capture->candidate.type == InputSourceType::none)
+    {
+        return false;
+    }
+    *source = capture->candidate;
+    return true;
+}
+
+float input_capture_hold_progress(const InputSystem* system, uint64_t now_ms)
+{
+    const InputCapture* capture = &system->capture;
+    if (!capture->active || capture->candidate.type == InputSourceType::none)
+    {
+        return 0.0f;
+    }
+    uint64_t held = now_ms - capture->candidate_since_ms;
+    return held >= INPUT_CAPTURE_HOLD_MS ? 1.0f : static_cast<float>(held) / static_cast<float>(INPUT_CAPTURE_HOLD_MS);
 }
 
 void input_capture_cancel(InputSystem* system)
@@ -862,6 +910,7 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         if (system->capture.active || system->suspended)
         {
             controller->layer = InputLayer::none;
+            controller->paused = true;
             continue;
         }
 
@@ -906,7 +955,10 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             // all of it coming from another layer, only the START that joined
             // when it comes in from nothing. (Into HOTKEY: nothing; the press
             // that turned it on is the hotkey.)
-            bool from_layer = controller->layer != InputLayer::none;
+            // (After binding or mapping, as from a layer: the control just
+            // bound may still be held, and mustn't act, e.g. close the window.)
+            bool from_layer = controller->layer != InputLayer::none || controller->paused;
+            controller->paused = false;
             bool joined_now = frame->joined_controller == static_cast<int32_t>(index);
             for (uint32_t a = 0; a < INPUT_ACTION_COUNT; a++)
             {

@@ -172,6 +172,7 @@ struct InputController
     bool       held_last[INPUT_ACTION_COUNT] = {};
     InputLayer layer = InputLayer::none;
     bool       held_at_switch[INPUT_ACTION_COUNT] = {};   // held when it entered `layer`: ignored until let go
+    bool       paused = false;   // was in no layer for binding or mapping: what's held as it comes back is ignored too
     uint64_t   modifier_down_ms = 0;
     uint64_t   modifier_tap_ms = 0;                  // the modifier's last tap (double taps)
     bool       modifier_on = false;                  // ONE HOTKEY / STAYS ON: turned on
@@ -229,7 +230,13 @@ struct InputCapture
     // only once let go and pushed again; going back to the center isn't a push).
     bool     plus_at_start[INPUT_AXIS_COUNT] = {};
     bool     minus_at_start[INPUT_AXIS_COUNT] = {};
+    // A gamepad's control is taken once held INPUT_CAPTURE_HOLD_MS (the
+    // frontend can show which one meanwhile; let go sooner and it isn't).
+    InputSource candidate = {};
+    uint64_t    candidate_since_ms = 0;
 };
+
+constexpr uint64_t INPUT_CAPTURE_HOLD_MS = 2000;
 
 struct InputSystem
 {
@@ -326,10 +333,17 @@ void input_remove_controller(InputSystem* system, uint32_t controller);
 // Binding by pressing: start waiting on a device, then poll each frame until
 // it gives a source (a key or button that wasn't held when it started, or
 // an axis half pushed past half from the center that wasn't when it
-// started). Cancel to give up.
+// started). A key counts at once; a gamepad's control once held
+// INPUT_CAPTURE_HOLD_MS. Cancel to give up. When it ends, what is still
+// held does nothing until let go (it doesn't close the window it was for).
 void input_capture_begin(InputSystem* system, uint32_t device_id);
-bool input_capture_poll(InputSystem* system, InputSource* source);
+bool input_capture_poll(InputSystem* system, uint64_t now_ms, InputSource* source);
 void input_capture_cancel(InputSystem* system);
+
+// The gamepad control being held to be taken (false if none), and how far
+// its hold has come (0 .. 1).
+bool  input_capture_candidate(const InputSystem* system, InputSource* source);
+float input_capture_hold_progress(const InputSystem* system, uint64_t now_ms);
 
 // Swaps two ports' controllers (reordering from the quick menu).
 void input_swap_ports(InputSystem* system, uint32_t a, uint32_t b);

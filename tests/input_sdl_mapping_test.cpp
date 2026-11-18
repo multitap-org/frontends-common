@@ -1,5 +1,5 @@
 // MAP CONTROLLER's mapper on an SDL virtual joystick: the positions first,
-// then the roles, which only take a button the positions mapped.
+// then the roles, which only take a button the positions mapped, held 2 s.
 
 #include <SDL3/SDL.h>
 
@@ -35,6 +35,18 @@ static bool press(InputSdlMapper* mapper, int button)
     bool done = input_sdl_mapper_update(mapper, 0);
     set_button(button, false);
     input_sdl_mapper_update(mapper, 0);
+    return done;
+}
+
+// A role's press: held `held_ms` (from `*now_ms` on), then let go.
+static bool hold(InputSdlMapper* mapper, int button, uint64_t held_ms, uint64_t* now_ms)
+{
+    set_button(button, true);
+    input_sdl_mapper_update(mapper, *now_ms);
+    *now_ms += held_ms;
+    bool done = input_sdl_mapper_update(mapper, *now_ms);
+    set_button(button, false);
+    input_sdl_mapper_update(mapper, *now_ms);
     return done;
 }
 
@@ -88,8 +100,18 @@ static void test_positions_then_roles()
     set_button(3, false);
     check(input_sdl_mapper_held_source(mapper).type == InputSourceType::none, "mapper: nothing held");
 
-    press(mapper, 1);   // role 0 on the right button (shared with a position)
-    bool done = press(mapper, 2);   // role 1 on the left one
+    uint64_t now = 0;
+    hold(mapper, 1, 1000, &now);   // let go after 1 s: not taken
+    check(input_sdl_mapper_role(mapper) == 0, "mapper: a role's button let go too soon isn't taken");
+    set_button(1, true);
+    input_sdl_mapper_update(mapper, now);
+    float half = input_sdl_mapper_hold_progress(mapper, now + INPUT_MAP_ROLE_HOLD_MS / 2);
+    check(half > 0.4f && half < 0.6f, "mapper: the hold's progress");
+    set_button(1, false);
+    input_sdl_mapper_update(mapper, now);
+    hold(mapper, 1, INPUT_MAP_ROLE_HOLD_MS, &now);   // role 0 on the right button (shared with a position)
+    check(input_sdl_mapper_role(mapper) == 1, "mapper: a role's button held 2 s is taken");
+    bool done = hold(mapper, 2, INPUT_MAP_ROLE_HOLD_MS, &now);   // role 1 on the left one
     check(done, "mapper: complete after the last role");
     check(is_button(input_sdl_mapper_role_source(mapper, 0), InputButton::east), "mapper: role 0 is the right button");
     check(is_button(input_sdl_mapper_role_source(mapper, 1), InputButton::west), "mapper: role 1 is the left button");

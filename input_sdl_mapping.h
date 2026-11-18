@@ -9,7 +9,8 @@
 //
 // The position steps come first; then optional *role* steps (the
 // interface's controls: navigate, accept, back, the hotkey modifier...): the
-// button for each, whatever its position, but only one the positions mapped.
+// button for each, whatever its position, but only one the positions mapped,
+// held for INPUT_MAP_ROLE_HOLD_MS (let go sooner and it isn't taken).
 // Each role is told as the position (or axis half) it is
 // (input_sdl_mapper_role_source).
 //
@@ -69,6 +70,7 @@ bool input_map_control_is_stick(InputMapControl control);
 InputMapControl input_map_control_for_source(InputSource source);
 
 constexpr uint32_t INPUT_MAP_ROLES_MAX = 16;
+constexpr uint64_t INPUT_MAP_ROLE_HOLD_MS = 2000;   // a role's button must be held this long to be taken
 
 struct InputSdlMapper
 {
@@ -86,6 +88,8 @@ struct InputSdlMapper
     uint32_t      role_count = 0;
     bool          role_optional[INPUT_MAP_ROLES_MAX] = {};
     std::string   roles[INPUT_MAP_ROLES_MAX];        // each role's raw element ("" = skipped)
+    std::string   holding;                           // a role's button being held (not taken yet)
+    uint64_t      holding_since_ms = 0;
 };
 
 // Starts on a connected joystick (any: known to SDL as a gamepad or not):
@@ -107,6 +111,9 @@ InputSource input_sdl_mapper_role_source(const InputSdlMapper* mapper, uint32_t 
 // What is held right now, on the mapping made so far (for the drawn pad
 // during the roles), or a none source.
 InputSource input_sdl_mapper_held_source(const InputSdlMapper* mapper);
+
+// How far a role's hold has come: 0 (nothing held) .. 1 (taken).
+float input_sdl_mapper_hold_progress(const InputSdlMapper* mapper, uint64_t now_ms);
 
 // Once a frame: looks for the current step's control. Returns true when the
 // mapping is complete (every step answered or skipped).

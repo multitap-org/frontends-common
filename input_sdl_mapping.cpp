@@ -199,6 +199,7 @@ static void start_step(InputSdlMapper* mapper, uint64_t now_ms)
     }
     mapper->waiting_release = true;
     mapper->step_started_ms = now_ms;
+    mapper->holding.clear();
 }
 
 bool input_sdl_mapper_begin(InputSdlMapper* mapper, uint32_t joystick_id, uint32_t role_count, const bool* role_optional,
@@ -283,8 +284,28 @@ bool input_sdl_mapper_update(InputSdlMapper* mapper, uint64_t now_ms)
     {
         used = true;   // not on the mapping: wait for one that is
     }
+    // A role takes a button held for INPUT_MAP_ROLE_HOLD_MS (the drawn pad
+    // shows which one meanwhile): let go sooner and nothing is taken.
+    if (role && !element.empty() && !used)
+    {
+        if (element != mapper->holding)
+        {
+            mapper->holding = element;
+            mapper->holding_since_ms = now_ms;
+        }
+        mapper->step_started_ms = now_ms;   // an optional role doesn't skip while a button is held
+        if (now_ms - mapper->holding_since_ms < INPUT_MAP_ROLE_HOLD_MS)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        mapper->holding.clear();
+    }
     if (!element.empty() && !used)
     {
+        mapper->holding.clear();
         if (role)
         {
             mapper->roles[mapper->step - INPUT_MAP_CONTROL_COUNT] = element;
@@ -337,6 +358,7 @@ void input_sdl_mapper_back(InputSdlMapper* mapper, uint64_t now_ms)
         {
             mapper->step = step;
             clear_step(mapper, step);
+            mapper->holding.clear();
             mapper->waiting_release = true;
             mapper->step_started_ms = now_ms;
             return;
@@ -357,6 +379,7 @@ void input_sdl_mapper_skip(InputSdlMapper* mapper, uint64_t now_ms)
 
 void input_sdl_mapper_restart_step(InputSdlMapper* mapper, uint64_t now_ms)
 {
+    mapper->holding.clear();
     mapper->waiting_release = true;
     mapper->step_started_ms = now_ms;
 }
@@ -501,4 +524,14 @@ bool input_sdl_mapper_finish(InputSdlMapper* mapper, std::string* line)
     SDL_Log("Mapping kept: %s", text.c_str());
     *line = text;
     return true;
+}
+
+float input_sdl_mapper_hold_progress(const InputSdlMapper* mapper, uint64_t now_ms)
+{
+    if (!mapper->active || mapper->holding.empty() || !is_role_step(mapper->step))
+    {
+        return 0.0f;
+    }
+    uint64_t held = now_ms - mapper->holding_since_ms;
+    return held >= INPUT_MAP_ROLE_HOLD_MS ? 1.0f : static_cast<float>(held) / static_cast<float>(INPUT_MAP_ROLE_HOLD_MS);
 }
