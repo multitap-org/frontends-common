@@ -415,6 +415,19 @@ static void test_combo_and_stick()
     input_devices_set_axis(&system->devices, pad, InputAxis::left_x, -0.575f);
     frame(system, 32, &out);
     check(out.analog[0][0][0] < -16000 && out.analog[0][0][0] > -17000, "stick: rescaled past the deadzone");
+
+    // D-pad right on the stick at 50 %, the real stick resting a little off on Y:
+    // the drift stays inside the deadzone, only X moves.
+    InputController* bound = &system->controllers[controller];
+    InputSource half = button(InputButton::dpad_right);
+    half.percent = 50;
+    input_bind(&bound->bindings, InputAction::pad_left_x_plus, half);
+    input_devices_set_axis(&system->devices, pad, InputAxis::left_x, 0.0f);
+    input_devices_set_axis(&system->devices, pad, InputAxis::left_y, -0.04f);
+    input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::dpad_right), true);
+    frame(system, 48, &out);
+    check(out.analog[0][0][0] > 16000 && out.analog[0][0][0] < 16700, "stick: a button at 50 % pushes half way");
+    check(out.analog[0][0][1] == 0, "stick: the resting drift on the other axis stays out");
     delete system;
 }
 

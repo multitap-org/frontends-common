@@ -601,6 +601,24 @@ void input_leave_all(InputSystem* system)
     }
 }
 
+// The same, from only the axes (`analog`) or only the keys and buttons.
+static float set_value_of(const InputBindingSet* set, const InputDevice* device, InputAction action, bool analog)
+{
+    float value = 0.0f;
+    const InputSource* slots = set->sources[index_of(action)];
+    for (uint32_t s = 0; s < INPUT_SOURCES_PER_ACTION; s++)
+    {
+        bool axis = slots[s].type == InputSourceType::axis_plus || slots[s].type == InputSourceType::axis_minus;
+        if (axis != analog)
+        {
+            continue;
+        }
+        float v = input_source_value(device, slots[s]);
+        value = v > value ? v : value;
+    }
+    return value;
+}
+
 static float action_value(const InputController* controller, const InputDevice* device, InputAction action);
 
 const InputCoreProfile* input_core_profile(const InputSystem* system, const char* core, uint32_t device,
@@ -861,24 +879,40 @@ static int16_t to_axis(float value)
 
 // One stick of a port: plus minus minus per axis, then a round deadzone
 // (the rest rescaled so movement starts at 0 past it).
+// A RetroPad stick from its four directions. The deadzone is the real
+// stick's: it applies to the axes bound to it, on their own; keys and buttons
+// (at their percent) are added after it, untouched. (Applied to the sum, a
+// D-pad press would push the vector past the deadzone and let the resting
+// stick's drift through on the other axis.)
 static void stick(const InputController* controller, const InputBindingSet* set, const InputDevice* device,
                   InputAction x_plus, int16_t* out)
 {
     uint32_t base = index_of(x_plus);
-    float x = set_value(set, device, static_cast<InputAction>(base)) - set_value(set, device, static_cast<InputAction>(base + 1));
-    float y = set_value(set, device, static_cast<InputAction>(base + 2)) - set_value(set, device, static_cast<InputAction>(base + 3));
+    InputAction x_minus = static_cast<InputAction>(base + 1);
+    InputAction y_plus = static_cast<InputAction>(base + 2);
+    InputAction y_minus = static_cast<InputAction>(base + 3);
+    float x = set_value_of(set, device, x_plus, true) - set_value_of(set, device, x_minus, true);
+    float y = set_value_of(set, device, y_plus, true) - set_value_of(set, device, y_minus, true);
     float length = std::sqrt(x * x + y * y);
     float deadzone = controller->deadzone;
     if (length <= deadzone || length <= 0.0f)
     {
-        out[0] = 0;
-        out[1] = 0;
-        return;
+        x = 0.0f;
+        y = 0.0f;
     }
-    float clamped = length > 1.0f ? 1.0f : length;
-    float scale = (clamped - deadzone) / (1.0f - deadzone) / length;
-    out[0] = to_axis(x * scale);
-    out[1] = to_axis(y * scale);
+    else
+    {
+        float clamped = length > 1.0f ? 1.0f : length;
+        float scale = (clamped - deadzone) / (1.0f - deadzone) / length;
+        x *= scale;
+        y *= scale;
+    }
+    x += set_value_of(set, device, x_plus, false) - set_value_of(set, device, x_minus, false);
+    y += set_value_of(set, device, y_plus, false) - set_value_of(set, device, y_minus, false);
+    x = x > 1.0f ? 1.0f : (x < -1.0f ? -1.0f : x);
+    y = y > 1.0f ? 1.0f : (y < -1.0f ? -1.0f : y);
+    out[0] = to_axis(x);
+    out[1] = to_axis(y);
 }
 
 // The modifier, by the controller's mode: is the HOTKEY layer on?
