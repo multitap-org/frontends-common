@@ -513,6 +513,13 @@ static void test_menus_and_defaults()
     check(input_is_bound(&stick_dpad, InputAction::pad_up, axis(InputAxis::left_y, false)) &&
               !input_is_bound(&stick_dpad, InputAction::pad_up, button(InputButton::dpad_up)),
           "defaults: no d-pad buttons, directions on the left stick");
+    check(input_is_bound(&stick_dpad, InputAction::ui_left, axis(InputAxis::left_x, false)),
+          "defaults: no d-pad buttons, the interface on the left stick too");
+    InputBindingSet with_dpad = {};
+    input_default_gamepad_bindings(&with_dpad);
+    check(input_sources_count(with_dpad.sources[static_cast<uint32_t>(InputAction::ui_up)]) == 1 &&
+              input_is_bound(&with_dpad, InputAction::ui_up, button(InputButton::dpad_up)),
+          "defaults: the interface moves with the D-pad only");
 
     // The gamepad defaults: B bottom, A right, R2 on the trigger, SELECT+START quick menu, Y the main menu.
     InputBindingSet pad_set = {};

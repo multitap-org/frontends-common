@@ -309,14 +309,11 @@ void input_default_gamepad_bindings(InputBindingSet* set)
     input_bind(set, InputAction::pad_right_y_plus, pad_axis(InputAxis::right_y, true));
     input_bind(set, InputAction::pad_right_y_minus, pad_axis(InputAxis::right_y, false));
 
+    // The interface moves with the D-pad only (the stick is added by hand: +).
     input_bind(set, InputAction::ui_up, pad_button(InputButton::dpad_up));
-    input_bind(set, InputAction::ui_up, pad_axis(InputAxis::left_y, false));
     input_bind(set, InputAction::ui_down, pad_button(InputButton::dpad_down));
-    input_bind(set, InputAction::ui_down, pad_axis(InputAxis::left_y, true));
     input_bind(set, InputAction::ui_left, pad_button(InputButton::dpad_left));
-    input_bind(set, InputAction::ui_left, pad_axis(InputAxis::left_x, false));
     input_bind(set, InputAction::ui_right, pad_button(InputButton::dpad_right));
-    input_bind(set, InputAction::ui_right, pad_axis(InputAxis::left_x, true));
     // The bottom button accepts, the right one goes back (the frontend may
     // swap them: REVERSE ACCEPT / BACK).
     input_bind(set, InputAction::ui_accept, pad_button(InputButton::south));
@@ -358,15 +355,18 @@ void input_default_bindings_for(const InputDevice* device, InputBindingSet* set)
     {
         return;
     }
-    // Its d-pad comes as the left stick: the RetroPad's directions there.
-    input_unbind_all(set, InputAction::pad_up);
-    input_unbind_all(set, InputAction::pad_down);
-    input_unbind_all(set, InputAction::pad_left);
-    input_unbind_all(set, InputAction::pad_right);
-    input_bind(set, InputAction::pad_up, pad_axis(InputAxis::left_y, false));
-    input_bind(set, InputAction::pad_down, pad_axis(InputAxis::left_y, true));
-    input_bind(set, InputAction::pad_left, pad_axis(InputAxis::left_x, false));
-    input_bind(set, InputAction::pad_right, pad_axis(InputAxis::left_x, true));
+    // Its d-pad comes as the left stick: the RetroPad's and the interface's
+    // directions there.
+    static const InputAction DIRECTIONS[8] = {
+        InputAction::pad_up, InputAction::pad_down, InputAction::pad_left, InputAction::pad_right,
+        InputAction::ui_up,  InputAction::ui_down,  InputAction::ui_left,  InputAction::ui_right,
+    };
+    for (uint32_t d = 0; d < 8; d++)
+    {
+        input_unbind_all(set, DIRECTIONS[d]);
+        uint32_t way = d % 4;   // up, down, left, right
+        input_bind(set, DIRECTIONS[d], pad_axis(way < 2 ? InputAxis::left_y : InputAxis::left_x, way == 1 || way == 3));
+    }
 }
 
 const InputProfile* input_profile(const InputSystem* system, const std::string& id)
