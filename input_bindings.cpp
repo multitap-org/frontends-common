@@ -628,10 +628,11 @@ void input_remove_controller(InputSystem* system, uint32_t controller)
     }
 }
 
-void input_capture_begin(InputSystem* system, uint32_t device_id)
+void input_capture_begin(InputSystem* system, uint32_t device_id, bool hold)
 {
     InputCapture* capture = &system->capture;
     *capture = InputCapture{};
+    capture->hold = hold;
     const InputDevice* device = input_devices_find_const(&system->devices, device_id);
     if (device == nullptr)
     {
@@ -698,7 +699,7 @@ bool input_capture_poll(InputSystem* system, uint64_t now_ms, InputSource* sourc
         capture->candidate = InputSource{};   // let go before it was taken
         return false;
     }
-    if (device->kind != InputDeviceKind::keyboard)
+    if (capture->hold && device->kind != InputDeviceKind::keyboard)
     {
         if (capture->candidate.type == InputSourceType::none || !input_source_equal(capture->candidate, found))
         {
@@ -706,7 +707,7 @@ bool input_capture_poll(InputSystem* system, uint64_t now_ms, InputSource* sourc
             capture->candidate_since_ms = now_ms;
             return false;
         }
-        if (now_ms - capture->candidate_since_ms < INPUT_CAPTURE_HOLD_MS)
+        if (now_ms - capture->candidate_since_ms < system->settings.hold_ms)
         {
             return false;
         }
@@ -736,7 +737,8 @@ float input_capture_hold_progress(const InputSystem* system, uint64_t now_ms)
         return 0.0f;
     }
     uint64_t held = now_ms - capture->candidate_since_ms;
-    return held >= INPUT_CAPTURE_HOLD_MS ? 1.0f : static_cast<float>(held) / static_cast<float>(INPUT_CAPTURE_HOLD_MS);
+    uint64_t needed = system->settings.hold_ms > 0 ? system->settings.hold_ms : 1;
+    return held >= needed ? 1.0f : static_cast<float>(held) / static_cast<float>(needed);
 }
 
 void input_capture_cancel(InputSystem* system)

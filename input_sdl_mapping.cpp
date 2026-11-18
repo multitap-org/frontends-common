@@ -5,7 +5,6 @@
 #include <cstdio>
 
 constexpr int      AXIS_PUSHED = 16000;          // past this from rest, an axis counts as pushed
-constexpr uint64_t OPTIONAL_WAIT_MS = 5000;      // an optional step is skipped after this long
 
 // The name SDL's mapping text uses for each control.
 static const char* const SDL_NAMES[INPUT_MAP_CONTROL_COUNT] = {
@@ -284,7 +283,7 @@ bool input_sdl_mapper_update(InputSdlMapper* mapper, uint64_t now_ms)
     {
         used = true;   // not on the mapping: wait for one that is
     }
-    // A role takes a button held for INPUT_MAP_ROLE_HOLD_MS (the drawn pad
+    // A role takes a button held for role_hold_ms (the drawn pad
     // shows which one meanwhile): let go sooner and nothing is taken.
     if (role && !element.empty() && !used)
     {
@@ -294,7 +293,7 @@ bool input_sdl_mapper_update(InputSdlMapper* mapper, uint64_t now_ms)
             mapper->holding_since_ms = now_ms;
         }
         mapper->step_started_ms = now_ms;   // an optional role doesn't skip while a button is held
-        if (now_ms - mapper->holding_since_ms < INPUT_MAP_ROLE_HOLD_MS)
+        if (now_ms - mapper->holding_since_ms < mapper->role_hold_ms)
         {
             return false;
         }
@@ -317,7 +316,7 @@ bool input_sdl_mapper_update(InputSdlMapper* mapper, uint64_t now_ms)
         mapper->step++;
         start_step(mapper, now_ms);
     }
-    else if (step_optional(mapper, mapper->step) && element.empty() && now_ms - mapper->step_started_ms >= OPTIONAL_WAIT_MS)
+    else if (step_optional(mapper, mapper->step) && element.empty() && now_ms - mapper->step_started_ms >= mapper->optional_wait_ms)
     {
         mapper->step++;   // the pad doesn't have it
         start_step(mapper, now_ms);
@@ -332,7 +331,7 @@ uint32_t input_sdl_mapper_seconds_left(const InputSdlMapper* mapper, uint64_t no
         return 0;
     }
     uint64_t elapsed = now_ms - mapper->step_started_ms;
-    return elapsed >= OPTIONAL_WAIT_MS ? 0 : static_cast<uint32_t>((OPTIONAL_WAIT_MS - elapsed + 999) / 1000);
+    return elapsed >= mapper->optional_wait_ms ? 0 : static_cast<uint32_t>((mapper->optional_wait_ms - elapsed + 999) / 1000);
 }
 
 static void clear_step(InputSdlMapper* mapper, uint32_t step)
@@ -533,5 +532,5 @@ float input_sdl_mapper_hold_progress(const InputSdlMapper* mapper, uint64_t now_
         return 0.0f;
     }
     uint64_t held = now_ms - mapper->holding_since_ms;
-    return held >= INPUT_MAP_ROLE_HOLD_MS ? 1.0f : static_cast<float>(held) / static_cast<float>(INPUT_MAP_ROLE_HOLD_MS);
+    return held >= mapper->role_hold_ms ? 1.0f : static_cast<float>(held) / static_cast<float>(mapper->role_hold_ms);
 }

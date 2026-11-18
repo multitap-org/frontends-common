@@ -105,13 +105,13 @@ static void test_positions_then_roles()
     check(input_sdl_mapper_role(mapper) == 0, "mapper: a role's button let go too soon isn't taken");
     set_button(1, true);
     input_sdl_mapper_update(mapper, now);
-    float half = input_sdl_mapper_hold_progress(mapper, now + INPUT_MAP_ROLE_HOLD_MS / 2);
+    float half = input_sdl_mapper_hold_progress(mapper, now + mapper->role_hold_ms / 2);
     check(half > 0.4f && half < 0.6f, "mapper: the hold's progress");
     set_button(1, false);
     input_sdl_mapper_update(mapper, now);
-    hold(mapper, 1, INPUT_MAP_ROLE_HOLD_MS, &now);   // role 0 on the right button (shared with a position)
+    hold(mapper, 1, mapper->role_hold_ms, &now);   // role 0 on the right button (shared with a position)
     check(input_sdl_mapper_role(mapper) == 1, "mapper: a role's button held 2 s is taken");
-    bool done = hold(mapper, 2, INPUT_MAP_ROLE_HOLD_MS, &now);   // role 1 on the left one
+    bool done = hold(mapper, 2, mapper->role_hold_ms, &now);   // role 1 on the left one
     check(done, "mapper: complete after the last role");
     check(is_button(input_sdl_mapper_role_source(mapper, 0), InputButton::east), "mapper: role 0 is the right button");
     check(is_button(input_sdl_mapper_role_source(mapper, 1), InputButton::west), "mapper: role 1 is the left button");
