@@ -166,7 +166,11 @@ float input_source_value(const InputDevice* device, InputSource source)
         {
             return 0.0f;
         }
-        return device->held[source.code] != 0 || device->tapped[source.code] != 0 ? 1.0f : 0.0f;
+        if (device->held[source.code] == 0 && device->tapped[source.code] == 0)
+        {
+            return 0.0f;
+        }
+        return source.percent >= 100 || source.percent == 0 ? 1.0f : static_cast<float>(source.percent) / 100.0f;
     case InputSourceType::axis_plus:
     case InputSourceType::axis_minus:
     {
@@ -234,7 +238,7 @@ const char* input_key_name(uint32_t code)
     return nullptr;
 }
 
-bool input_source_format(InputSource source, char* out, size_t out_size)
+static bool format_control(InputSource source, char* out, size_t out_size)
 {
     int written = 0;
     switch (source.type)
@@ -269,7 +273,23 @@ bool input_source_format(InputSource source, char* out, size_t out_size)
     return written > 0 && static_cast<size_t>(written) < out_size;
 }
 
-bool input_source_parse(const char* text, InputSource* source)
+bool input_source_format(InputSource source, char* out, size_t out_size)
+{
+    if (!format_control(source, out, out_size))
+    {
+        return false;
+    }
+    bool digital = source.type == InputSourceType::key || source.type == InputSourceType::button;
+    if (digital && source.percent > 0 && source.percent < 100)
+    {
+        size_t length = std::strlen(out);
+        int written = std::snprintf(out + length, out_size - length, "@%u", static_cast<unsigned>(source.percent));
+        return written > 0 && static_cast<size_t>(written) < out_size - length;
+    }
+    return true;
+}
+
+static bool parse_control(const char* text, InputSource* source)
 {
     *source = InputSource{};
     if (std::strcmp(text, "none") == 0)
@@ -335,4 +355,29 @@ bool input_source_parse(const char* text, InputSource* source)
         return false;
     }
     return false;
+}
+
+bool input_source_parse(const char* text, InputSource* source)
+{
+    // "<control>@<percent>": the percent apart.
+    const char* at = std::strchr(text, '@');
+    if (at == nullptr)
+    {
+        return parse_control(text, source);
+    }
+    char control[96] = {};
+    size_t length = static_cast<size_t>(at - text);
+    if (length == 0 || length >= sizeof(control))
+    {
+        return false;
+    }
+    std::memcpy(control, text, length);
+    char* end = nullptr;
+    unsigned long percent = std::strtoul(at + 1, &end, 10);
+    if (end == at + 1 || *end != '\0' || percent < 1 || percent > 100 || !parse_control(control, source))
+    {
+        return false;
+    }
+    source->percent = static_cast<uint8_t>(percent);
+    return true;
 }

@@ -117,6 +117,14 @@ struct InputBindingSet
 // Adds `source` to the action (if it isn't there and a slot is free).
 bool input_bind(InputBindingSet* set, InputAction action, InputSource source);
 void input_unbind_all(InputBindingSet* set, InputAction action);
+
+// One action's sources (INPUT_SOURCES_PER_ACTION of them) as rows, the way
+// the binding tables show them: one row per source, in order.
+uint32_t input_sources_count(const InputSource* sources);
+// Puts `source` on `row` (row == count: a new row, if there is room). The
+// same control on another row moves here.
+void input_sources_set(InputSource* sources, uint32_t row, InputSource source);
+void input_sources_remove(InputSource* sources, uint32_t row);
 bool input_is_bound(const InputBindingSet* set, InputAction action, InputSource source);
 
 // The defaults for the keyboard (arrows, Z X A S Q W E R, Enter, Right Shift;

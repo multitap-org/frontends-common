@@ -85,6 +85,46 @@ static void test_sources()
     check(!input_source_parse("axis:left_x", &source), "sources: axis without direction refused");
     check(!input_source_parse("wheel:up", &source), "sources: unknown type refused");
 
+    // A percent on a key or button: how far it pushes a stick.
+    check(input_source_parse("button:dpad_right@20", &source) && source.type == InputSourceType::button &&
+              source.code == static_cast<uint16_t>(InputButton::dpad_right) && source.percent == 20,
+          "sources: a percent");
+    check(input_source_format(source, text, sizeof(text)) && std::strcmp(text, "button:dpad_right@20") == 0,
+          "sources: a percent written back");
+    InputSource full = source;
+    full.percent = 100;
+    check(input_source_equal(source, full), "sources: the percent isn't part of the control");
+    check(input_source_format(full, text, sizeof(text)) && std::strcmp(text, "button:dpad_right") == 0,
+          "sources: 100 % isn't written");
+    check(!input_source_parse("button:dpad_right@0", &source) && !input_source_parse("button:dpad_right@101", &source) &&
+              !input_source_parse("button:dpad_right@", &source),
+          "sources: a percent out of 1..100 refused");
+    InputDevice device = {};
+    device.held[static_cast<uint32_t>(InputButton::dpad_right)] = 1;
+    InputSource walk = {};
+    input_source_parse("button:dpad_right@20", &walk);
+    float value = input_source_value(&device, walk);
+    check(value > 0.19f && value < 0.21f, "sources: a button at 20 % gives 0.2");
+
+    // An action's sources as rows.
+    InputSource rows[INPUT_SOURCES_PER_ACTION] = {};
+    InputSource up = {};
+    input_source_parse("button:dpad_up", &up);
+    InputSource stick = {};
+    input_source_parse("axis:left_y-", &stick);
+    InputSource north = {};
+    input_source_parse("button:north", &north);
+    input_sources_set(rows, 0, up);
+    input_sources_set(rows, 1, stick);
+    check(input_sources_count(rows) == 2 && input_source_equal(rows[1], stick), "rows: a second row added");
+    input_sources_set(rows, 0, north);
+    check(input_sources_count(rows) == 2 && input_source_equal(rows[0], north), "rows: a row replaced");
+    input_sources_set(rows, 2, north);
+    check(input_sources_count(rows) == 2 && input_source_equal(rows[0], stick) && input_source_equal(rows[1], north),
+          "rows: the same control moves, not repeated");
+    input_sources_remove(rows, 0);
+    check(input_sources_count(rows) == 1 && input_source_equal(rows[0], north), "rows: removed, the rest moves up");
+
     InputAction action = InputAction::count;
     check(input_action_parse("hotkey.quick_menu", &action) && action == InputAction::hotkey_quick_menu, "actions: by name");
     check(std::strcmp(input_action_name(InputAction::pad_l2), "pad.l2") == 0, "actions: name");

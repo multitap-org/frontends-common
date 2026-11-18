@@ -125,6 +125,75 @@ void input_unbind_all(InputBindingSet* set, InputAction action)
     }
 }
 
+// The sources in order, none after the last.
+static void pack_sources(InputSource* sources)
+{
+    uint32_t kept = 0;
+    for (uint32_t s = 0; s < INPUT_SOURCES_PER_ACTION; s++)
+    {
+        if (sources[s].type != InputSourceType::none)
+        {
+            sources[kept++] = sources[s];
+        }
+    }
+    for (uint32_t s = kept; s < INPUT_SOURCES_PER_ACTION; s++)
+    {
+        sources[s] = InputSource{};
+    }
+}
+
+uint32_t input_sources_count(const InputSource* sources)
+{
+    uint32_t count = 0;
+    for (uint32_t s = 0; s < INPUT_SOURCES_PER_ACTION; s++)
+    {
+        count += sources[s].type != InputSourceType::none ? 1u : 0u;
+    }
+    return count;
+}
+
+void input_sources_remove(InputSource* sources, uint32_t row)
+{
+    pack_sources(sources);
+    if (row < INPUT_SOURCES_PER_ACTION)
+    {
+        sources[row] = InputSource{};
+    }
+    pack_sources(sources);
+}
+
+void input_sources_set(InputSource* sources, uint32_t row, InputSource source)
+{
+    pack_sources(sources);
+    if (source.type == InputSourceType::none)
+    {
+        input_sources_remove(sources, row);
+        return;
+    }
+    // The same control elsewhere moves to this row.
+    for (uint32_t s = 0; s < INPUT_SOURCES_PER_ACTION; s++)
+    {
+        if (s != row && sources[s].type != InputSourceType::none && input_source_equal(sources[s], source))
+        {
+            sources[s] = InputSource{};
+            if (s < row)
+            {
+                row--;
+            }
+        }
+    }
+    pack_sources(sources);
+    uint32_t count = input_sources_count(sources);
+    if (row > count)
+    {
+        row = count;
+    }
+    if (row < INPUT_SOURCES_PER_ACTION)
+    {
+        sources[row] = source;
+    }
+}
+
 bool input_is_bound(const InputBindingSet* set, InputAction action, InputSource source)
 {
     uint32_t index = index_of(action);

@@ -151,8 +151,13 @@ struct InputSource
 {
     InputSourceType type = InputSourceType::none;
     uint16_t        code = 0;
+    // A key or button pushes an analog action (a stick direction) this far
+    // (1..100): D-pad right at 20 = the stick pushed a fifth of the way.
+    // Settings text: "button:dpad_right@20". Axes give their own value.
+    uint8_t         percent = 100;
 };
 
+// The same control (the percent doesn't count).
 bool input_source_equal(InputSource a, InputSource b);
 
 // How far an axis is pushed toward the source's direction, 0..1 (keys and
