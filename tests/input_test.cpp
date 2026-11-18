@@ -461,7 +461,7 @@ static void test_menus_and_defaults()
               !input_is_bound(&stick_dpad, InputAction::pad_up, button(InputButton::dpad_up)),
           "defaults: no d-pad buttons, directions on the left stick");
 
-    // The gamepad defaults: B bottom, A right, R2 on the trigger, SELECT+START quick menu.
+    // The gamepad defaults: B bottom, A right, R2 on the trigger, SELECT+START quick menu, Y the main menu.
     InputBindingSet pad_set = {};
     input_default_gamepad_bindings(&pad_set);
     check(input_is_bound(&pad_set, InputAction::pad_b, button(InputButton::south)), "defaults: B is the bottom button");
@@ -469,7 +469,8 @@ static void test_menus_and_defaults()
     check(input_is_bound(&pad_set, InputAction::pad_r2, axis(InputAxis::right_trigger, true)), "defaults: R2 is the trigger");
     check(input_is_bound(&pad_set, InputAction::hotkey_enable, button(InputButton::back)), "defaults: HOTKEY ENABLE is SELECT");
     check(input_is_bound(&pad_set, InputAction::hotkey_quick_menu, button(InputButton::start)), "defaults: + START = quick menu");
-    check(input_is_bound(&pad_set, InputAction::ui_open_menu, button(InputButton::start)), "defaults: START opens the menu bar");
+    check(input_is_bound(&pad_set, InputAction::ui_open_menu, button(InputButton::west)), "defaults: Y (left) opens the menu bar");
+    check(input_is_bound(&pad_set, InputAction::hotkey_menu, button(InputButton::west)), "defaults: + Y (left) = main menu");
     InputAction last = InputAction::count;
     check(input_action_parse("hotkey.fast_forward", &last) && last == InputAction::hotkey_fast_forward, "actions: names line up");
     delete system;

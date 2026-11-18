@@ -254,11 +254,13 @@ void input_default_gamepad_bindings(InputBindingSet* set)
     input_bind(set, InputAction::ui_back, pad_button(InputButton::east));
     input_bind(set, InputAction::ui_page_left, pad_button(InputButton::left_shoulder));
     input_bind(set, InputAction::ui_page_right, pad_button(InputButton::right_shoulder));
-    input_bind(set, InputAction::ui_open_menu, pad_button(InputButton::start));
+    // The main menu: the left face button (RetroPad Y) in the interface, and
+    // HOTKEY ENABLE + the same button in a game (MAP CONTROLLER sets both).
+    input_bind(set, InputAction::ui_open_menu, pad_button(InputButton::west));
 
     input_bind(set, InputAction::hotkey_enable, pad_button(InputButton::back));
     input_bind(set, InputAction::hotkey_quick_menu, pad_button(InputButton::start));
-    input_bind(set, InputAction::hotkey_menu, pad_button(InputButton::east));
+    input_bind(set, InputAction::hotkey_menu, pad_button(InputButton::west));
     input_bind(set, InputAction::hotkey_save_state, pad_button(InputButton::right_shoulder));
     input_bind(set, InputAction::hotkey_load_state, pad_button(InputButton::left_shoulder));
     input_bind(set, InputAction::hotkey_fast_forward, pad_axis(InputAxis::right_trigger, true));

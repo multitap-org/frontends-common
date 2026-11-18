@@ -126,6 +126,11 @@ if(MULTITAP_BUILD_TESTS)
     target_link_libraries(frontend_input_test PRIVATE frontend_common)
     multitap_set_project_flags(frontend_input_test)
     add_test(NAME frontend_input COMMAND frontend_input_test)
+
+    add_executable(frontend_input_sdl_mapping_test tests/input_sdl_mapping_test.cpp)
+    target_link_libraries(frontend_input_sdl_mapping_test PRIVATE frontend_common)
+    multitap_set_project_flags(frontend_input_sdl_mapping_test)
+    add_test(NAME frontend_input_sdl_mapping COMMAND frontend_input_sdl_mapping_test)
     set_tests_properties(frontend_input PROPERTIES
                          PASS_REGULAR_EXPRESSION "input: all checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
