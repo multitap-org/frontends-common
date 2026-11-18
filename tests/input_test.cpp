@@ -559,6 +559,7 @@ static void test_config()
     input_unbind_all(&gamepad->bindings, InputAction::hotkey_save_state);
     const char* MAPPING = "pad-guid,Pad,a:b1,b:b0,dpup:h0.1,leftx:a0,platform:Linux,";
     input_profile_for(first, "pad-guid")->sdl_mapping = MAPPING;
+    input_profile_for(first, "pad-guid")->button_labels[static_cast<uint32_t>(InputButton::misc1)] = "VOLUME UP";
 
     SettingsFile file = {};
     input_config_write(first, &file);
@@ -605,6 +606,9 @@ static void test_config()
     check(text_again.find("[controller/pad-guid]") != std::string::npos, "config: absent controller kept");
     const InputProfile* kept = input_profile(third, "pad-guid");
     check(kept != nullptr && kept->sdl_mapping == MAPPING, "config: SDL mapping read back");
+    check(kept != nullptr && kept->button_labels[static_cast<uint32_t>(InputButton::misc1)] == "VOLUME UP",
+          "config: a button's name read back");
+    check(text_again.find("label.misc1 = VOLUME UP") != std::string::npos, "config: a button's name written");
     check(text_again.find(std::string("sdl_mapping = ") + MAPPING) != std::string::npos, "config: SDL mapping kept");
     delete first;
     delete second;

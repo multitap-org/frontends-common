@@ -198,6 +198,17 @@ void input_config_read(InputSystem* system, const SettingsFile* file)
                 profile->deadzone_percent = end != deadzone && *end == '\0' && percent >= 0 && percent < 100
                                                 ? static_cast<int32_t>(percent) : -1;
             }
+            // label.<button> = a name given to it.
+            for (size_t e = 0; e < section->entries.size(); e++)
+            {
+                const std::string& key = section->entries[e].key;
+                InputSource button = {};
+                if (key.compare(0, 6, "label.") == 0 && input_source_parse(("button:" + key.substr(6)).c_str(), &button) &&
+                    button.type == InputSourceType::button && button.code < INPUT_BUTTON_COUNT)
+                {
+                    profile->button_labels[button.code] = section->entries[e].value;
+                }
+            }
         }
         else if (starts_with(section->name, PREFIX_RETROPAD, &id))
         {
@@ -327,6 +338,18 @@ void input_config_write(InputSystem* system, SettingsFile* file)
         if (!profile->appearance.empty())
         {
             settings_file_set(file, controller.c_str(), "appearance", profile->appearance.c_str());
+        }
+        for (uint32_t b = 0; b < INPUT_BUTTON_COUNT; b++)
+        {
+            InputSource button = {};
+            button.type = InputSourceType::button;
+            button.code = static_cast<uint16_t>(b);
+            char name[64] = {};
+            if (!profile->button_labels[b].empty() && input_source_format(button, name, sizeof(name)))
+            {
+                settings_file_set(file, controller.c_str(), (std::string("label.") + (name + 7)).c_str(),
+                                  profile->button_labels[b].c_str());   // name + 7: past "button:"
+            }
         }
         if (!profile->sdl_mapping.empty())
         {

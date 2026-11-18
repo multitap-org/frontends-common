@@ -210,6 +210,7 @@ struct InputProfile
     std::string                       appearance;   // gamepads: how it looks ("xbox", "sony"...); "none" = declined; "" = never asked
     InputHotkeyMode                   hotkey_mode = InputHotkeyMode::hold;
     std::string                       sdl_mapping;  // gamepads: our SDL mapping line (MAP CONTROLLER); "" = SDL's own
+    std::string                       button_labels[INPUT_BUTTON_COUNT];   // gamepads: names given to buttons ("" = their own)
     std::vector<InputBindingOverride> overrides;
 };
 
