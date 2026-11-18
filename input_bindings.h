@@ -86,6 +86,18 @@ enum class InputAction
     // TURBO BUTTON (per core / game, in the remap): held, a button pressed
     // turns that button's turbo on or off for the session (not passed on).
     pad_turbo,
+    // The port's cursor (mouse, pointer, lightgun: whatever the core asks
+    // for): moved by a mouse or by these (a stick), and its buttons.
+    cursor_right,
+    cursor_left,
+    cursor_down,
+    cursor_up,
+    mouse_left,         // also the pointer's touch and the lightgun's trigger
+    mouse_right,
+    mouse_middle,
+    mouse_wheel_up,
+    mouse_wheel_down,
+    gun_reload,         // the lightgun aimed off the screen and fired
     // Interface.
     ui_up,
     ui_down,
@@ -103,6 +115,7 @@ enum class InputAction
     hotkey_save_state,
     hotkey_load_state,
     hotkey_fast_forward,
+    hotkey_grab_mouse,   // lets go of a grabbed mouse (or grabs it again)
     count,
 };
 
@@ -151,6 +164,10 @@ void input_default_keyboard_bindings(InputBindingSet* set);
 // HOTKEY ENABLE = Select: Start quick menu, right button menu, R save, L
 // load, R2 fast forward.
 void input_default_gamepad_bindings(InputBindingSet* set);
+
+// A mouse's: its buttons on the cursor's (left = click / trigger, right =
+// the other and the lightgun's reload), its wheel.
+void input_default_mouse_bindings(InputBindingSet* set);
 
 enum class InputHotkeyMode
 {
@@ -347,11 +364,33 @@ struct InputSystem
     uint32_t    port_devices[INPUT_PORT_COUNT] = {1, 1, 1, 1};   // 1 = the libretro joypad
     std::vector<uint32_t>        ports[INPUT_PORT_COUNT];   // each port's members (controller indexes), in the order they came
     bool                         keyboard_seated = false;   // the keyboard was put on port 1 for keyboard_shares_port1
+    bool                         mouse_seated = false;      // the first mouse was put on port 1 (always)
+    // Where the game's image is in the window (pixels; width 0 = not shown):
+    // a mouse's position maps onto it, and a stick moves the cursor across it.
+    float                        view_x = 0.0f;
+    float                        view_y = 0.0f;
+    float                        view_width = 0.0f;
+    float                        view_height = 0.0f;
+    // Each port's cursor, -1..1 across the image (kept between frames).
+    float                        cursor_x[INPUT_PORT_COUNT] = {};
+    float                        cursor_y[INPUT_PORT_COUNT] = {};
+    bool                         cursor_off[INPUT_PORT_COUNT] = {};   // off the image (a mouse outside it)
     InputSettings                settings;
     InputCapture                 capture;
     // Nothing is routed (no actions, no RetroPad) while set: a controller is
     // being mapped raw, so its presses must not do anything else.
     bool                         suspended = false;
+};
+
+// InputFrame::mouse_buttons bits.
+enum class InputFrameMouse
+{
+    left,
+    right,
+    middle,
+    wheel_up,
+    wheel_down,
+    reload,
 };
 
 struct InputFrame
@@ -368,6 +407,14 @@ struct InputFrame
     int32_t  left_port = INPUT_NO_PORT;             // a controller's device went away and left this port (its first)
     int32_t  left_controller = -1;
     bool     profiles_changed = false;              // a remap changed (a turbo's speed by taps): save input.cfg
+    // Each port's cursor, for the core's mouse, pointer and lightgun.
+    int16_t  mouse_dx[INPUT_PORT_COUNT] = {};       // moved this frame (window pixels)
+    int16_t  mouse_dy[INPUT_PORT_COUNT] = {};
+    uint8_t  mouse_buttons[INPUT_PORT_COUNT] = {};  // bit = InputFrameMouse
+    int16_t  cursor_x[INPUT_PORT_COUNT] = {};       // -0x7fff..0x7fff across the image
+    int16_t  cursor_y[INPUT_PORT_COUNT] = {};
+    bool     cursor_off[INPUT_PORT_COUNT] = {};     // off the image
+    bool     mouse_moved[INPUT_PORT_COUNT] = {};    // a mouse on the port moved (the frontend may grab it)
 };
 
 // The profile with this id, or nullptr; _for makes one.

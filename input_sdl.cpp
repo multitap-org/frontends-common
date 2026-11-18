@@ -105,6 +105,50 @@ static void remove_gamepad(InputSdl* sdl, InputSystem* system, SDL_JoystickID id
     }
 }
 
+// The device of a mouse by SDL's id, added the first time it is seen.
+// (Touch and pen pretend to be a mouse too: not this.)
+static uint32_t mouse_device(InputSdl* sdl, InputSystem* system, SDL_MouseID which)
+{
+    if (which == SDL_TOUCH_MOUSEID || which == SDL_PEN_MOUSEID)
+    {
+        return 0;
+    }
+    for (size_t m = 0; m < sdl->mice.size(); m++)
+    {
+        if (sdl->mice[m].which == which)
+        {
+            const InputDevice* device = input_devices_find_const(&system->devices, sdl->mice[m].device);
+            if (device != nullptr && device->connected)
+            {
+                return sdl->mice[m].device;
+            }
+            sdl->mice.erase(sdl->mice.begin() + static_cast<long>(m));
+            break;
+        }
+    }
+    const char* name = which != 0 ? SDL_GetMouseNameForID(which) : nullptr;
+    InputSdlMouse mouse = {};
+    mouse.which = which;
+    mouse.device = input_devices_add(&system->devices, InputDeviceKind::mouse, "mouse",
+                                     name != nullptr && name[0] != '\0' ? name : "Mouse");
+    input_add_controllers_for_device(system, mouse.device);
+    sdl->mice.push_back(mouse);
+    return mouse.device;
+}
+
+static void remove_mouse(InputSdl* sdl, InputSystem* system, SDL_MouseID which)
+{
+    for (size_t m = 0; m < sdl->mice.size(); m++)
+    {
+        if (sdl->mice[m].which == which)
+        {
+            input_devices_disconnect(&system->devices, sdl->mice[m].device);
+            sdl->mice.erase(sdl->mice.begin() + static_cast<long>(m));
+            return;
+        }
+    }
+}
+
 void input_sdl_init(InputSdl* sdl, InputSystem* system, const char* database_path)
 {
     if (database_path != nullptr)
@@ -172,7 +216,63 @@ void input_sdl_handle_event(InputSdl* sdl, InputSystem* system, const SDL_Event*
     }
     case SDL_EVENT_WINDOW_FOCUS_LOST:
         input_devices_release_all(&system->devices, sdl->keyboard_device);
+        for (size_t m = 0; m < sdl->mice.size(); m++)
+        {
+            input_devices_release_all(&system->devices, sdl->mice[m].device);
+        }
         break;
+    case SDL_EVENT_MOUSE_ADDED:
+        mouse_device(sdl, system, event->mdevice.which);
+        break;
+    case SDL_EVENT_MOUSE_REMOVED:
+        remove_mouse(sdl, system, event->mdevice.which);
+        break;
+    case SDL_EVENT_MOUSE_MOTION:
+    {
+        uint32_t device = mouse_device(sdl, system, event->motion.which);
+        if (device != 0)
+        {
+            input_devices_add_motion(&system->devices, device, event->motion.xrel, event->motion.yrel);
+            input_devices_set_position(&system->devices, device, event->motion.x, event->motion.y);
+        }
+        break;
+    }
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+    {
+        uint32_t device = mouse_device(sdl, system, event->button.which);
+        InputMouseButton button = InputMouseButton::count;
+        switch (event->button.button)
+        {
+        case SDL_BUTTON_LEFT:   button = InputMouseButton::left; break;
+        case SDL_BUTTON_RIGHT:  button = InputMouseButton::right; break;
+        case SDL_BUTTON_MIDDLE: button = InputMouseButton::middle; break;
+        case SDL_BUTTON_X1:     button = InputMouseButton::x1; break;
+        case SDL_BUTTON_X2:     button = InputMouseButton::x2; break;
+        default:                break;
+        }
+        if (device != 0 && button != InputMouseButton::count)
+        {
+            bool down = event->type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+            input_devices_set_code(&system->devices, device, static_cast<uint32_t>(button), down);
+            input_devices_set_position(&system->devices, device, event->button.x, event->button.y);
+            if (down)
+            {
+                sdl->last_active_device = device;
+            }
+        }
+        break;
+    }
+    case SDL_EVENT_MOUSE_WHEEL:
+    {
+        uint32_t device = mouse_device(sdl, system, event->wheel.which);
+        float y = event->wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -event->wheel.y : event->wheel.y;
+        if (device != 0 && y != 0.0f)
+        {
+            input_devices_wheel(&system->devices, device, y > 0.0f);
+        }
+        break;
+    }
     case SDL_EVENT_JOYSTICK_ADDED:
         report_unmapped(sdl, event->jdevice.which);
         break;

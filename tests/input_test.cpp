@@ -1150,6 +1150,95 @@ static void test_turbo()
     delete system;
 }
 
+// The ports' cursors: a mouse (on port 1 by itself; its position when it is
+// the only one, else its motion), a stick moving it, the buttons.
+static void test_cursor()
+{
+    InputSystem* system = new InputSystem{};
+    system->settings.keyboard_shares_port1 = false;
+    system->view_x = 100.0f;
+    system->view_y = 50.0f;
+    system->view_width = 640.0f;
+    system->view_height = 480.0f;
+    uint32_t mouse = input_devices_add(&system->devices, InputDeviceKind::mouse, "mouse", "Mouse");
+    input_add_controllers_for_device(system, mouse);
+    InputFrame out = {};
+    frame(system, 0, &out);
+    check(input_port_has(system, 0, 0) && input_controller_profile_id(system, 0) == "mouse", "cursor: the mouse is on port 1");
+
+    // The only mouse: its position on the image, its motion, its buttons.
+    input_devices_add_motion(&system->devices, mouse, 12.0f, -3.0f);
+    input_devices_set_position(&system->devices, mouse, 420.0f, 290.0f);   // the image's centre
+    input_devices_set_code(&system->devices, mouse, static_cast<uint32_t>(InputMouseButton::left), true);
+    input_devices_wheel(&system->devices, mouse, true);
+    frame(system, 16, &out);
+    check(out.mouse_dx[0] == 12 && out.mouse_dy[0] == -3 && out.mouse_moved[0], "cursor: a mouse's motion");
+    check(out.cursor_x[0] == 0 && out.cursor_y[0] == 0 && !out.cursor_off[0], "cursor: a lone mouse's position");
+    check((out.mouse_buttons[0] & (1u << static_cast<uint32_t>(InputFrameMouse::left))) != 0 &&
+              (out.mouse_buttons[0] & (1u << static_cast<uint32_t>(InputFrameMouse::wheel_up))) != 0,
+          "cursor: click and wheel");
+    frame(system, 32, &out);
+    check(out.mouse_dx[0] == 0 && (out.mouse_buttons[0] & (1u << static_cast<uint32_t>(InputFrameMouse::wheel_up))) == 0,
+          "cursor: motion and wheel last a frame");
+    input_devices_add_motion(&system->devices, mouse, 1.0f, 0.0f);
+    input_devices_set_position(&system->devices, mouse, 50.0f, 290.0f);   // left of the image
+    frame(system, 48, &out);
+    check(out.cursor_off[0] && out.cursor_x[0] == -32767, "cursor: off the image (a lightgun's reload aim)");
+    input_devices_set_code(&system->devices, mouse, static_cast<uint32_t>(InputMouseButton::left), false);
+    input_devices_set_code(&system->devices, mouse, static_cast<uint32_t>(InputMouseButton::right), true);
+    frame(system, 64, &out);
+    check((out.mouse_buttons[0] & (1u << static_cast<uint32_t>(InputFrameMouse::reload))) != 0 &&
+              (out.mouse_buttons[0] & (1u << static_cast<uint32_t>(InputFrameMouse::right))) != 0,
+          "cursor: right button is right click and reload");
+    input_devices_set_code(&system->devices, mouse, static_cast<uint32_t>(InputMouseButton::right), false);
+
+    // A gamepad on port 2: its right stick moves port 2's cursor, R2 clicks.
+    uint32_t pad = input_devices_add(&system->devices, InputDeviceKind::gamepad, "pad-guid", "Pad");
+    input_add_controllers_for_device(system, pad);
+    input_port_add(system, 1, 1);
+    input_devices_set_axis(&system->devices, pad, InputAxis::right_x, 0.5f);   // (a real stick first)
+    input_devices_set_axis(&system->devices, pad, InputAxis::right_x, 1.0f);
+    input_devices_set_axis(&system->devices, pad, InputAxis::right_trigger, 1.0f);
+    for (int f = 0; f < 20; f++)
+    {
+        frame(system, 100 + static_cast<uint64_t>(f) * 16, &out);
+    }
+    check(out.cursor_x[1] > 16000 && out.cursor_y[1] == 0 && out.mouse_dx[1] > 0, "cursor: a stick moves it");
+    check((out.mouse_buttons[1] & (1u << static_cast<uint32_t>(InputFrameMouse::left))) != 0, "cursor: R2 is the click / trigger");
+    for (int f = 0; f < 60; f++)
+    {
+        frame(system, 500 + static_cast<uint64_t>(f) * 16, &out);
+    }
+    check(out.cursor_x[1] == 32767, "cursor: a stick keeps it on the image");
+    check(out.cursor_x[0] == -32767, "cursor: each port its own");
+    input_devices_set_axis(&system->devices, pad, InputAxis::right_x, 0.0f);
+    input_devices_set_axis(&system->devices, pad, InputAxis::right_trigger, 0.0f);
+
+    // A second mouse: positions are the system's then, motion moves each port's.
+    uint32_t second = input_devices_add(&system->devices, InputDeviceKind::mouse, "mouse", "Mouse 2");
+    input_add_controllers_for_device(system, second);
+    check(second != mouse && system->controllers.size() == 3, "cursor: a second mouse, its own controller");
+    input_leave(system, 2);
+    input_port_add(system, 2, 2);
+    input_devices_add_motion(&system->devices, second, 32.0f, 0.0f);
+    input_devices_set_position(&system->devices, second, 420.0f, 290.0f);
+    frame(system, 2000, &out);
+    check(out.cursor_x[2] == 3276 && out.mouse_dx[2] == 32, "cursor: with two mice, motion moves each");
+
+    // Text form; a mouse button is taken once held (a click may be for the window).
+    InputSource parsed = {};
+    check(input_source_parse("mouse:wheel_down", &parsed) && parsed.type == InputSourceType::mouse &&
+              parsed.code == static_cast<uint16_t>(InputMouseButton::wheel_down),
+          "cursor: mouse sources as text");
+    input_capture_begin(system, mouse);
+    input_devices_set_code(&system->devices, mouse, static_cast<uint32_t>(InputMouseButton::middle), true);
+    InputSource taken = {};
+    check(!input_capture_poll(system, 3000, &taken), "cursor: a click isn't taken at once");
+    check(input_capture_poll(system, 3000 + system->settings.hold_ms, &taken) && taken.type == InputSourceType::mouse,
+          "cursor: ...held, it is");
+    delete system;
+}
+
 static void test_layouts()
 {
     InputLayouts layouts = {};
@@ -1224,6 +1313,7 @@ int main()
     test_combos_and_game_remaps();
     test_macros();
     test_turbo();
+    test_cursor();
     test_layouts();
     test_pad_positions();
     if (g_failures == 0)

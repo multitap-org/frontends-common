@@ -19,9 +19,11 @@ static const char* const ACTION_NAMES[INPUT_ACTION_COUNT] = {
     "pad.a", "pad.x", "pad.l", "pad.r", "pad.l2", "pad.r2", "pad.l3", "pad.r3",
     "pad.left_x+", "pad.left_x-", "pad.left_y+", "pad.left_y-",
     "pad.right_x+", "pad.right_x-", "pad.right_y+", "pad.right_y-", "pad.turbo",
+    "cursor.right", "cursor.left", "cursor.down", "cursor.up", "mouse.left", "mouse.right", "mouse.middle",
+    "mouse.wheel_up", "mouse.wheel_down", "gun.reload",
     "ui.up", "ui.down", "ui.left", "ui.right", "ui.accept", "ui.back", "ui.page_left", "ui.page_right", "ui.open_menu",
     "hotkey.enable", "hotkey.menu", "hotkey.quick_menu", "hotkey.save_state", "hotkey.load_state",
-    "hotkey.fast_forward",
+    "hotkey.fast_forward", "hotkey.grab_mouse",
 };
 
 static uint32_t index_of(InputAction action)
@@ -75,7 +77,7 @@ bool input_action_parse(const char* name, InputAction* action)
 
 bool input_action_is_pad(InputAction action)
 {
-    return index_of(action) <= index_of(InputAction::pad_turbo);
+    return index_of(action) <= index_of(InputAction::gun_reload);   // (the port's: RetroPad, turbo, cursor)
 }
 
 bool input_action_is_hotkey(InputAction action)
@@ -223,7 +225,7 @@ static InputSource key(uint16_t code)
 // HID usage ids for the defaults.
 constexpr uint16_t HID_A = 4, HID_E = 8, HID_Q = 20, HID_R = 21, HID_S = 22, HID_W = 26, HID_X = 27, HID_Z = 29;
 constexpr uint16_t HID_RETURN = 40, HID_ESCAPE = 41, HID_SPACE = 44;
-constexpr uint16_t HID_F1 = 58, HID_F2 = 59, HID_F4 = 61;
+constexpr uint16_t HID_F1 = 58, HID_F2 = 59, HID_F4 = 61, HID_F11 = 68;
 constexpr uint16_t HID_PAGE_UP = 75, HID_PAGE_DOWN = 78;
 constexpr uint16_t HID_RIGHT = 79, HID_LEFT = 80, HID_DOWN = 81, HID_UP = 82;
 constexpr uint16_t HID_RIGHT_SHIFT = 229;
@@ -264,6 +266,7 @@ void input_default_keyboard_bindings(InputBindingSet* set)
     input_bind(set, InputAction::hotkey_save_state, key(HID_F2));
     input_bind(set, InputAction::hotkey_load_state, key(HID_F4));
     input_bind(set, InputAction::hotkey_fast_forward, key(HID_SPACE));
+    input_bind(set, InputAction::hotkey_grab_mouse, key(HID_F11));
 }
 
 static InputSource pad_button(InputButton b)
@@ -331,17 +334,48 @@ void input_default_gamepad_bindings(InputBindingSet* set)
     input_bind(set, InputAction::hotkey_save_state, pad_button(InputButton::right_shoulder));
     input_bind(set, InputAction::hotkey_load_state, pad_button(InputButton::left_shoulder));
     input_bind(set, InputAction::hotkey_fast_forward, pad_axis(InputAxis::right_trigger, true));
+    // The cursor (a core's mouse / pointer / lightgun) on the right stick, R2 its click / trigger, L2 the other.
+    input_bind(set, InputAction::cursor_right, pad_axis(InputAxis::right_x, true));
+    input_bind(set, InputAction::cursor_left, pad_axis(InputAxis::right_x, false));
+    input_bind(set, InputAction::cursor_down, pad_axis(InputAxis::right_y, true));
+    input_bind(set, InputAction::cursor_up, pad_axis(InputAxis::right_y, false));
+    input_bind(set, InputAction::mouse_left, pad_axis(InputAxis::right_trigger, true));
+    input_bind(set, InputAction::mouse_right, pad_axis(InputAxis::left_trigger, true));
+    input_bind(set, InputAction::gun_reload, pad_axis(InputAxis::left_trigger, true));
 }
 
 // ---------------------------------------------------------------------------
 // Controllers and ports
 // ---------------------------------------------------------------------------
 
+static InputSource mouse_button(InputMouseButton b)
+{
+    InputSource source = {};
+    source.type = InputSourceType::mouse;
+    source.code = static_cast<uint16_t>(b);
+    return source;
+}
+
+void input_default_mouse_bindings(InputBindingSet* set)
+{
+    *set = InputBindingSet{};
+    input_bind(set, InputAction::mouse_left, mouse_button(InputMouseButton::left));
+    input_bind(set, InputAction::mouse_right, mouse_button(InputMouseButton::right));
+    input_bind(set, InputAction::mouse_middle, mouse_button(InputMouseButton::middle));
+    input_bind(set, InputAction::mouse_wheel_up, mouse_button(InputMouseButton::wheel_up));
+    input_bind(set, InputAction::mouse_wheel_down, mouse_button(InputMouseButton::wheel_down));
+    input_bind(set, InputAction::gun_reload, mouse_button(InputMouseButton::right));
+}
+
 void input_default_bindings(InputDeviceKind kind, InputBindingSet* set)
 {
     if (kind == InputDeviceKind::keyboard)
     {
         input_default_keyboard_bindings(set);
+    }
+    else if (kind == InputDeviceKind::mouse)
+    {
+        input_default_mouse_bindings(set);
     }
     else
     {
@@ -458,6 +492,11 @@ void input_add_controllers_for_device(InputSystem* system, uint32_t device_id)
         add_from_profile(system, device, profile);
         return;
     }
+    if (device->kind == InputDeviceKind::mouse)
+    {
+        add_from_profile(system, device, find_profile(system, "mouse"));   // (every mouse: one profile)
+        return;
+    }
     // The keyboard: "keyboard", then "keyboard.2", "keyboard.3"... while they exist.
     add_from_profile(system, device, find_profile(system, "keyboard"));
     for (uint32_t part = 2; part < 64; part++)
@@ -486,6 +525,10 @@ std::string input_controller_profile_id(const InputSystem* system, uint32_t cont
     if (device->kind == InputDeviceKind::gamepad)
     {
         return device->guid;
+    }
+    if (device->kind == InputDeviceKind::mouse)
+    {
+        return "mouse";
     }
     uint32_t part = 1;
     for (uint32_t c = 0; c < controller; c++)
@@ -594,14 +637,29 @@ static int32_t keyboard_player(const InputSystem* system)
     return -1;
 }
 
-// Free for START: no members but the keyboard put there to share it.
+// The first mouse's controller (put on port 1), or -1.
+static int32_t first_mouse(const InputSystem* system)
+{
+    for (size_t c = 0; c < system->controllers.size(); c++)
+    {
+        const InputDevice* device = input_devices_find_const(&system->devices, system->controllers[c].device_id);
+        if (device != nullptr && device->kind == InputDeviceKind::mouse)
+        {
+            return static_cast<int32_t>(c);
+        }
+    }
+    return -1;
+}
+
+// Free for START: no members but the keyboard and the mouse put there.
 static bool port_free(const InputSystem* system, uint32_t port)
 {
     const std::vector<uint32_t>* members = &system->ports[port];
     int32_t keyboard = system->keyboard_seated ? keyboard_player(system) : -1;
+    int32_t mouse = system->mouse_seated ? first_mouse(system) : -1;
     for (size_t m = 0; m < members->size(); m++)
     {
-        if (static_cast<int32_t>((*members)[m]) != keyboard)
+        if (static_cast<int32_t>((*members)[m]) != keyboard && static_cast<int32_t>((*members)[m]) != mouse)
         {
             return false;
         }
@@ -658,6 +716,7 @@ void input_leave_all(InputSystem* system)
         }
     }
     system->keyboard_seated = false;   // back on port 1 on the next update, if it shares it
+    system->mouse_seated = false;
     for (size_t c = 0; c < system->controllers.size(); c++)
     {
         system->controllers[c].turbo_session.clear();   // a new game: no turbo from TURBO BUTTON
@@ -967,7 +1026,9 @@ static bool capture_pressed(InputCapture* capture, const InputDevice* device, In
         }
         if (capture->held_at_start[code] == 0)
         {
-            source->type = device->kind == InputDeviceKind::keyboard ? InputSourceType::key : InputSourceType::button;
+            source->type = device->kind == InputDeviceKind::keyboard ? InputSourceType::key
+                           : device->kind == InputDeviceKind::mouse  ? InputSourceType::mouse
+                                                                     : InputSourceType::button;
             source->code = static_cast<uint16_t>(code);
             return true;
         }
@@ -1003,7 +1064,10 @@ bool input_capture_poll(InputSystem* system, uint64_t now_ms, InputSource* sourc
         capture->candidate = InputSource{};   // let go before it was taken
         return false;
     }
-    if (device->kind != InputDeviceKind::keyboard)
+    // A gamepad's or mouse's control once held (a click mustn't bind at
+    // once: it may be for the window); a key, or a wheel notch, at once.
+    bool wheel = found.type == InputSourceType::mouse && found.code >= static_cast<uint16_t>(InputMouseButton::wheel_up);
+    if (device->kind != InputDeviceKind::keyboard && !wheel)
     {
         if (capture->candidate.type == InputSourceType::none || !input_source_equal(capture->candidate, found))
         {
@@ -1335,6 +1399,52 @@ static bool turbo_retime(InputSystem* system, InputController* controller, uint3
     return changed;
 }
 
+// A controller's part of a port's cursor this frame: a mouse's motion (and
+// position, if it is the only mouse), the cursor actions (a stick: full
+// push crosses the image in about a second, slower near the center), and the
+// mouse / lightgun buttons.
+static void cursor_step(const InputSystem* system, const InputController* controller, const InputDevice* device,
+                        const InputBindingSet* effective, uint32_t mice, float view_width, uint32_t port, InputFrame* frame,
+                        float* dx, float* dy, bool* absolute, float* ax, float* ay)
+{
+    if (device->kind == InputDeviceKind::mouse)
+    {
+        bool moved = device->motion_x != 0.0f || device->motion_y != 0.0f;
+        *dx += device->motion_x;
+        *dy += device->motion_y;
+        frame->mouse_moved[port] = frame->mouse_moved[port] || moved;
+        if (mice == 1 && device->has_position && system->view_width > 1.0f && system->view_height > 1.0f)
+        {
+            *absolute = true;
+            *ax = (device->position_x - system->view_x) / system->view_width * 2.0f - 1.0f;
+            *ay = (device->position_y - system->view_y) / system->view_height * 2.0f - 1.0f;
+        }
+    }
+    float x = set_value(effective, device, InputAction::cursor_right) - set_value(effective, device, InputAction::cursor_left);
+    float y = set_value(effective, device, InputAction::cursor_down) - set_value(effective, device, InputAction::cursor_up);
+    float length = std::sqrt(x * x + y * y);
+    float deadzone = controller->deadzone;
+    if (length > deadzone && length > 0.0f)
+    {
+        float clamped = length > 1.0f ? 1.0f : length;
+        float push = (clamped - deadzone) / (1.0f - deadzone);
+        float speed = push * push * view_width / 60.0f;   // pixels a frame
+        *dx += x / length * speed;
+        *dy += y / length * speed;
+        *absolute = false;   // the stick moves it from where it is
+    }
+    static const InputAction BUTTONS[6] = {InputAction::mouse_left, InputAction::mouse_right, InputAction::mouse_middle,
+                                           InputAction::mouse_wheel_up, InputAction::mouse_wheel_down, InputAction::gun_reload};
+    for (uint32_t b = 0; b < 6; b++)
+    {
+        uint32_t action = index_of(BUTTONS[b]);
+        if (set_value(effective, device, BUTTONS[b]) >= PRESSED_THRESHOLD && !controller->held_at_switch[action])
+        {
+            frame->mouse_buttons[port] = static_cast<uint8_t>(frame->mouse_buttons[port] | (1u << b));
+        }
+    }
+}
+
 uint16_t input_controller_pad_buttons(const InputSystem* system, uint32_t controller, uint32_t port)
 {
     if (controller >= system->controllers.size())
@@ -1380,6 +1490,14 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         system->keyboard_seated = false;
     }
 
+    // The first mouse on port 1, once it is there to put.
+    int32_t mouse_player = first_mouse(system);
+    if (!system->mouse_seated && mouse_player >= 0)
+    {
+        input_port_add(system, 0, static_cast<uint32_t>(mouse_player));
+        system->mouse_seated = true;
+    }
+
     // Devices that went away leave their ports; back on all of them when they return.
     for (size_t c = 0; c < system->controllers.size(); c++)
     {
@@ -1412,6 +1530,21 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
     }
     // Sticks so far, per port: the member pushing furthest wins.
     int32_t stick_reach[INPUT_PORT_COUNT][2] = {};
+    // The cursors: each port's members' motion (window pixels), and a mouse's
+    // position when there is one mouse only (several share the system's).
+    float cursor_dx[INPUT_PORT_COUNT] = {};
+    float cursor_dy[INPUT_PORT_COUNT] = {};
+    bool  cursor_absolute[INPUT_PORT_COUNT] = {};
+    float cursor_ax[INPUT_PORT_COUNT] = {};
+    float cursor_ay[INPUT_PORT_COUNT] = {};
+    uint32_t mice = 0;
+    for (size_t d = 0; d < system->devices.devices.size(); d++)
+    {
+        const InputDevice* device = &system->devices.devices[d];
+        mice += device->kind == InputDeviceKind::mouse && device->connected ? 1u : 0u;
+    }
+    float view_width = system->view_width > 1.0f ? system->view_width : 640.0f;
+    float view_height = system->view_height > 1.0f ? system->view_height : 480.0f;
 
     for (size_t c = 0; c < system->controllers.size(); c++)
     {
@@ -1558,7 +1691,8 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
                     for (uint32_t s = 0; s < INPUT_SOURCES_PER_ACTION; s++)
                     {
                         InputSource source = effective.sources[b][s];
-                        bool digital = source.type == InputSourceType::key || source.type == InputSourceType::button;
+                        bool digital = source.type == InputSourceType::key || source.type == InputSourceType::button ||
+                                       source.type == InputSourceType::mouse;
                         if (!digital || find_source(&seen, source) >= 0)
                         {
                             continue;
@@ -1676,6 +1810,9 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
                     }
                 }
                 frame->pad_buttons[play_port] = static_cast<uint16_t>(frame->pad_buttons[play_port] | buttons);
+                cursor_step(system, controller, device, &effective, mice, view_width, play_port, frame,
+                            &cursor_dx[play_port], &cursor_dy[play_port], &cursor_absolute[play_port], &cursor_ax[play_port],
+                            &cursor_ay[play_port]);
                 for (int s = 0; s < 2; s++)
                 {
                     uint32_t first = index_of(s == 0 ? InputAction::pad_left_x_plus : InputAction::pad_right_x_plus);
@@ -1707,5 +1844,34 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         {
             frame->gamepad_enable_alone = true;
         }
+    }
+
+    // The cursors: placed by a lone mouse, else moved; kept on the image
+    // when moved (a mouse outside it puts it off: a lightgun's reload).
+    for (uint32_t p = 0; p < INPUT_PORT_COUNT; p++)
+    {
+        if (cursor_absolute[p])
+        {
+            system->cursor_x[p] = cursor_ax[p];
+            system->cursor_y[p] = cursor_ay[p];
+            system->cursor_off[p] = cursor_ax[p] < -1.0f || cursor_ax[p] > 1.0f || cursor_ay[p] < -1.0f || cursor_ay[p] > 1.0f;
+        }
+        else if (cursor_dx[p] != 0.0f || cursor_dy[p] != 0.0f)
+        {
+            float x = system->cursor_x[p] + cursor_dx[p] / (view_width * 0.5f);
+            float y = system->cursor_y[p] + cursor_dy[p] / (view_height * 0.5f);
+            system->cursor_x[p] = x < -1.0f ? -1.0f : (x > 1.0f ? 1.0f : x);
+            system->cursor_y[p] = y < -1.0f ? -1.0f : (y > 1.0f ? 1.0f : y);
+            system->cursor_off[p] = false;
+        }
+        float cx = system->cursor_x[p] < -1.0f ? -1.0f : (system->cursor_x[p] > 1.0f ? 1.0f : system->cursor_x[p]);
+        float cy = system->cursor_y[p] < -1.0f ? -1.0f : (system->cursor_y[p] > 1.0f ? 1.0f : system->cursor_y[p]);
+        frame->cursor_x[p] = static_cast<int16_t>(cx * 32767.0f);
+        frame->cursor_y[p] = static_cast<int16_t>(cy * 32767.0f);
+        frame->cursor_off[p] = system->cursor_off[p];
+        float mdx = cursor_dx[p] < -32767.0f ? -32767.0f : (cursor_dx[p] > 32767.0f ? 32767.0f : cursor_dx[p]);
+        float mdy = cursor_dy[p] < -32767.0f ? -32767.0f : (cursor_dy[p] > 32767.0f ? 32767.0f : cursor_dy[p]);
+        frame->mouse_dx[p] = static_cast<int16_t>(mdx);
+        frame->mouse_dy[p] = static_cast<int16_t>(mdy);
     }
 }

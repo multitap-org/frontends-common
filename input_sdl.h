@@ -23,9 +23,17 @@ struct InputSdlGamepad
     uint16_t     rumble[2] = {};    // what it plays now: strong, weak
 };
 
+// A mouse SDL tells apart (by its id; 0 = the system's, when it doesn't).
+struct InputSdlMouse
+{
+    uint32_t which = 0;    // SDL_MouseID
+    uint32_t device = 0;   // InputDevices id
+};
+
 struct InputSdl
 {
     uint32_t                     keyboard_device = 0;
+    std::vector<InputSdlMouse>   mice;                      // each its own device (several: one cursor each)
     std::vector<InputSdlGamepad> gamepads;
     uint32_t                     last_active_device = 0;    // the last device a key or button came from
     uint32_t                     last_active_gamepad = 0;   // the last gamepad a button came from (0 = none yet)

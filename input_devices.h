@@ -10,7 +10,9 @@
 // Codes:
 //   keys     USB HID usage ids (SDL scancodes use the same numbers);
 //   buttons  InputButton, by position (SDL's gamepad layout);
-//   axes     InputAxis, -1..1 (triggers 0..1).
+//   axes     InputAxis, -1..1 (triggers 0..1);
+//   mouse    InputMouseButton (the wheel's two ways as taps), plus its
+//            motion and position (in window pixels).
 //
 // Short taps: a press that comes and goes between two frames is remembered
 // (tapped) until input_devices_end_frame(), so it still counts once.
@@ -24,7 +26,22 @@ enum class InputDeviceKind
 {
     keyboard,
     gamepad,
+    mouse,
 };
+
+enum class InputMouseButton
+{
+    left,
+    right,
+    middle,
+    x1,
+    x2,
+    wheel_up,     // the wheel: a tap per notch
+    wheel_down,
+    count,
+};
+
+constexpr uint32_t INPUT_MOUSE_BUTTON_COUNT = static_cast<uint32_t>(InputMouseButton::count);
 
 constexpr uint32_t INPUT_KEY_COUNT = 512;
 
@@ -102,6 +119,14 @@ struct InputDevice
 
     // The user's word on it: auto = ignored only if it looks fake.
     InputIgnore ignore = InputIgnore::automatic;
+
+    // A mouse: how far it moved since the last end_frame, and where it is
+    // in the window (when the system says; not while it is grabbed).
+    float   motion_x = 0.0f;
+    float   motion_y = 0.0f;
+    bool    has_position = false;
+    float   position_x = 0.0f;
+    float   position_y = 0.0f;
 };
 
 struct InputDevices
@@ -122,10 +147,15 @@ const InputDevice* input_devices_find_const(const InputDevices* devices, uint32_
 void input_devices_set_code(InputDevices* devices, uint32_t id, uint32_t code, bool down);
 void input_devices_set_axis(InputDevices* devices, uint32_t id, InputAxis axis, float value);
 
+// A mouse: motion (added up until end_frame), its position, a wheel notch.
+void input_devices_add_motion(InputDevices* devices, uint32_t id, float dx, float dy);
+void input_devices_set_position(InputDevices* devices, uint32_t id, float x, float y);
+void input_devices_wheel(InputDevices* devices, uint32_t id, bool up);
+
 // Releases everything a device holds (focus lost: the key-ups go elsewhere).
 void input_devices_release_all(InputDevices* devices, uint32_t id);
 
-// After the frame's input was read: forget the taps.
+// After the frame's input was read: forget the taps and the mice's motion.
 void input_devices_end_frame(InputDevices* devices);
 
 // A device whose axes sat at an extreme from the start and never moved.
@@ -145,6 +175,7 @@ enum class InputSourceType
     button,       // code = InputButton
     axis_plus,    // code = InputAxis, the positive half
     axis_minus,   // the negative half
+    mouse,        // code = InputMouseButton
 };
 
 struct InputSource

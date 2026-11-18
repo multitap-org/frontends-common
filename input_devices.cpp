@@ -130,6 +130,38 @@ void input_devices_end_frame(InputDevices* devices)
     for (size_t i = 0; i < devices->devices.size(); i++)
     {
         std::memset(devices->devices[i].tapped, 0, sizeof(devices->devices[i].tapped));
+        devices->devices[i].motion_x = 0.0f;
+        devices->devices[i].motion_y = 0.0f;
+    }
+}
+
+void input_devices_add_motion(InputDevices* devices, uint32_t id, float dx, float dy)
+{
+    InputDevice* device = input_devices_find(devices, id);
+    if (device != nullptr)
+    {
+        device->motion_x += dx;
+        device->motion_y += dy;
+    }
+}
+
+void input_devices_set_position(InputDevices* devices, uint32_t id, float x, float y)
+{
+    InputDevice* device = input_devices_find(devices, id);
+    if (device != nullptr)
+    {
+        device->has_position = true;
+        device->position_x = x;
+        device->position_y = y;
+    }
+}
+
+void input_devices_wheel(InputDevices* devices, uint32_t id, bool up)
+{
+    InputDevice* device = input_devices_find(devices, id);
+    if (device != nullptr)
+    {
+        device->tapped[static_cast<uint32_t>(up ? InputMouseButton::wheel_up : InputMouseButton::wheel_down)] = 1;
     }
 }
 
@@ -162,6 +194,7 @@ float input_source_value(const InputDevice* device, InputSource source)
     {
     case InputSourceType::key:
     case InputSourceType::button:
+    case InputSourceType::mouse:
         if (source.code >= INPUT_KEY_COUNT)
         {
             return 0.0f;
@@ -238,6 +271,10 @@ const char* input_key_name(uint32_t code)
     return nullptr;
 }
 
+static const char* const MOUSE_BUTTON_NAMES[INPUT_MOUSE_BUTTON_COUNT] = {
+    "left", "right", "middle", "x1", "x2", "wheel_up", "wheel_down",
+};
+
 static bool format_control(InputSource source, char* out, size_t out_size)
 {
     int written = 0;
@@ -266,6 +303,13 @@ static bool format_control(InputSource source, char* out, size_t out_size)
         written = std::snprintf(out, out_size, "axis:%s%c", AXIS_NAMES[source.code],
                                 source.type == InputSourceType::axis_plus ? '+' : '-');
         break;
+    case InputSourceType::mouse:
+        if (source.code >= INPUT_MOUSE_BUTTON_COUNT)
+        {
+            return false;
+        }
+        written = std::snprintf(out, out_size, "mouse:%s", MOUSE_BUTTON_NAMES[source.code]);
+        break;
     case InputSourceType::none:
         written = std::snprintf(out, out_size, "none");
         break;
@@ -279,7 +323,8 @@ bool input_source_format(InputSource source, char* out, size_t out_size)
     {
         return false;
     }
-    bool digital = source.type == InputSourceType::key || source.type == InputSourceType::button;
+    bool digital = source.type == InputSourceType::key || source.type == InputSourceType::button ||
+                   source.type == InputSourceType::mouse;
     if (digital && source.percent > 0 && source.percent < 100)
     {
         size_t length = std::strlen(out);
@@ -338,6 +383,19 @@ static bool parse_control(const char* text, InputSource* source)
             if (std::strcmp(BUTTON_NAMES[i], text + 7) == 0)
             {
                 source->type = InputSourceType::button;
+                source->code = static_cast<uint16_t>(i);
+                return true;
+            }
+        }
+        return false;
+    }
+    if (std::strncmp(text, "mouse:", 6) == 0)
+    {
+        for (uint32_t i = 0; i < INPUT_MOUSE_BUTTON_COUNT; i++)
+        {
+            if (std::strcmp(MOUSE_BUTTON_NAMES[i], text + 6) == 0)
+            {
+                source->type = InputSourceType::mouse;
                 source->code = static_cast<uint16_t>(i);
                 return true;
             }
