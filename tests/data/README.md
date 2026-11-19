@@ -13,4 +13,8 @@ Made with 7-Zip 26.00, from a folder holding those files:
 7z a -t7z -m0=PPMd -mtm=off -mtc=off -mta=off ppmd.7z 'Game One.sfc' sub empty.txt
 ```
 
-The test makes its zip itself with miniz's writer.
+`files.zip` holds the same three files plus an explicit `sub/` folder entry and
+`win\file.txt` (a Windows separator stored in the name), made with Python's
+zipfile (deflate; UTF-8 name flag set for the non-ASCII name).
+
+`ppmd.7z` checks that PPMd, which isn't built, is refused cleanly.

@@ -38,33 +38,36 @@ if(MATH_LIBRARY)
     target_link_libraries(multitap_dep_libsamplerate PUBLIC ${MATH_LIBRARY})
 endif()
 
-# miniz (deps/, MIT): zip archives (archive.cpp). Its headers include a
-# CMake-generated miniz_export.h: ours, in the build folder (a static
-# library: nothing to export).
+# miniz (deps/, MIT): reading zip archives (archive.cpp), nothing else:
+# inflate + the zip reader. miniz.c only adds its CRC-32 and allocation
+# helpers (the zlib-style API, deflate and zip writing are switched off).
+# Its headers include a CMake-generated miniz_export.h: ours, in the build
+# folder (a static library: nothing to export).
 set(MINIZ_CONFIG "${CMAKE_CURRENT_BINARY_DIR}/miniz_config")
 file(WRITE "${MINIZ_CONFIG}/miniz_export.h" "#pragma once\n#define MINIZ_EXPORT\n")
 add_library(multitap_dep_miniz STATIC
     "${MULTITAP_DEPS_DIR}/miniz/miniz.c"
-    "${MULTITAP_DEPS_DIR}/miniz/miniz_tdef.c"
     "${MULTITAP_DEPS_DIR}/miniz/miniz_tinfl.c"
     "${MULTITAP_DEPS_DIR}/miniz/miniz_zip.c")
 target_include_directories(multitap_dep_miniz SYSTEM PUBLIC "${MULTITAP_DEPS_DIR}/miniz" "${MINIZ_CONFIG}")
-# Large files (zip64) without miniz's own fopen: we read through SDL.
-target_compile_definitions(multitap_dep_miniz PUBLIC MINIZ_NO_STDIO MINIZ_NO_TIME)
+# No stdio either: archives are read through SDL (UTF-8 paths on Windows).
+# (MINIZ_NO_DEFLATE_APIS also turns off zip writing, miniz.h does that itself.)
+target_compile_definitions(multitap_dep_miniz PUBLIC MINIZ_NO_STDIO MINIZ_NO_TIME MINIZ_NO_ZLIB_APIS
+                           MINIZ_NO_DEFLATE_APIS)
 
-# 7-Zip's C code (deps/7zip/C, the LZMA SDK, public domain): 7z archives
-# (archive.cpp). Only the decoder, the same files as 7-Zip's own 7zdec
-# sample (C/Util/7z/makefile.gcc), without its asm.
+# 7-Zip's C code (deps/7zip/C, the LZMA SDK, public domain): reading 7z
+# archives (archive.cpp). Only the decoder: LZMA, LZMA2 and the BCJ / BCJ2 /
+# delta filters (7zDec.c needs Bra*, Delta and CpuArch for those). No PPMd
+# (rare in 7z files people make: refused as unsupported), no asm, no encoder.
 set(SEVEN_ZIP_C "${MULTITAP_DEPS_DIR}/7zip/C")
 add_library(multitap_dep_7z STATIC
     "${SEVEN_ZIP_C}/7zArcIn.c" "${SEVEN_ZIP_C}/7zBuf.c" "${SEVEN_ZIP_C}/7zBuf2.c"
     "${SEVEN_ZIP_C}/7zCrc.c" "${SEVEN_ZIP_C}/7zCrcOpt.c" "${SEVEN_ZIP_C}/7zDec.c"
     "${SEVEN_ZIP_C}/7zStream.c" "${SEVEN_ZIP_C}/Bcj2.c" "${SEVEN_ZIP_C}/Bra.c"
     "${SEVEN_ZIP_C}/Bra86.c" "${SEVEN_ZIP_C}/BraIA64.c" "${SEVEN_ZIP_C}/CpuArch.c"
-    "${SEVEN_ZIP_C}/Delta.c" "${SEVEN_ZIP_C}/Lzma2Dec.c" "${SEVEN_ZIP_C}/LzmaDec.c"
-    "${SEVEN_ZIP_C}/Ppmd7.c" "${SEVEN_ZIP_C}/Ppmd7Dec.c")
+    "${SEVEN_ZIP_C}/Delta.c" "${SEVEN_ZIP_C}/Lzma2Dec.c" "${SEVEN_ZIP_C}/LzmaDec.c")
 target_include_directories(multitap_dep_7z SYSTEM PUBLIC "${SEVEN_ZIP_C}")
-target_compile_definitions(multitap_dep_7z PRIVATE Z7_PPMD_SUPPORT Z7_EXTRACT_ONLY)
+target_compile_definitions(multitap_dep_7z PRIVATE Z7_EXTRACT_ONLY)
 # Decoding runs when a game loads; optimized even in Debug builds, like libsamplerate.
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(multitap_dep_miniz PRIVATE -O2)
@@ -206,8 +209,7 @@ if(MULTITAP_BUILD_TESTS)
     set_tests_properties(frontend_rate_control PROPERTIES
                          FAIL_REGULAR_EXPRESSION "ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
-    # Zip and 7z: a zip the test makes itself (miniz's writer), 7z files
-    # made with 7-Zip (tests/data/README.md says how).
+    # Zip and 7z files in tests/data (README.md there says how they were made).
     add_executable(frontend_archive_test tests/archive_test.cpp)
     target_link_libraries(frontend_archive_test PRIVATE frontend_common multitap_dep_miniz)
     multitap_set_project_flags(frontend_archive_test)

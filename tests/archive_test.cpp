@@ -1,6 +1,7 @@
-// Checks archive.h: zip (made here with miniz's writer) and 7z (LZMA2 solid
-// and PPMd, tests/data, see its README.md) list the same three files, extract
-// them byte for byte, and refuse missing names, folders and damaged files.
+// Checks archive.h with tests/data (its README.md says how the files were
+// made): a zip and an LZMA2 solid 7z list the same three files and extract
+// them byte for byte; missing names, folders, damaged files and a PPMd 7z
+// (not built) are refused.
 //
 // Usage: frontend_archive_test <tests/data folder> <scratch folder>
 // Exit code 0 = all checks passed. Each failure is printed.
@@ -52,31 +53,6 @@ static std::vector<uint8_t> second_data()
 static uint32_t crc_of(const std::vector<uint8_t>* data)
 {
     return static_cast<uint32_t>(mz_crc32(MZ_CRC32_INIT, data->data(), data->size()));
-}
-
-// The zip: the three files, an explicit "sub/" folder entry and a name
-// stored with a Windows separator.
-static bool make_zip(const char* path)
-{
-    std::vector<uint8_t> game = game_data();
-    std::vector<uint8_t> second = second_data();
-    const char* windows_text = "backslash";
-
-    mz_zip_archive zip = {};
-    mz_zip_zero_struct(&zip);
-    bool ok = mz_zip_writer_init_heap(&zip, 0, 0) != 0;
-    ok = ok && mz_zip_writer_add_mem(&zip, GAME_NAME, game.data(), game.size(), MZ_DEFAULT_COMPRESSION) != 0;
-    ok = ok && mz_zip_writer_add_mem(&zip, "sub/", nullptr, 0, 0) != 0;
-    ok = ok && mz_zip_writer_add_mem(&zip, SECOND_NAME, second.data(), second.size(), MZ_DEFAULT_COMPRESSION) != 0;
-    ok = ok && mz_zip_writer_add_mem(&zip, EMPTY_NAME, nullptr, 0, 0) != 0;
-    ok = ok && mz_zip_writer_add_mem(&zip, "win\\file.txt", windows_text, std::strlen(windows_text), 0) != 0;
-    void* buffer = nullptr;
-    size_t size = 0;
-    ok = ok && mz_zip_writer_finalize_heap_archive(&zip, &buffer, &size) != 0;
-    mz_zip_writer_end(&zip);
-    ok = ok && host_fs_write_file(path, buffer, size);
-    mz_free(buffer);
-    return ok;
 }
 
 static const ArchiveEntry* find_entry(const std::vector<ArchiveEntry>* entries, const char* name)
@@ -216,8 +192,7 @@ int main(int argc, char** argv)
     test_format();
     test_split();
 
-    std::string zip = std::string(scratch) + "/made.zip";
-    check(make_zip(zip.c_str()), "zip: made with miniz");
+    std::string zip = std::string(data_folder) + "/files.zip";
     check_archive(zip.c_str(), scratch, "zip");
     std::vector<ArchiveEntry> entries;
     archive_list(zip.c_str(), &entries);
@@ -225,8 +200,12 @@ int main(int argc, char** argv)
 
     std::string lzma2 = std::string(data_folder) + "/lzma2_solid.7z";
     check_archive(lzma2.c_str(), scratch, "7z_lzma2");
+    // PPMd isn't built: the archive lists (its header is LZMA), extraction fails cleanly.
     std::string ppmd = std::string(data_folder) + "/ppmd.7z";
-    check_archive(ppmd.c_str(), scratch, "7z_ppmd");
+    check(archive_list(ppmd.c_str(), &entries), "7z_ppmd: lists");
+    std::string ppmd_out = std::string(scratch) + "/ppmd_game";
+    check(!archive_extract(ppmd.c_str(), GAME_NAME, ppmd_out.c_str()) && !host_fs_exists(ppmd_out.c_str()),
+          "7z_ppmd: extraction refused, nothing written");
 
     test_damaged(data_folder, scratch);
 

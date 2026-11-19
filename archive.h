@@ -16,8 +16,9 @@
 //   zip  miniz (MIT). Names are taken as stored: UTF-8 when the archive says
 //        so, else usually plain ASCII (old CP437 names with accents show as
 //        they are).
-//   7z   7-Zip's C code, the LZMA SDK (public domain): LZMA, LZMA2, PPMd and
-//        the BCJ / delta filters, which covers 7z files as people make them.
+//   7z   7-Zip's C code, the LZMA SDK (public domain): LZMA, LZMA2 and the
+//        BCJ / delta filters, which covers 7z files as people make them
+//        (7-Zip's defaults). PPMd isn't built: such files are refused.
 //        A file is extracted by decoding its whole solid block into memory
 //        (the SDK has no streaming 7z decoder), so a block larger than
 //        ARCHIVE_7Z_MAX_BLOCK is refused with a message instead of
