@@ -98,6 +98,11 @@ enum class InputAction
     mouse_wheel_up,
     mouse_wheel_down,
     gun_reload,         // the lightgun aimed off the screen and fired
+    gun_aux_a,          // the lightgun's other buttons (the core names them: the Super Scope's CURSOR, TURBO, PAUSE)
+    gun_aux_b,
+    gun_aux_c,
+    gun_start,
+    gun_select,
     // Interface.
     ui_up,
     ui_down,
@@ -391,6 +396,11 @@ enum class InputFrameMouse
     wheel_up,
     wheel_down,
     reload,
+    gun_aux_a,
+    gun_aux_b,
+    gun_aux_c,
+    gun_start,
+    gun_select,
 };
 
 struct InputFrame
@@ -410,7 +420,7 @@ struct InputFrame
     // Each port's cursor, for the core's mouse, pointer and lightgun.
     int16_t  mouse_dx[INPUT_PORT_COUNT] = {};       // moved this frame (window pixels)
     int16_t  mouse_dy[INPUT_PORT_COUNT] = {};
-    uint8_t  mouse_buttons[INPUT_PORT_COUNT] = {};  // bit = InputFrameMouse
+    uint16_t mouse_buttons[INPUT_PORT_COUNT] = {};  // bit = InputFrameMouse
     int16_t  cursor_x[INPUT_PORT_COUNT] = {};       // -0x7fff..0x7fff across the image
     int16_t  cursor_y[INPUT_PORT_COUNT] = {};
     bool     cursor_off[INPUT_PORT_COUNT] = {};     // off the image
@@ -432,6 +442,12 @@ void input_default_bindings_for(const InputDevice* device, InputBindingSet* set)
 // (every keyboard part, or the gamepad's GUID), else one with the defaults.
 // Nothing if it already has controllers (a device coming back).
 void input_add_controllers_for_device(InputSystem* system, uint32_t device_id);
+
+// A controller as the UI names it: its name with its number among the
+// controllers of that name, always ("KEYBOARD 1", "SHIELD 1", "SHIELD 2"),
+// so it doesn't change when another one comes. A name that already ends in a
+// number (a keyboard part the user named) is shown as it is.
+std::string input_controller_label(const InputSystem* system, uint32_t controller);
 
 // The profile id of a controller ("keyboard", "keyboard.2", or the GUID).
 std::string input_controller_profile_id(const InputSystem* system, uint32_t controller);

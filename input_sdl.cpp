@@ -126,11 +126,10 @@ static uint32_t mouse_device(InputSdl* sdl, InputSystem* system, SDL_MouseID whi
             break;
         }
     }
-    const char* name = which != 0 ? SDL_GetMouseNameForID(which) : nullptr;
+    // "Mouse" (numbered by the UI): the system's names say little ("Virtual core pointer").
     InputSdlMouse mouse = {};
     mouse.which = which;
-    mouse.device = input_devices_add(&system->devices, InputDeviceKind::mouse, "mouse",
-                                     name != nullptr && name[0] != '\0' ? name : "Mouse");
+    mouse.device = input_devices_add(&system->devices, InputDeviceKind::mouse, "mouse", "Mouse");
     input_add_controllers_for_device(system, mouse.device);
     sdl->mice.push_back(mouse);
     return mouse.device;

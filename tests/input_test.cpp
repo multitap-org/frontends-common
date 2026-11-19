@@ -1165,6 +1165,7 @@ static void test_cursor()
     InputFrame out = {};
     frame(system, 0, &out);
     check(input_port_has(system, 0, 0) && input_controller_profile_id(system, 0) == "mouse", "cursor: the mouse is on port 1");
+    check(input_controller_label(system, 0) == "Mouse 1", "names: always numbered");
 
     // The only mouse: its position on the image, its motion, its buttons.
     input_devices_add_motion(&system->devices, mouse, 12.0f, -3.0f);
@@ -1205,6 +1206,10 @@ static void test_cursor()
     }
     check(out.cursor_x[1] > 16000 && out.cursor_y[1] == 0 && out.mouse_dx[1] > 0, "cursor: a stick moves it");
     check((out.mouse_buttons[1] & (1u << static_cast<uint32_t>(InputFrameMouse::left))) != 0, "cursor: R2 is the click / trigger");
+    input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::start), true);
+    frame(system, 430, &out);
+    check((out.mouse_buttons[1] & (1u << static_cast<uint32_t>(InputFrameMouse::gun_start))) != 0, "cursor: the lightgun's START");
+    input_devices_set_code(&system->devices, pad, static_cast<uint32_t>(InputButton::start), false);
     for (int f = 0; f < 60; f++)
     {
         frame(system, 500 + static_cast<uint64_t>(f) * 16, &out);
@@ -1218,6 +1223,7 @@ static void test_cursor()
     uint32_t second = input_devices_add(&system->devices, InputDeviceKind::mouse, "mouse", "Mouse 2");
     input_add_controllers_for_device(system, second);
     check(second != mouse && system->controllers.size() == 3, "cursor: a second mouse, its own controller");
+    check(input_controller_label(system, 2) == "Mouse 2" && input_controller_label(system, 1) == "Pad 1", "names: the second of a name");
     input_leave(system, 2);
     input_port_add(system, 2, 2);
     input_devices_add_motion(&system->devices, second, 32.0f, 0.0f);

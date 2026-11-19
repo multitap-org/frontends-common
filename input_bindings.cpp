@@ -20,7 +20,7 @@ static const char* const ACTION_NAMES[INPUT_ACTION_COUNT] = {
     "pad.left_x+", "pad.left_x-", "pad.left_y+", "pad.left_y-",
     "pad.right_x+", "pad.right_x-", "pad.right_y+", "pad.right_y-", "pad.turbo",
     "cursor.right", "cursor.left", "cursor.down", "cursor.up", "mouse.left", "mouse.right", "mouse.middle",
-    "mouse.wheel_up", "mouse.wheel_down", "gun.reload",
+    "mouse.wheel_up", "mouse.wheel_down", "gun.reload", "gun.aux_a", "gun.aux_b", "gun.aux_c", "gun.start", "gun.select",
     "ui.up", "ui.down", "ui.left", "ui.right", "ui.accept", "ui.back", "ui.page_left", "ui.page_right", "ui.open_menu",
     "hotkey.enable", "hotkey.menu", "hotkey.quick_menu", "hotkey.save_state", "hotkey.load_state",
     "hotkey.fast_forward", "hotkey.grab_mouse",
@@ -77,7 +77,7 @@ bool input_action_parse(const char* name, InputAction* action)
 
 bool input_action_is_pad(InputAction action)
 {
-    return index_of(action) <= index_of(InputAction::gun_reload);   // (the port's: RetroPad, turbo, cursor)
+    return index_of(action) <= index_of(InputAction::gun_select);   // (the port's: RetroPad, turbo, cursor, lightgun)
 }
 
 bool input_action_is_hotkey(InputAction action)
@@ -248,6 +248,8 @@ void input_default_keyboard_bindings(InputBindingSet* set)
     input_bind(set, InputAction::pad_r2, key(HID_R));
     input_bind(set, InputAction::pad_start, key(HID_RETURN));
     input_bind(set, InputAction::pad_select, key(HID_RIGHT_SHIFT));
+    input_bind(set, InputAction::gun_start, key(HID_RETURN));
+    input_bind(set, InputAction::gun_select, key(HID_RIGHT_SHIFT));
 
     input_bind(set, InputAction::ui_up, key(HID_UP));
     input_bind(set, InputAction::ui_down, key(HID_DOWN));
@@ -342,6 +344,11 @@ void input_default_gamepad_bindings(InputBindingSet* set)
     input_bind(set, InputAction::mouse_left, pad_axis(InputAxis::right_trigger, true));
     input_bind(set, InputAction::mouse_right, pad_axis(InputAxis::left_trigger, true));
     input_bind(set, InputAction::gun_reload, pad_axis(InputAxis::left_trigger, true));
+    input_bind(set, InputAction::gun_aux_a, pad_button(InputButton::south));
+    input_bind(set, InputAction::gun_aux_b, pad_button(InputButton::east));
+    input_bind(set, InputAction::gun_aux_c, pad_button(InputButton::west));
+    input_bind(set, InputAction::gun_start, pad_button(InputButton::start));
+    input_bind(set, InputAction::gun_select, pad_button(InputButton::back));
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +372,9 @@ void input_default_mouse_bindings(InputBindingSet* set)
     input_bind(set, InputAction::mouse_wheel_up, mouse_button(InputMouseButton::wheel_up));
     input_bind(set, InputAction::mouse_wheel_down, mouse_button(InputMouseButton::wheel_down));
     input_bind(set, InputAction::gun_reload, mouse_button(InputMouseButton::right));
+    input_bind(set, InputAction::gun_aux_a, mouse_button(InputMouseButton::middle));
+    input_bind(set, InputAction::gun_aux_b, mouse_button(InputMouseButton::x1));
+    input_bind(set, InputAction::gun_aux_c, mouse_button(InputMouseButton::x2));
 }
 
 void input_default_bindings(InputDeviceKind kind, InputBindingSet* set)
@@ -508,6 +518,28 @@ void input_add_controllers_for_device(InputSystem* system, uint32_t device_id)
         }
         add_from_profile(system, device, profile);
     }
+}
+
+std::string input_controller_label(const InputSystem* system, uint32_t controller)
+{
+    if (controller >= system->controllers.size())
+    {
+        return "";
+    }
+    const std::string& name = system->controllers[controller].name;
+    size_t space = name.find_last_of(' ');
+    bool numbered = space != std::string::npos && space + 1 < name.size() &&
+                    name.find_first_not_of("0123456789", space + 1) == std::string::npos;
+    if (numbered)
+    {
+        return name;
+    }
+    uint32_t number = 1;
+    for (uint32_t c = 0; c < controller; c++)
+    {
+        number += system->controllers[c].name == name ? 1u : 0u;
+    }
+    return name + " " + std::to_string(number);
 }
 
 std::string input_controller_profile_id(const InputSystem* system, uint32_t controller)
@@ -1433,14 +1465,16 @@ static void cursor_step(const InputSystem* system, const InputController* contro
         *dy += y / length * speed;
         *absolute = false;   // the stick moves it from where it is
     }
-    static const InputAction BUTTONS[6] = {InputAction::mouse_left, InputAction::mouse_right, InputAction::mouse_middle,
-                                           InputAction::mouse_wheel_up, InputAction::mouse_wheel_down, InputAction::gun_reload};
-    for (uint32_t b = 0; b < 6; b++)
+    static const InputAction BUTTONS[11] = {InputAction::mouse_left,   InputAction::mouse_right,      InputAction::mouse_middle,
+                                            InputAction::mouse_wheel_up, InputAction::mouse_wheel_down, InputAction::gun_reload,
+                                            InputAction::gun_aux_a,    InputAction::gun_aux_b,        InputAction::gun_aux_c,
+                                            InputAction::gun_start,    InputAction::gun_select};
+    for (uint32_t b = 0; b < 11; b++)
     {
         uint32_t action = index_of(BUTTONS[b]);
         if (set_value(effective, device, BUTTONS[b]) >= PRESSED_THRESHOLD && !controller->held_at_switch[action])
         {
-            frame->mouse_buttons[port] = static_cast<uint8_t>(frame->mouse_buttons[port] | (1u << b));
+            frame->mouse_buttons[port] = static_cast<uint16_t>(frame->mouse_buttons[port] | (1u << b));
         }
     }
 }
