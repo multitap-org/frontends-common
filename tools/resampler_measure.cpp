@@ -5,8 +5,9 @@
 // Usage: resampler_measure [--quick]
 //
 // Candidates: SDL3's audio stream (today's), libsamplerate (fastest / medium /
-// best sinc), speexdsp (quality 3 / 5 / 10), libretro-common's sinc (normal /
-// highest, C path: no SIMD, so its speed is understated).
+// best sinc), libretro-common's sinc (normal / highest, C path: no SIMD, so its
+// speed is understated). speexdsp (quality 3 / 5 / 10) was measured too
+// (2026-11-13) and left out afterwards to drop the dependency.
 //
 // For each rate conversion (32040 -> 48000 like a SNES, 44100 -> 48000,
 // 48000 -> 44100), stereo, fed in 1024-frame blocks like a frontend does:
@@ -30,7 +31,6 @@
 #include <SDL3/SDL.h>
 
 #include "samplerate.h"
-#include "speex_resampler.h"
 #include "audio/audio_resampler.h"
 
 extern "C" retro_resampler_t sinc_resampler;   // libretro-common's sinc driver
@@ -39,7 +39,6 @@ enum class Kind
 {
     sdl,
     libsamplerate,
-    speex,
     libretro_sinc,
 };
 
@@ -55,9 +54,6 @@ static const Candidate CANDIDATES[] = {
     {"libsamplerate fastest", Kind::libsamplerate, SRC_SINC_FASTEST},
     {"libsamplerate medium", Kind::libsamplerate, SRC_SINC_MEDIUM_QUALITY},
     {"libsamplerate best", Kind::libsamplerate, SRC_SINC_BEST_QUALITY},
-    {"speexdsp q3", Kind::speex, 3},
-    {"speexdsp q5", Kind::speex, 5},
-    {"speexdsp q10", Kind::speex, 10},
     {"libretro sinc normal", Kind::libretro_sinc, RESAMPLER_QUALITY_NORMAL},
     {"libretro sinc highest", Kind::libretro_sinc, RESAMPLER_QUALITY_HIGHEST},
 };
@@ -133,37 +129,6 @@ static bool run_libsamplerate(int quality, int in_rate, int out_rate, const std:
     return true;
 }
 
-static bool run_speex(int quality, int in_rate, int out_rate, const std::vector<float>* in, std::vector<float>* out)
-{
-    int error = 0;
-    SpeexResamplerState* state = speex_resampler_init(2, static_cast<spx_uint32_t>(in_rate),
-                                                      static_cast<spx_uint32_t>(out_rate), quality, &error);
-    if (state == nullptr)
-    {
-        return false;
-    }
-    speex_resampler_skip_zeros(state);
-    std::vector<float> chunk(BLOCK_FRAMES * 8);
-    size_t frames = in->size() / 2;
-    for (size_t start = 0; start < frames; start += BLOCK_FRAMES)
-    {
-        size_t count = frames - start < BLOCK_FRAMES ? frames - start : BLOCK_FRAMES;
-        const float* input = in->data() + start * 2;
-        spx_uint32_t remaining = static_cast<spx_uint32_t>(count);
-        while (remaining > 0)
-        {
-            spx_uint32_t used = remaining;
-            spx_uint32_t produced = static_cast<spx_uint32_t>(chunk.size() / 2);
-            speex_resampler_process_interleaved_float(state, input, &used, chunk.data(), &produced);
-            out->insert(out->end(), chunk.begin(), chunk.begin() + produced * 2);
-            input += used * 2;
-            remaining -= used;
-        }
-    }
-    speex_resampler_destroy(state);
-    return true;
-}
-
 static bool run_libretro_sinc(int quality, int in_rate, int out_rate, const std::vector<float>* in,
                               std::vector<float>* out)
 {
@@ -202,8 +167,6 @@ static bool run(const Candidate* candidate, int in_rate, int out_rate, const std
         return run_sdl(in_rate, out_rate, in, out);
     case Kind::libsamplerate:
         return run_libsamplerate(candidate->quality, in_rate, out_rate, in, out);
-    case Kind::speex:
-        return run_speex(candidate->quality, in_rate, out_rate, in, out);
     case Kind::libretro_sinc:
         return run_libretro_sinc(candidate->quality, in_rate, out_rate, in, out);
     }

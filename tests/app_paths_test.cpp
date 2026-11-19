@@ -53,6 +53,7 @@ static void test_xdg_rule()
     check(paths.saves == "/home/ana/.local/share/piccolo/saves", "saves subfolder");
     check(paths.states == "/home/ana/.local/share/piccolo/states", "states subfolder");
     check(paths.system == "/home/ana/.local/share/piccolo/system", "system subfolder");
+    check(paths.cache == "/home/ana/.local/share/piccolo/cache", "cache subfolder");
 }
 
 static void write_text(const std::string& path, const char* text)

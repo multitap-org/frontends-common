@@ -1,13 +1,13 @@
 # frontend_common: code shared by every frontend (piccolo, libretro-test-frontend,
-# piccolette, later Multitap): Vulkan instance/device, swapchain, frame
+# piccoletto, later Multitap): Vulkan instance/device, swapchain, frame
 # rendering, Dear ImGui glue, settings, audio output, the input router.
 # Plain static library, no frontend-specific code. Links host_common for its
 # file helpers (host_fs: atomic writes); the other direction (hosts using
 # frontend or SDL code) is what's not allowed.
 # A library: it doesn't build alone. The frontend adds hosts-common first,
 # defines imgui, SDL3::SDL3 and Vulkan::Vulkan, and sets MULTITAP_DEPS_DIR to
-# its deps folder (libsamplerate, gamemode; for the resampler tool also
-# speexdsp and libretro-common), built here from their sources.
+# its deps folder (libsamplerate, gamemode, miniz, 7zip; for the resampler
+# tool also libretro-common), built here from their sources.
 
 multitap_require(frontends-common host_common imgui SDL3::SDL3 Vulkan::Vulkan VAR:MULTITAP_DEPS_DIR)
 
@@ -36,6 +36,49 @@ endif()
 find_library(MATH_LIBRARY m)
 if(MATH_LIBRARY)
     target_link_libraries(multitap_dep_libsamplerate PUBLIC ${MATH_LIBRARY})
+endif()
+
+# Zip and 7z reading (archive.cpp, content_cache.cpp): only for frontends
+# that have deps/miniz and deps/7zip (piccoletto runs no games: it doesn't).
+set(MULTITAP_ARCHIVES OFF)
+if(EXISTS "${MULTITAP_DEPS_DIR}/miniz/miniz_zip.c" AND EXISTS "${MULTITAP_DEPS_DIR}/7zip/C/7zDec.c")
+    set(MULTITAP_ARCHIVES ON)
+
+    # miniz (deps/, MIT): reading zip archives (archive.cpp), nothing else:
+    # inflate + the zip reader. miniz.c only adds its CRC-32 and allocation
+    # helpers (the zlib-style API, deflate and zip writing are switched off).
+    # Its headers include a CMake-generated miniz_export.h: ours, in the build
+    # folder (a static library: nothing to export).
+    set(MINIZ_CONFIG "${CMAKE_CURRENT_BINARY_DIR}/miniz_config")
+    file(WRITE "${MINIZ_CONFIG}/miniz_export.h" "#pragma once\n#define MINIZ_EXPORT\n")
+    add_library(multitap_dep_miniz STATIC
+        "${MULTITAP_DEPS_DIR}/miniz/miniz.c"
+        "${MULTITAP_DEPS_DIR}/miniz/miniz_tinfl.c"
+        "${MULTITAP_DEPS_DIR}/miniz/miniz_zip.c")
+    target_include_directories(multitap_dep_miniz SYSTEM PUBLIC "${MULTITAP_DEPS_DIR}/miniz" "${MINIZ_CONFIG}")
+    # No stdio either: archives are read through SDL (UTF-8 paths on Windows).
+    # (MINIZ_NO_DEFLATE_APIS also turns off zip writing, miniz.h does that itself.)
+    target_compile_definitions(multitap_dep_miniz PUBLIC MINIZ_NO_STDIO MINIZ_NO_TIME MINIZ_NO_ZLIB_APIS
+                               MINIZ_NO_DEFLATE_APIS)
+
+    # 7-Zip's C code (deps/7zip/C, the LZMA SDK, public domain): reading 7z
+    # archives (archive.cpp). Only the decoder: LZMA, LZMA2 and the BCJ / BCJ2 /
+    # delta filters (7zDec.c needs Bra*, Delta and CpuArch for those). No PPMd
+    # (rare in 7z files people make: refused as unsupported), no asm, no encoder.
+    set(SEVEN_ZIP_C "${MULTITAP_DEPS_DIR}/7zip/C")
+    add_library(multitap_dep_7z STATIC
+        "${SEVEN_ZIP_C}/7zArcIn.c" "${SEVEN_ZIP_C}/7zBuf.c" "${SEVEN_ZIP_C}/7zBuf2.c"
+        "${SEVEN_ZIP_C}/7zCrc.c" "${SEVEN_ZIP_C}/7zCrcOpt.c" "${SEVEN_ZIP_C}/7zDec.c"
+        "${SEVEN_ZIP_C}/7zStream.c" "${SEVEN_ZIP_C}/Bcj2.c" "${SEVEN_ZIP_C}/Bra.c"
+        "${SEVEN_ZIP_C}/Bra86.c" "${SEVEN_ZIP_C}/BraIA64.c" "${SEVEN_ZIP_C}/CpuArch.c"
+        "${SEVEN_ZIP_C}/Delta.c" "${SEVEN_ZIP_C}/Lzma2Dec.c" "${SEVEN_ZIP_C}/LzmaDec.c")
+    target_include_directories(multitap_dep_7z SYSTEM PUBLIC "${SEVEN_ZIP_C}")
+    target_compile_definitions(multitap_dep_7z PRIVATE Z7_EXTRACT_ONLY)
+    # Decoding runs when a game loads; optimized even in Debug builds, like libsamplerate.
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(multitap_dep_miniz PRIVATE -O2)
+        target_compile_options(multitap_dep_7z PRIVATE -O2)
+    endif()
 endif()
 
 add_library(frontend_common STATIC
@@ -89,6 +132,10 @@ endif()
 
 target_include_directories(frontend_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(frontend_common PUBLIC imgui SDL3::SDL3 Vulkan::Vulkan host_common multitap_dep_libsamplerate)
+if(MULTITAP_ARCHIVES)
+    target_sources(frontend_common PRIVATE archive.cpp content_cache.cpp)
+    target_link_libraries(frontend_common PRIVATE multitap_dep_miniz multitap_dep_7z)
+endif()
 
 # Vulkan validation layers + debug messenger are enabled in Debug builds only.
 target_compile_definitions(frontend_common PRIVATE $<$<CONFIG:Debug>:MULTITAP_VULKAN_VALIDATION=1>)
@@ -182,37 +229,59 @@ if(MULTITAP_BUILD_TESTS)
     set_tests_properties(frontend_rate_control PROPERTIES
                          FAIL_REGULAR_EXPRESSION "ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
-    # Resampler comparison (plan-milestones, milestone 2): every candidate is
-    # built here from deps/ (read-only, without our warning flags) only for
-    # this tool. The one chosen moves into the real audio path later.
-    set(MULTITAP_DEPS "${MULTITAP_DEPS_DIR}")
+    if(MULTITAP_ARCHIVES)
+        # Zip and 7z files in tests/data (README.md there says how they were made).
+        add_executable(frontend_archive_test tests/archive_test.cpp)
+        target_link_libraries(frontend_archive_test PRIVATE frontend_common multitap_dep_miniz)
+        multitap_set_project_flags(frontend_archive_test)
+        add_test(NAME frontend_archive
+                 COMMAND frontend_archive_test "${CMAKE_CURRENT_SOURCE_DIR}/tests/data" "${CMAKE_CURRENT_BINARY_DIR}/archive_test")
+        set_tests_properties(frontend_archive PROPERTIES
+                             PASS_REGULAR_EXPRESSION "archive: all checks passed"
+                             FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
-    # speexdsp: only its resampler, built standalone with our own symbol prefix.
-    add_library(multitap_dep_speex_resampler STATIC "${MULTITAP_DEPS}/speexdsp/libspeexdsp/resample.c")
-    target_include_directories(multitap_dep_speex_resampler SYSTEM PUBLIC "${MULTITAP_DEPS}/speexdsp/include/speex")
-    target_include_directories(multitap_dep_speex_resampler PRIVATE "${MULTITAP_DEPS}/speexdsp/libspeexdsp")
-    target_compile_definitions(multitap_dep_speex_resampler PUBLIC OUTSIDE_SPEEX RANDOM_PREFIX=multitap_speex
-                               PRIVATE FLOATING_POINT EXPORT=)
+        add_executable(frontend_content_cache_test tests/content_cache_test.cpp)
+        target_link_libraries(frontend_content_cache_test PRIVATE frontend_common)
+        multitap_set_project_flags(frontend_content_cache_test)
+        set(CONTENT_CACHE_SCRATCH "${CMAKE_CURRENT_BINARY_DIR}/content_cache_test")
+        add_test(NAME frontend_content_cache_clean COMMAND ${CMAKE_COMMAND} -E rm -rf "${CONTENT_CACHE_SCRATCH}")
+        set_tests_properties(frontend_content_cache_clean PROPERTIES FIXTURES_SETUP content_cache_scratch)
+        add_test(NAME frontend_content_cache
+                 COMMAND frontend_content_cache_test "${CMAKE_CURRENT_SOURCE_DIR}/tests/data" "${CONTENT_CACHE_SCRATCH}")
+        set_tests_properties(frontend_content_cache PROPERTIES
+                             FIXTURES_REQUIRED content_cache_scratch
+                             PASS_REGULAR_EXPRESSION "content cache: all checks passed"
+                             FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    endif()
 
-    # libretro-common's sinc driver (MIT-style license in the file itself):
-    # its C path only (no SIMD mask), plus the aligned allocator it needs.
-    add_library(multitap_dep_retro_sinc STATIC
-        "${MULTITAP_DEPS}/libretro-common/audio/resampler/drivers/sinc_resampler.c"
-        "${MULTITAP_DEPS}/libretro-common/memmap/memalign.c")
-    target_include_directories(multitap_dep_retro_sinc SYSTEM PUBLIC "${MULTITAP_DEPS}/libretro-common/include")
+    # Only for frontends that have deps/libretro-common (piccoletto doesn't:
+    # it runs no cores).
+    if(EXISTS "${MULTITAP_DEPS_DIR}/libretro-common/audio/resampler/drivers/sinc_resampler.c")
+        # Resampler comparison (plan-milestones, milestone 2): every candidate is
+        # built here from deps/ (read-only, without our warning flags) only for
+        # this tool. The one chosen moves into the real audio path later.
+        set(MULTITAP_DEPS "${MULTITAP_DEPS_DIR}")
 
-    foreach(dep multitap_dep_speex_resampler multitap_dep_retro_sinc)
-        if(MATH_LIBRARY)
-            target_link_libraries(${dep} PUBLIC ${MATH_LIBRARY})
-        endif()
-    endforeach()
+        # libretro-common's sinc driver (MIT-style license in the file itself):
+        # its C path only (no SIMD mask), plus the aligned allocator it needs.
+        add_library(multitap_dep_retro_sinc STATIC
+            "${MULTITAP_DEPS}/libretro-common/audio/resampler/drivers/sinc_resampler.c"
+            "${MULTITAP_DEPS}/libretro-common/memmap/memalign.c")
+        target_include_directories(multitap_dep_retro_sinc SYSTEM PUBLIC "${MULTITAP_DEPS}/libretro-common/include")
 
-    add_executable(resampler_measure tools/resampler_measure.cpp)
-    target_link_libraries(resampler_measure PRIVATE SDL3::SDL3 multitap_dep_libsamplerate
-                          multitap_dep_speex_resampler multitap_dep_retro_sinc)
-    multitap_set_project_flags(resampler_measure)
-    add_test(NAME frontend_resampler_measure COMMAND resampler_measure --quick)
-    set_tests_properties(frontend_resampler_measure PROPERTIES
-                         PASS_REGULAR_EXPRESSION "all candidates ran"
-                         FAIL_REGULAR_EXPRESSION "FAILED|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+        foreach(dep multitap_dep_retro_sinc)
+            if(MATH_LIBRARY)
+                target_link_libraries(${dep} PUBLIC ${MATH_LIBRARY})
+            endif()
+        endforeach()
+
+        add_executable(resampler_measure tools/resampler_measure.cpp)
+        target_link_libraries(resampler_measure PRIVATE SDL3::SDL3 multitap_dep_libsamplerate
+                              multitap_dep_retro_sinc)
+        multitap_set_project_flags(resampler_measure)
+        add_test(NAME frontend_resampler_measure COMMAND resampler_measure --quick)
+        set_tests_properties(frontend_resampler_measure PROPERTIES
+                             PASS_REGULAR_EXPRESSION "all candidates ran"
+                             FAIL_REGULAR_EXPRESSION "FAILED|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    endif()
 endif()
