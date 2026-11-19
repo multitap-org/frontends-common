@@ -27,6 +27,8 @@
 //   --controllers  with --connect: what the core expects on each port
 //   --port-device PAD DEVICE  with --connect: change the device on the port
 //               this device's PAD plays on (DEVICE: a RETRO_DEVICE_* number)
+//   --unpair    with --connect: once in, unpair (the host forgets us too)
+//   --forget N  forget paired host N (0 = the first) here only, without connecting
 //   --dir DIR   where net_probe keeps its device key and paired devices
 //               (net_probe_identity.cfg, net_probe_devices.cfg; default ".")
 //
@@ -140,6 +142,9 @@ static int run_listener(uint16_t port, const char* name, const std::string* dir)
                 break;
             case NetAccessEventType::closed:
                 std::printf("\"%s\" disconnected\n", device);
+                break;
+            case NetAccessEventType::unpaired:
+                std::printf("\"%s\" unpaired itself (forgotten here too)\n", event.name);
                 break;
             case NetAccessEventType::pairing_failed:
                 std::printf("pairing failed; %s\n", access->pairing_open ? "new code" : "pairing closed");
@@ -258,6 +263,7 @@ enum class ContentAsk
     action,
     controllers,
     port_device,
+    unpair,
 };
 
 struct ContentProbe
@@ -604,11 +610,22 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
             {
                 print_message(event.channel, event.data, event.size);
             }
+            else if (event.type == NetClientEventType::unpaired)
+            {
+                std::printf("the host unpaired us (forgotten here too)\n");
+            }
             else if (event.type == NetClientEventType::closed)
             {
                 std::printf("the host closed the connection\n");
                 done = true;
             }
+        }
+        // --unpair: right away once in.
+        if (content->ask == ContentAsk::unpair && ready && !action_released)
+        {
+            std::printf("unpairing from \"%s\"\n", client->host_name);
+            net_client_unpair(client, static_cast<uint32_t>(client->device));
+            action_released = true;
         }
         // --port-device: a second in, so a --retropad pad has joined a port.
         if (content->ask == ContentAsk::port_device && ready && !action_released &&
@@ -733,6 +750,7 @@ int main(int argc, char** argv)
     std::string dir = ".";
     bool pad = false;
     bool retropad = false;
+    int forget = -1;
     ContentProbe content;
     for (int i = 1; i < argc; i++)
     {
@@ -788,6 +806,14 @@ int main(int argc, char** argv)
             content.pad_index = static_cast<uint32_t>(std::atoi(argv[++i]));
             content.device = static_cast<uint32_t>(std::atoi(argv[++i]));
         }
+        else if (std::strcmp(argv[i], "--unpair") == 0)
+        {
+            content.ask = ContentAsk::unpair;
+        }
+        else if (std::strcmp(argv[i], "--forget") == 0 && has_value)
+        {
+            forget = std::atoi(argv[++i]);
+        }
         else if (std::strcmp(argv[i], "--settings") == 0)
         {
             content.ask = ContentAsk::settings;
@@ -833,6 +859,20 @@ int main(int argc, char** argv)
     if (!net_init())
     {
         return 1;
+    }
+    if (forget >= 0)
+    {
+        // Only our list: nothing is sent (the offline case of unpairing).
+        NetKeypair identity;
+        NetClient* client = new NetClient();
+        std::string devices = dir + "/net_probe_devices.cfg";
+        bool ok = load_identity(&dir, &identity) && net_client_create(client, &identity, "NET PROBE", devices.c_str()) &&
+                  net_client_unpair(client, static_cast<uint32_t>(forget));
+        std::printf(ok ? "forgotten here\n" : "no such host\n");
+        net_client_destroy(client);
+        delete client;
+        net_shutdown();
+        return ok ? 0 : 1;
     }
     int result = 0;
     if (listen != nullptr)
