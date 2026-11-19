@@ -9,15 +9,23 @@
 // frontend gives (e.g. next to the program, the program's data folder), then
 // by the system's own search. Only the functions used here are looked up.
 //
-// Per frame, a chain goes:
+// A chain has two stages, each a librashader filter chain from its own
+// preset; either may be empty. The frontend decides what they are (piccolo:
+// stage 0 = its pass 0, the picture controls at the core's resolution; stage
+// 1 = the chosen preset, or its own final scale). Two chains instead of one
+// merged preset: a preset is used as it is, never rewritten. Per frame:
 //
 //   core texture (streaming, bigger than the frame)
 //     -> input: a nearest blit of the shown part (crop included), exact size,
 //        B8G8R8A8. librashader samples its whole input image, so it must not
 //        contain anything outside the picture. Also converts R5G6B5 etc.
-//     -> librashader's passes (its own images, recorded into our command buffer)
+//     -> stage 0 -> middle: the input's size (only when both stages are used)
+//     -> stage 1
 //     -> output: the picture's size in window pixels, B8G8R8A8
 //     -> drawn 1:1 through ImGui, like picture.h (behind the UI or in a window)
+//
+// Stage 1's presets see stage 0's output as their Original (and its history),
+// which is what they should shade: the picture with its colors corrected.
 //
 // Each frame, in this order (same places as picture.h's):
 //   shader_chain_prepare()   while building the UI (may recreate the images,
@@ -82,31 +90,48 @@ struct ShaderChainImage
     uint64_t       texture_id   = 0;   // ImGui id (the output only)
 };
 
-struct ShaderChain
+constexpr uint32_t SHADER_CHAIN_STAGES = 2;
+
+struct ShaderStage
 {
     libra_vk_filter_chain_t chain = nullptr;
     std::string preset_path;     // the loaded preset ("" = none)
     std::string failed_path;     // the last preset that failed to load (not retried every frame)
+    uint64_t frame_count = 0;    // frames rendered through it (shaders animate with it)
+};
+
+struct ShaderChain
+{
+    ShaderStage stages[SHADER_CHAIN_STAGES] = {};
 
     ShaderChainImage input  = {};
+    ShaderChainImage middle = {};
     ShaderChainImage output = {};
-    uint64_t frame_count = 0;    // frames rendered through this chain (shaders animate with it)
 
     // What this frame draws (set by shader_chain_prepare).
     ViewportResult viewport = {};
     bool           ready    = false;
 };
 
-// Loads `preset_path` (a .slangp) into a new chain, replacing the current one.
-// Waits for the GPU. False (logged) if the library isn't loaded or the preset
-// fails; the chain is then empty and the picture is drawn without it.
-bool shader_chain_load(ShaderChain* chain, const ShaderLibrary* library, const VulkanContext* context,
+// Loads `preset_path` (a .slangp) into stage `stage` (0 or 1), replacing what
+// it had. Waits for the GPU. False (logged) if the library isn't loaded or the
+// preset fails; the stage is then empty (and failed_path set).
+bool shader_chain_load(ShaderChain* chain, const ShaderLibrary* library, const VulkanContext* context, uint32_t stage,
                        const char* preset_path);
+
+// Empties one stage. Waits for the GPU when it had a chain.
+void shader_chain_clear(ShaderChain* chain, const ShaderLibrary* library, const VulkanContext* context, uint32_t stage);
 
 // Frees everything. Waits for the GPU. Safe on an empty chain.
 void shader_chain_destroy(ShaderChain* chain, const ShaderLibrary* library, const VulkanContext* context);
 
+// True when any stage has a chain.
 bool shader_chain_active(const ShaderChain* chain);
+
+// Sets a preset parameter (#pragma parameter) of one stage. False if the
+// stage is empty or has no parameter by that name.
+bool shader_chain_set_param(ShaderChain* chain, const ShaderLibrary* library, uint32_t stage, const char* name,
+                            float value);
 
 // Decides what this frame draws. False: draw with picture.h instead (no
 // chain, no picture yet, or the images couldn't be made).
@@ -116,7 +141,7 @@ bool shader_chain_prepare(ShaderChain* chain, const VulkanContext* context, cons
 // Adds the output to `draw_list`; the viewport's (0, 0) is at (origin_x, origin_y).
 void shader_chain_draw(const ShaderChain* chain, ImDrawList* draw_list, float origin_x, float origin_y);
 
-// Records the input copy and the chain's passes into `command_buffer`
+// Records the input copy and the stages' passes into `command_buffer`
 // (outside a rendering pass, after the source's upload).
 void shader_chain_record(ShaderChain* chain, const ShaderLibrary* library, VkCommandBuffer command_buffer,
                          StreamingTexture* source);

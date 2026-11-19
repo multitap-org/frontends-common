@@ -239,40 +239,65 @@ static bool create_image(ShaderChainImage* image, const VulkanContext* context, 
 }
 
 // ---------------------------------------------------------------------------
-// The chain
+// The stages
 // ---------------------------------------------------------------------------
 
 bool shader_chain_active(const ShaderChain* chain)
 {
-    return chain->chain != nullptr;
+    for (uint32_t i = 0; i < SHADER_CHAIN_STAGES; i++)
+    {
+        if (chain->stages[i].chain != nullptr)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void shader_chain_clear(ShaderChain* chain, const ShaderLibrary* library, const VulkanContext* context, uint32_t stage)
+{
+    ShaderStage* target = &chain->stages[stage];
+    if (target->chain != nullptr)
+    {
+        vkDeviceWaitIdle(context->device);   // earlier frames may still be running its passes
+        if (library->loaded)
+        {
+            library->vk_filter_chain_free(&target->chain);
+        }
+    }
+    *target = ShaderStage{};
 }
 
 void shader_chain_destroy(ShaderChain* chain, const ShaderLibrary* library, const VulkanContext* context)
 {
-    if (chain->chain != nullptr || chain->input.image != VK_NULL_HANDLE || chain->output.image != VK_NULL_HANDLE)
+    if (shader_chain_active(chain) || chain->input.image != VK_NULL_HANDLE || chain->middle.image != VK_NULL_HANDLE ||
+        chain->output.image != VK_NULL_HANDLE)
     {
         vkDeviceWaitIdle(context->device);   // earlier frames may still be using them
     }
-    if (chain->chain != nullptr && library->loaded)
+    for (uint32_t i = 0; i < SHADER_CHAIN_STAGES; i++)
     {
-        library->vk_filter_chain_free(&chain->chain);
+        if (chain->stages[i].chain != nullptr && library->loaded)
+        {
+            library->vk_filter_chain_free(&chain->stages[i].chain);
+        }
     }
     destroy_image(&chain->input, context);
+    destroy_image(&chain->middle, context);
     destroy_image(&chain->output, context);
-    std::string failed_path = chain->failed_path;
     *chain = ShaderChain{};
-    chain->failed_path = failed_path;
 }
 
-bool shader_chain_load(ShaderChain* chain, const ShaderLibrary* library, const VulkanContext* context,
+bool shader_chain_load(ShaderChain* chain, const ShaderLibrary* library, const VulkanContext* context, uint32_t stage,
                        const char* preset_path)
 {
-    shader_chain_destroy(chain, library, context);
+    shader_chain_clear(chain, library, context, stage);
     if (!library->loaded)
     {
         return false;
     }
-    chain->failed_path = preset_path;   // until it works
+    ShaderStage* target = &chain->stages[stage];
+    target->failed_path = preset_path;   // until it works
 
     libra_shader_preset_t preset = nullptr;
     libra_error_t error = library->preset_create(preset_path, &preset);
@@ -307,10 +332,51 @@ bool shader_chain_load(ShaderChain* chain, const ShaderLibrary* library, const V
         log_error(library, error, preset_path);
         return false;
     }
-    chain->chain = created;
-    chain->preset_path = preset_path;
-    chain->failed_path.clear();
-    SDL_LogInfo(SDL_LOG_CATEGORY_GPU, "Shader preset: %s", preset_path);
+    target->chain = created;
+    target->preset_path = preset_path;
+    target->failed_path.clear();
+    SDL_LogInfo(SDL_LOG_CATEGORY_GPU, "Shader stage %u: %s", static_cast<unsigned>(stage), preset_path);
+    return true;
+}
+
+bool shader_chain_set_param(ShaderChain* chain, const ShaderLibrary* library, uint32_t stage, const char* name,
+                            float value)
+{
+    ShaderStage* target = &chain->stages[stage];
+    if (target->chain == nullptr || !library->loaded)
+    {
+        return false;
+    }
+    libra_error_t error = library->vk_filter_chain_set_param(&target->chain, name, value);
+    if (error != nullptr)
+    {
+        log_error(library, error, name);
+        return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Per frame
+// ---------------------------------------------------------------------------
+
+// (Re)creates `image` when its size isn't `width` x `height`. Waits for the
+// GPU only then (a resize, a crop change, a core changing resolution).
+static bool ensure_image(ShaderChainImage* image, const VulkanContext* context, uint32_t width, uint32_t height,
+                         VkImageUsageFlags usage, bool for_imgui, const char* name)
+{
+    if (image->image != VK_NULL_HANDLE && image->width == width && image->height == height)
+    {
+        return true;
+    }
+    vkDeviceWaitIdle(context->device);
+    destroy_image(image, context);
+    if (!create_image(image, context, width, height, usage, for_imgui, name))
+    {
+        destroy_image(image, context);
+        return false;
+    }
+    SDL_LogInfo(SDL_LOG_CATEGORY_GPU, "%s: %ux%u", name, width, height);
     return true;
 }
 
@@ -318,7 +384,7 @@ bool shader_chain_prepare(ShaderChain* chain, const VulkanContext* context, cons
                           const ViewportResult* viewport)
 {
     chain->ready = false;
-    if (chain->chain == nullptr || !source->has_content || viewport->width == 0 || viewport->height == 0 ||
+    if (!shader_chain_active(chain) || !source->has_content || viewport->width == 0 || viewport->height == 0 ||
         viewport->source_width == 0 || viewport->source_height == 0)
     {
         return false;
@@ -340,36 +406,31 @@ bool shader_chain_prepare(ShaderChain* chain, const VulkanContext* context, cons
         return false;
     }
 
-    // Recreated only on a size change (waits for the GPU: a resize, a crop
-    // change, a core changing resolution).
-    if (chain->input.width != viewport->source_width || chain->input.height != viewport->source_height)
+    // TRANSFER_SRC on the images a stage reads: librashader copies its input
+    // for presets that read earlier frames (OriginalHistory) and for mipmaps.
+    VkImageUsageFlags input_usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                    VK_IMAGE_USAGE_SAMPLED_BIT;
+    if (!ensure_image(&chain->input, context, viewport->source_width, viewport->source_height, input_usage, false,
+                      "Shader chain input"))
     {
-        vkDeviceWaitIdle(context->device);
-        destroy_image(&chain->input, context);
-        // TRANSFER_SRC: librashader copies its input for presets that read
-        // earlier frames (OriginalHistory) and for mipmaps.
-        VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                                  VK_IMAGE_USAGE_SAMPLED_BIT;
-        if (!create_image(&chain->input, context, viewport->source_width, viewport->source_height, usage, false,
-                          "shader chain input"))
+        return false;
+    }
+    bool both = chain->stages[0].chain != nullptr && chain->stages[1].chain != nullptr;
+    if (both)
+    {
+        VkImageUsageFlags middle_usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                         VK_IMAGE_USAGE_SAMPLED_BIT;
+        if (!ensure_image(&chain->middle, context, viewport->source_width, viewport->source_height, middle_usage,
+                          false, "Shader chain middle"))
         {
-            destroy_image(&chain->input, context);
             return false;
         }
     }
-    if (chain->output.width != viewport->width || chain->output.height != viewport->height)
+    VkImageUsageFlags output_usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    if (!ensure_image(&chain->output, context, viewport->width, viewport->height, output_usage, true,
+                      "Shader chain output"))
     {
-        vkDeviceWaitIdle(context->device);
-        destroy_image(&chain->output, context);
-        VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-        if (!create_image(&chain->output, context, viewport->width, viewport->height, usage, true,
-                          "shader chain output"))
-        {
-            destroy_image(&chain->output, context);
-            return false;
-        }
-        SDL_LogInfo(SDL_LOG_CATEGORY_GPU, "Shader chain: %ux%u -> %ux%u", viewport->source_width,
-                    viewport->source_height, viewport->width, viewport->height);
+        return false;
     }
     chain->viewport = *viewport;
     chain->ready = true;
@@ -395,15 +456,101 @@ void shader_chain_draw(const ShaderChain* chain, ImDrawList* draw_list, float or
     draw_list->AddCallback(platform_io.DrawCallback_SetSamplerLinear, nullptr);
 }
 
+// One image into the layout a stage writes: COLOR_ATTACHMENT_OPTIMAL
+// (librashader's requirement for its output). Earlier frames may still be
+// sampling it (ImGui's draw of the output, stage 1 reading the middle) or
+// copying it (librashader's history of the middle): reads only, so an
+// execution dependency is enough. It's fully redrawn: old contents discarded.
+static VkImageMemoryBarrier2 to_render_target(ShaderChainImage* image)
+{
+    bool first_use = image->layout == VK_IMAGE_LAYOUT_UNDEFINED;
+    VkImageMemoryBarrier2 barrier = {
+        .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+        .srcStageMask  = first_use ? VK_PIPELINE_STAGE_2_NONE
+                                   : (VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT),
+        .srcAccessMask = VK_ACCESS_2_NONE,
+        .dstStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT,
+        .oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED,
+        .newLayout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image         = image->image,
+        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+    };
+    image->layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    return barrier;
+}
+
+// A stage's written image back to sampled, for whoever reads it next: stage 1
+// (fragment shaders; librashader may also copy it: transfer) or ImGui.
+static void render_target_to_sampled(VkCommandBuffer command_buffer, ShaderChainImage* image)
+{
+    VkImageMemoryBarrier2 barrier = {
+        .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+        .srcStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+        .dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+        .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_TRANSFER_READ_BIT,
+        .oldLayout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image         = image->image,
+        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+    };
+    VkDependencyInfo dependency = {
+        .sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .imageMemoryBarrierCount = 1,
+        .pImageMemoryBarriers    = &barrier,
+    };
+    vkCmdPipelineBarrier2(command_buffer, &dependency);
+    image->layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+}
+
+// Records one stage's passes from `from` (sampled) into `to` (render target).
+static void run_stage(ShaderStage* stage, const ShaderLibrary* library, VkCommandBuffer command_buffer,
+                      const ShaderChainImage* from, const ShaderChainImage* to)
+{
+    libra_image_vk_t input = {
+        .handle = from->image,
+        .format = SHADER_CHAIN_FORMAT,
+        .width  = from->width,
+        .height = from->height,
+    };
+    libra_image_vk_t output = {
+        .handle = to->image,
+        .format = SHADER_CHAIN_FORMAT,
+        .width  = to->width,
+        .height = to->height,
+    };
+    frame_vk_opt_t frame_options = {};
+    frame_options.version = SHADER_LIBRARY_API_VERSION;
+    frame_options.frame_direction = 1;
+    frame_options.total_subframes = 1;
+    frame_options.current_subframe = 1;
+    libra_error_t error = library->vk_filter_chain_frame(&stage->chain, command_buffer, stage->frame_count, input,
+                                                         output, nullptr, nullptr, &frame_options);
+    if (error != nullptr)
+    {
+        // Logged and dropped: the image keeps old contents for this frame.
+        log_error(library, error, "frame");
+    }
+    stage->frame_count++;
+}
+
 void shader_chain_record(ShaderChain* chain, const ShaderLibrary* library, VkCommandBuffer command_buffer,
                          StreamingTexture* source)
 {
-    if (!chain->ready || chain->chain == nullptr || !source->has_content ||
+    if (!chain->ready || !shader_chain_active(chain) || !source->has_content ||
         source->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
     {
         return;
     }
     const ViewportResult* viewport = &chain->viewport;
+    ShaderStage* first = chain->stages[0].chain != nullptr ? &chain->stages[0] : &chain->stages[1];
+    ShaderStage* second = chain->stages[0].chain != nullptr && chain->stages[1].chain != nullptr ? &chain->stages[1]
+                                                                                                 : nullptr;
 
     // 1. Copy the shown part of the source into the input.
     // Source: its last writer was this or an earlier frame's upload copy; its
@@ -468,13 +615,11 @@ void shader_chain_record(ShaderChain* chain, const ShaderLibrary* library, VkCom
                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_NEAREST);
 
     // 2. Source back to sampled (the next upload waits on the fragment stage,
-    // which this chains after the blit). Input readable by the chain (its
-    // passes sample it; it may copy it). Output writable as a color
-    // attachment (librashader's requirement); earlier frames' ImGui draws may
-    // still be sampling it, and it's fully redrawn, so its contents are
-    // discarded.
-    bool output_first_use = chain->output.layout == VK_IMAGE_LAYOUT_UNDEFINED;
-    VkImageMemoryBarrier2 before_chain[3] = {
+    // which this chains after the blit). Input readable by the first stage
+    // (its passes sample it; it may copy it). The first stage's target
+    // writable.
+    ShaderChainImage* first_target = second != nullptr ? &chain->middle : &chain->output;
+    VkImageMemoryBarrier2 before_first[3] = {
         {
             .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
             .srcStageMask  = VK_PIPELINE_STAGE_2_BLIT_BIT,
@@ -501,77 +646,31 @@ void shader_chain_record(ShaderChain* chain, const ShaderLibrary* library, VkCom
             .image         = chain->input.image,
             .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
         },
-        {
-            .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-            .srcStageMask  = output_first_use ? VK_PIPELINE_STAGE_2_NONE : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-            .srcAccessMask = VK_ACCESS_2_NONE,
-            .dstStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-            .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT,
-            .oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED,
-            .newLayout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image         = chain->output.image,
-            .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
-        },
+        to_render_target(first_target),
     };
-    VkDependencyInfo before_chain_dependency = {
+    VkDependencyInfo before_first_dependency = {
         .sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
         .imageMemoryBarrierCount = 3,
-        .pImageMemoryBarriers    = before_chain,
+        .pImageMemoryBarriers    = before_first,
     };
-    vkCmdPipelineBarrier2(command_buffer, &before_chain_dependency);
+    vkCmdPipelineBarrier2(command_buffer, &before_first_dependency);
     source->layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     chain->input.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    chain->output.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-    // 3. The passes. librashader orders its own intermediate images; it
-    // leaves the output in COLOR_ATTACHMENT_OPTIMAL with no barrier after.
-    libra_image_vk_t input = {
-        .handle = chain->input.image,
-        .format = SHADER_CHAIN_FORMAT,
-        .width  = chain->input.width,
-        .height = chain->input.height,
-    };
-    libra_image_vk_t output = {
-        .handle = chain->output.image,
-        .format = SHADER_CHAIN_FORMAT,
-        .width  = chain->output.width,
-        .height = chain->output.height,
-    };
-    frame_vk_opt_t frame_options = {};
-    frame_options.version = SHADER_LIBRARY_API_VERSION;
-    frame_options.frame_direction = 1;
-    frame_options.total_subframes = 1;
-    frame_options.current_subframe = 1;
-    libra_error_t error = library->vk_filter_chain_frame(&chain->chain, command_buffer, chain->frame_count, input,
-                                                         output, nullptr, nullptr, &frame_options);
-    if (error != nullptr)
+    // 3. The stages. librashader orders its own intermediate images; it
+    // leaves its target in COLOR_ATTACHMENT_OPTIMAL with no barrier after.
+    run_stage(first, library, command_buffer, &chain->input, first_target);
+    render_target_to_sampled(command_buffer, first_target);
+    if (second != nullptr)
     {
-        // Logged and dropped: the output keeps old contents for this frame.
-        log_error(library, error, "frame");
+        VkImageMemoryBarrier2 before_second = to_render_target(&chain->output);
+        VkDependencyInfo before_second_dependency = {
+            .sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .imageMemoryBarrierCount = 1,
+            .pImageMemoryBarriers    = &before_second,
+        };
+        vkCmdPipelineBarrier2(command_buffer, &before_second_dependency);
+        run_stage(second, library, command_buffer, &chain->middle, &chain->output);
+        render_target_to_sampled(command_buffer, &chain->output);
     }
-    chain->frame_count++;
-
-    // 4. Output to sampled, for ImGui's draw in the rendering pass after this.
-    VkImageMemoryBarrier2 after_chain = {
-        .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-        .srcStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-        .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-        .dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-        .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-        .oldLayout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .image         = chain->output.image,
-        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
-    };
-    VkDependencyInfo after_chain_dependency = {
-        .sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .imageMemoryBarrierCount = 1,
-        .pImageMemoryBarriers    = &after_chain,
-    };
-    vkCmdPipelineBarrier2(command_buffer, &after_chain_dependency);
-    chain->output.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }
