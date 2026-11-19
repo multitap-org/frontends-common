@@ -111,7 +111,7 @@ add_library(frontend_common STATIC
 # GameMode (deps/gamemode, BSD-3-Clause): only its client header, which
 # loads libgamemode at run time (nothing linked). Linux only; elsewhere a
 # stub, chosen here instead of #if in the code. (The Android build says
-# "Linux" to CMake, see frontends/piccolo/android/cmake: hence NOT ANDROID.)
+# "Linux" to CMake, see hosts-common's cmake/android-toolchain.cmake: hence NOT ANDROID.)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID)
     target_sources(frontend_common PRIVATE game_mode_linux.cpp)
     target_include_directories(frontend_common SYSTEM PRIVATE "${MULTITAP_DEPS_DIR}/gamemode/lib")
@@ -136,13 +136,16 @@ multitap_set_project_flags(frontend_common)
 # and .pot (see tools/strings_generator.cpp).
 # Cross builds (Android) can't run what they build: there it's an imported
 # program, built for the build machine first (piccolo's android/build-apk.sh).
+# A frontend without translated strings (piccoletto, for now) doesn't pass
+# it: then there's no generator target.
 if(ANDROID)
-    if(NOT MULTITAP_STRINGS_GENERATOR OR NOT EXISTS "${MULTITAP_STRINGS_GENERATOR}")
-        message(FATAL_ERROR "Android build: set MULTITAP_STRINGS_GENERATOR to multitap_strings_generator built "
-                            "for this machine (build-apk.sh does it)")
+    if(MULTITAP_STRINGS_GENERATOR)
+        if(NOT EXISTS "${MULTITAP_STRINGS_GENERATOR}")
+            message(FATAL_ERROR "MULTITAP_STRINGS_GENERATOR: ${MULTITAP_STRINGS_GENERATOR} doesn't exist")
+        endif()
+        add_executable(multitap_strings_generator IMPORTED GLOBAL)
+        set_target_properties(multitap_strings_generator PROPERTIES IMPORTED_LOCATION "${MULTITAP_STRINGS_GENERATOR}")
     endif()
-    add_executable(multitap_strings_generator IMPORTED GLOBAL)
-    set_target_properties(multitap_strings_generator PROPERTIES IMPORTED_LOCATION "${MULTITAP_STRINGS_GENERATOR}")
 else()
     add_executable(multitap_strings_generator tools/strings_generator.cpp)
     target_link_libraries(multitap_strings_generator PRIVATE host_common)
