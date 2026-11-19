@@ -114,6 +114,22 @@ if(MULTITAP_HAVE_ENET)
     endif()
 endif()
 
+# Monocypher (deps/monocypher, BSD-2-Clause or CC0): X25519, ChaCha20-Poly1305
+# and BLAKE2b for frontend_net's Noise handshake. One C file; built without
+# our warning flags. Optional like ENet.
+set(MULTITAP_MONOCYPHER "${MULTITAP_DEPS_DIR}/monocypher")
+if(MULTITAP_HAVE_ENET AND NOT EXISTS "${MULTITAP_MONOCYPHER}/src/monocypher.c")
+    message(FATAL_ERROR "deps/enet is there but deps/monocypher isn't: frontend_net needs both")
+endif()
+if(MULTITAP_HAVE_ENET)
+    add_library(multitap_dep_monocypher STATIC "${MULTITAP_MONOCYPHER}/src/monocypher.c")
+    target_include_directories(multitap_dep_monocypher SYSTEM PUBLIC "${MULTITAP_MONOCYPHER}/src")
+    # Optimized even in Debug builds: handshakes and every packet go through it.
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(multitap_dep_monocypher PRIVATE -O2)
+    endif()
+endif()
+
 add_library(frontend_common STATIC
     vk_context.cpp
     vk_swapchain.cpp
@@ -170,9 +186,18 @@ if(MULTITAP_HAVE_ENET)
     add_library(frontend_net STATIC
         net_discovery.cpp
         net_host.cpp
+        net_noise.cpp
+        net_link.cpp
+        net_session.cpp
     )
+    if(WIN32)
+        target_sources(frontend_net PRIVATE net_random_windows.cpp)
+        target_link_libraries(frontend_net PRIVATE bcrypt)
+    else()
+        target_sources(frontend_net PRIVATE net_random_posix.cpp)
+    endif()
     target_include_directories(frontend_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(frontend_net PUBLIC host_common PRIVATE multitap_dep_enet)
+    target_link_libraries(frontend_net PUBLIC host_common PRIVATE multitap_dep_enet multitap_dep_monocypher)
     multitap_set_project_flags(frontend_net)
 
     # net_probe: LAN discovery on a real network, without a frontend.
@@ -333,5 +358,14 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
     add_test(NAME frontend_net COMMAND frontend_net_test)
     set_tests_properties(frontend_net PROPERTIES
                          PASS_REGULAR_EXPRESSION "all net checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    # The Noise handshake against the official test vector, then failures.
+    add_executable(frontend_net_noise_test tests/net_noise_test.cpp)
+    target_link_libraries(frontend_net_noise_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_net_noise_test)
+    add_test(NAME frontend_net_noise COMMAND frontend_net_noise_test)
+    set_tests_properties(frontend_net_noise PROPERTIES
+                         PASS_REGULAR_EXPRESSION "all noise checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 endif()
