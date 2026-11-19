@@ -122,8 +122,11 @@ if(MULTITAP_HAVE_ENET AND NOT EXISTS "${MULTITAP_MONOCYPHER}/src/monocypher.c")
     message(FATAL_ERROR "deps/enet is there but deps/monocypher isn't: frontend_net needs both")
 endif()
 if(MULTITAP_HAVE_ENET)
-    add_library(multitap_dep_monocypher STATIC "${MULTITAP_MONOCYPHER}/src/monocypher.c")
-    target_include_directories(multitap_dep_monocypher SYSTEM PUBLIC "${MULTITAP_MONOCYPHER}/src")
+    # optional/: SHA-512, for CPace (pairing).
+    add_library(multitap_dep_monocypher STATIC "${MULTITAP_MONOCYPHER}/src/monocypher.c"
+                "${MULTITAP_MONOCYPHER}/src/optional/monocypher-ed25519.c")
+    target_include_directories(multitap_dep_monocypher SYSTEM PUBLIC "${MULTITAP_MONOCYPHER}/src"
+                               "${MULTITAP_MONOCYPHER}/src/optional")
     # Optimized even in Debug builds: handshakes and every packet go through it.
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(multitap_dep_monocypher PRIVATE -O2)
@@ -182,13 +185,19 @@ multitap_set_project_flags(frontend_common)
 if(MULTITAP_HAVE_ENET)
     # frontend_net: the network layer (one UDP port: ENet + our own datagrams,
     # see net_host.h). Its own library so frontends without networking don't
-    # link ENet. No SDL: a headless frontend can use it as it is.
+    # link ENet. It calls no SDL itself (it links frontend_common only for
+    # settings_file).
     add_library(frontend_net STATIC
         net_discovery.cpp
         net_host.cpp
         net_noise.cpp
         net_link.cpp
         net_session.cpp
+        net_cpace.cpp
+        net_trust.cpp
+        net_pairing.cpp
+        net_access.cpp
+        net_client.cpp
     )
     if(WIN32)
         target_sources(frontend_net PRIVATE net_random_windows.cpp)
@@ -197,7 +206,8 @@ if(MULTITAP_HAVE_ENET)
         target_sources(frontend_net PRIVATE net_random_posix.cpp)
     endif()
     target_include_directories(frontend_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(frontend_net PUBLIC host_common PRIVATE multitap_dep_enet multitap_dep_monocypher)
+    # frontend_common: settings_file (the trust and identity files).
+    target_link_libraries(frontend_net PUBLIC host_common frontend_common PRIVATE multitap_dep_enet multitap_dep_monocypher)
     multitap_set_project_flags(frontend_net)
 
     # net_probe: LAN discovery on a real network, without a frontend.
@@ -355,7 +365,7 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
     add_executable(frontend_net_test tests/net_test.cpp)
     target_link_libraries(frontend_net_test PRIVATE frontend_net multitap_dep_enet)
     multitap_set_project_flags(frontend_net_test)
-    add_test(NAME frontend_net COMMAND frontend_net_test)
+    add_test(NAME frontend_net COMMAND frontend_net_test "${CMAKE_CURRENT_BINARY_DIR}/net_test")
     set_tests_properties(frontend_net PROPERTIES
                          PASS_REGULAR_EXPRESSION "all net checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
