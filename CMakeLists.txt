@@ -200,6 +200,8 @@ if(MULTITAP_HAVE_ENET)
         net_access.cpp
         net_client.cpp
         net_content.cpp
+        net_wire.cpp
+        net_settings.cpp
         net_input.cpp
         input_net.cpp
     )
@@ -388,6 +390,15 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
              COMMAND frontend_net_content_test "${CMAKE_CURRENT_SOURCE_DIR}/tests/data" "${CMAKE_CURRENT_BINARY_DIR}/net_content_test")
     set_tests_properties(frontend_net_content PROPERTIES
                          PASS_REGULAR_EXPRESSION "net content: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    # Settings and actions from a client: messages, pages, the host's side.
+    add_executable(frontend_net_settings_test tests/net_settings_test.cpp)
+    target_link_libraries(frontend_net_settings_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_net_settings_test)
+    add_test(NAME frontend_net_settings COMMAND frontend_net_settings_test)
+    set_tests_properties(frontend_net_settings PROPERTIES
+                         PASS_REGULAR_EXPRESSION "net settings: all checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
     # Remote pads: packets, then into the router.

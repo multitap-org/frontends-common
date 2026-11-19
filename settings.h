@@ -82,6 +82,8 @@ struct Settings
     std::string core_section;   // "core:snes9x", or "" when no core is running
     std::string game_section;   // "game:snes9x/<game>", or "" when no game is running
     bool dirty = false;         // changed since the last load/save
+    uint32_t revision = 0;      // goes up on every change of a value or of the context (load, set,
+                                // reset, set_context): who mirrors the settings knows when to look again
 };
 
 // Uses `descriptors` (must outlive the Settings). Checks the table: unique

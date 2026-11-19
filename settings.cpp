@@ -224,6 +224,7 @@ bool settings_init(Settings* settings, const SettingDescriptor* descriptors, uin
 bool settings_load(Settings* settings, const char* path)
 {
     settings->dirty = false;
+    settings->revision++;
     if (!settings_file_load(&settings->file, path))
     {
         return false;
@@ -305,6 +306,7 @@ bool settings_set_context(Settings* settings, const char* core_name, const char*
         return false;
     }
 
+    settings->revision++;
     settings->core_section.clear();
     settings->game_section.clear();
     if (has_core)
@@ -532,6 +534,7 @@ bool settings_set(Settings* settings, SettingLayer layer, const char* key, const
         return false;
     }
     settings->dirty = true;
+    settings->revision++;
     return true;
 }
 
@@ -591,5 +594,6 @@ bool settings_reset(Settings* settings, SettingLayer layer, const char* key)
         return false;
     }
     settings->dirty = true;
+    settings->revision++;
     return true;
 }

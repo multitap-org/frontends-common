@@ -16,6 +16,12 @@
 //               ("" = the game folders themselves; net_content.h)
 //   --load CORE PATH  with --connect: start a game ("" = the core alone)
 //   (what the host runs is printed whenever it says: at connection and on changes)
+//   --settings  with --connect: the host's settings, page by page (FULL access)
+//   --set LAYER KEY VALUE  with --connect: change one (LAYER global, core or game;
+//               VALUE "-" = reset that layer)
+//   --actions   with --connect: what this device may trigger
+//   --action KEY  with --connect: trigger it (a hold action is held for a second)
+//   --lang CODE the language to ask for (default "en")
 //   --dir DIR   where net_probe keeps its device key and paired devices
 //               (net_probe_identity.cfg, net_probe_devices.cfg; default ".")
 //
@@ -36,6 +42,7 @@
 #include "net_client.h"
 #include "net_content.h"
 #include "net_link.h"
+#include "net_settings.h"
 #include "net_session.h"
 #include "input_devices.h"
 #include "net_input.h"
@@ -212,6 +219,10 @@ enum class ContentAsk
     cores,
     list,
     load,
+    settings,
+    set,
+    actions,
+    action,
 };
 
 struct ContentProbe
@@ -219,6 +230,10 @@ struct ContentProbe
     ContentAsk  ask = ContentAsk::none;
     const char* path = "";
     const char* core = "";
+    const char* layer = "global";
+    const char* key = "";
+    const char* value = "";
+    const char* language = "en";
     uint32_t    received = 0;
 };
 
@@ -254,10 +269,129 @@ static void content_send(NetClient* client, ContentProbe* probe)
     {
         size = net_content_write_load_request(out.data(), out.size(), 1, probe->core, probe->path);
     }
+    else if (probe->ask == ContentAsk::settings)
+    {
+        size = net_settings_write_request(out.data(), out.size(), 1, probe->received, probe->language);
+    }
+    else if (probe->ask == ContentAsk::set)
+    {
+        SettingLayer layer = std::strcmp(probe->layer, "core") == 0   ? SettingLayer::core
+                             : std::strcmp(probe->layer, "game") == 0 ? SettingLayer::game
+                                                                      : SettingLayer::global;
+        bool reset = std::strcmp(probe->value, "-") == 0;
+        size = net_settings_write_set(out.data(), out.size(), 1, layer, reset, probe->key, reset ? "" : probe->value);
+    }
+    else if (probe->ask == ContentAsk::actions)
+    {
+        size = net_settings_write_actions_request(out.data(), out.size(), 1, probe->language);
+    }
+    else if (probe->ask == ContentAsk::action)
+    {
+        size = net_settings_write_action(out.data(), out.size(), probe->key, true);
+    }
     if (size > 0)
     {
         net_client_send(client, NetChannel::control, out.data(), size);
     }
+}
+
+static const char* source_name(uint8_t source)
+{
+    const char* names[4] = {"default", "global", "core", "game"};
+    return source < 4 ? names[source] : "?";
+}
+
+static void print_values(const NetSettingValues* values)
+{
+    std::printf("= %s (%s)", values->effective.c_str(), source_name(values->source));
+    if ((values->set & 1) != 0)
+    {
+        std::printf(" global:%s", values->global.c_str());
+    }
+    if ((values->set & 2) != 0)
+    {
+        std::printf(" core:%s", values->core.c_str());
+    }
+    if ((values->set & 4) != 0)
+    {
+        std::printf(" game:%s", values->game.c_str());
+    }
+    std::printf("\n");
+}
+
+// Settings and actions answers; true if `data` was one. A complete
+// settings listing sets `received` to UINT32_MAX.
+static bool content_receive_settings(NetClient* client, ContentProbe* probe, const uint8_t* data, size_t size)
+{
+    uint32_t id = 0;
+    uint32_t start = 0;
+    uint32_t total = 0;
+    uint8_t layers = 0;
+    std::string core;
+    std::string game;
+    std::vector<NetSetting> settings;
+    if (net_settings_read_result(data, size, &id, &start, &total, &layers, &core, &game, &settings))
+    {
+        if (start == 0)
+        {
+            std::printf("layers: global%s%s%s%s\n", (layers & NET_LAYER_CORE) != 0 ? ", core " : "", core.c_str(),
+                        (layers & NET_LAYER_GAME) != 0 ? ", game " : "", game.c_str());
+        }
+        for (size_t i = 0; i < settings.size(); i++)
+        {
+            const NetSetting* setting = &settings[i];
+            std::printf("[%s%s%s%s%s] %s (%s) ", setting->page.c_str(), setting->subpage.empty() ? "" : " > ",
+                        setting->subpage.c_str(), setting->section.empty() ? "" : " / ", setting->section.c_str(),
+                        setting->label.c_str(), setting->values.key.c_str());
+            print_values(&setting->values);
+        }
+        probe->received += static_cast<uint32_t>(settings.size());
+        if (probe->received >= total || settings.empty())
+        {
+            std::printf("%u in all\n", total);
+            probe->received = UINT32_MAX;
+        }
+        else
+        {
+            content_send(client, probe);   // the next page
+        }
+        return true;
+    }
+    NetContentStatus status = NetContentStatus::failed;
+    NetSettingValues values;
+    if (net_settings_read_set_result(data, size, &id, &status, &values))
+    {
+        std::printf("set %s: %s ", values.key.c_str(), status_text(status));
+        print_values(&values);
+        return true;
+    }
+    if (net_settings_read_changed(data, size, &values))
+    {
+        if (values.key.empty())
+        {
+            std::printf("changed: all (ask again)\n");
+        }
+        else
+        {
+            std::printf("changed: %s ", values.key.c_str());
+            print_values(&values);
+        }
+        return false;
+    }
+    std::vector<NetAction> actions;
+    if (net_settings_read_actions(data, size, &id, &actions))
+    {
+        std::printf("actions%s:", id == 0 ? " (sent unasked)" : "");
+        for (size_t i = 0; i < actions.size(); i++)
+        {
+            const char* kinds[3] = {"press", "hold", "toggle"};
+            std::printf(" %s \"%s\" %s %u;", actions[i].key.c_str(), actions[i].label.c_str(),
+                        kinds[static_cast<uint8_t>(actions[i].kind)], actions[i].state);
+        }
+        std::printf("\n");
+        return id != 0 && probe->ask == ContentAsk::actions;
+    }
+    return false;
 }
 
 // True when the answer is complete (or wrong): the probe is done.
@@ -295,6 +429,16 @@ static bool content_receive(NetClient* client, ContentProbe* probe, const uint8_
     {
         std::printf("load: %s\n", status_text(status));
         return true;
+    }
+    else if (probe->ask == ContentAsk::settings || probe->ask == ContentAsk::set || probe->ask == ContentAsk::actions ||
+             probe->ask == ContentAsk::action)
+    {
+        bool done = content_receive_settings(client, probe, data, size);
+        if (probe->ask == ContentAsk::settings)
+        {
+            return probe->received == UINT32_MAX;
+        }
+        return done && probe->ask == ContentAsk::actions;   // --set / --action: listen until --seconds ends
     }
     else
     {
@@ -339,6 +483,7 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
     std::chrono::steady_clock::time_point next_state;
     uint32_t states_sent = 0;
     NetGameState game_state;
+    bool action_released = false;
     std::chrono::steady_clock::time_point end =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int64_t>(seconds * 1000.0));
     while (!done && std::chrono::steady_clock::now() < end)
@@ -397,6 +542,15 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
                 std::printf("the host closed the connection\n");
                 done = true;
             }
+        }
+        // --action: released a second after the press (a hold action needs it).
+        if (content->ask == ContentAsk::action && ready && !action_released &&
+            std::chrono::steady_clock::now() - pad_start > std::chrono::seconds(1))
+        {
+            uint8_t release[64];
+            size_t size = net_settings_write_action(release, sizeof(release), content->key, false);
+            net_client_send(client, NetChannel::control, release, size);
+            action_released = true;
         }
         // The pad: one state every 1/60 s, like a frontend's frame.
         std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
@@ -529,6 +683,30 @@ int main(int argc, char** argv)
             content.ask = ContentAsk::load;
             content.core = argv[++i];
             content.path = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "--settings") == 0)
+        {
+            content.ask = ContentAsk::settings;
+        }
+        else if (std::strcmp(argv[i], "--set") == 0 && i + 3 < argc)
+        {
+            content.ask = ContentAsk::set;
+            content.layer = argv[++i];
+            content.key = argv[++i];
+            content.value = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "--actions") == 0)
+        {
+            content.ask = ContentAsk::actions;
+        }
+        else if (std::strcmp(argv[i], "--action") == 0 && has_value)
+        {
+            content.ask = ContentAsk::action;
+            content.key = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "--lang") == 0 && has_value)
+        {
+            content.language = argv[++i];
         }
         else if (std::strcmp(argv[i], "--dir") == 0 && has_value)
         {
