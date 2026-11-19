@@ -198,6 +198,8 @@ if(MULTITAP_HAVE_ENET)
         net_pairing.cpp
         net_access.cpp
         net_client.cpp
+        net_input.cpp
+        input_net.cpp
     )
     if(WIN32)
         target_sources(frontend_net PRIVATE net_random_windows.cpp)
@@ -368,6 +370,15 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
     add_test(NAME frontend_net COMMAND frontend_net_test "${CMAKE_CURRENT_BINARY_DIR}/net_test")
     set_tests_properties(frontend_net PROPERTIES
                          PASS_REGULAR_EXPRESSION "all net checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    # Remote pads: packets, then into the router.
+    add_executable(frontend_input_net_test tests/input_net_test.cpp)
+    target_link_libraries(frontend_input_net_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_input_net_test)
+    add_test(NAME frontend_input_net COMMAND frontend_input_net_test)
+    set_tests_properties(frontend_input_net PROPERTIES
+                         PASS_REGULAR_EXPRESSION "all input_net checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
     # The Noise handshake against the official test vector, then failures.

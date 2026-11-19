@@ -8,6 +8,9 @@
 //   net_probe [--port N] --connect ADDRESS      connect as an already paired
 //                                               device, send a message on
 //                                               each channel
+//   --pad       with --connect / --pair: once in, act as a gamepad for
+//               --seconds: START (joins a port), then the d-pad, A and the
+//               left stick in turn, 60 states a second
 //   --dir DIR   where net_probe keeps its device key and paired devices
 //               (net_probe_identity.cfg, net_probe_devices.cfg; default ".")
 //
@@ -15,6 +18,7 @@
 // PAIR A DEVICE shows the code for --pair.
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -26,6 +30,8 @@
 #include "net_access.h"
 #include "net_client.h"
 #include "net_session.h"
+#include "input_devices.h"
+#include "net_input.h"
 #include "net_trust.h"
 
 static void usage()
@@ -157,7 +163,42 @@ static const char* refusal_text(NetClientRefusal refusal)
     return "?";
 }
 
-static int run_client(uint16_t port, double seconds, const char* at, const char* code, const std::string* dir)
+static uint32_t button_bit(InputButton button)
+{
+    return 1u << static_cast<uint32_t>(button);
+}
+
+// The scripted pad at `t` seconds after it started: START first (a port
+// joins on it), then each input in turn.
+static void pad_script(double t, NetPadState* state)
+{
+    *state = {};
+    if (t < 0.3)
+    {
+        return;
+    }
+    if (t < 0.6)
+    {
+        state->buttons = button_bit(InputButton::start);
+        return;
+    }
+    double cycle = std::fmod(t - 0.6, 1.2);
+    if (cycle < 0.3)
+    {
+        state->buttons = button_bit(InputButton::dpad_right);
+    }
+    else if (cycle < 0.4)
+    {
+        state->buttons = button_bit(InputButton::south);   // a short press
+    }
+    else if (cycle < 0.8)
+    {
+        state->axes[static_cast<uint32_t>(InputAxis::left_x)] = -32767;   // full left
+    }
+}
+
+static int run_client(uint16_t port, double seconds, const char* at, const char* code, const std::string* dir,
+                      bool pad)
 {
     NetKeypair identity;
     NetAddress address;
@@ -175,6 +216,11 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
     }
     int result = 2;
     bool done = false;
+    bool ready = false;
+    NetPadSender sender;
+    std::chrono::steady_clock::time_point pad_start;
+    std::chrono::steady_clock::time_point next_state;
+    uint32_t states_sent = 0;
     std::chrono::steady_clock::time_point end =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int64_t>(seconds * 1000.0));
     while (!done && std::chrono::steady_clock::now() < end)
@@ -189,8 +235,14 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
                 std::vector<uint8_t> control = app_message("hello on control");
                 std::vector<uint8_t> input = app_message("hello on input");
                 net_client_send(client, NetChannel::control, control.data(), control.size());
-                net_client_send(client, NetChannel::input, input.data(), input.size());
+                if (!pad)
+                {
+                    net_client_send(client, NetChannel::input, input.data(), input.size());
+                }
                 result = 0;
+                ready = true;
+                pad_start = std::chrono::steady_clock::now();
+                next_state = pad_start;
             }
             else if (event.type == NetClientEventType::refused)
             {
@@ -207,7 +259,25 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
                 done = true;
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        // The pad: one state every 1/60 s, like a frontend's frame.
+        std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+        if (pad && ready && now >= next_state)
+        {
+            NetPadState state;
+            pad_script(std::chrono::duration<double>(now - pad_start).count(), &state);
+            uint8_t packet[NET_INPUT_MAX_PACKET];
+            size_t size = net_input_push(&sender, 0, &state, packet, sizeof(packet));
+            if (net_client_send(client, NetChannel::input, packet, size))
+            {
+                states_sent++;
+            }
+            next_state += std::chrono::microseconds(16667);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(pad && ready ? 2 : 10));
+    }
+    if (pad)
+    {
+        std::printf("sent %u pad states\n", states_sent);
     }
     net_client_close(client);
     for (int i = 0; i < 20; i++)   // let the goodbye go out
@@ -280,6 +350,7 @@ int main(int argc, char** argv)
     const char* connect = nullptr;
     const char* pair_code = nullptr;
     std::string dir = ".";
+    bool pad = false;
     for (int i = 1; i < argc; i++)
     {
         bool has_value = i + 1 < argc;
@@ -299,6 +370,10 @@ int main(int argc, char** argv)
         {
             connect = argv[++i];
             pair_code = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "--pad") == 0)
+        {
+            pad = true;
         }
         else if (std::strcmp(argv[i], "--dir") == 0 && has_value)
         {
@@ -329,7 +404,7 @@ int main(int argc, char** argv)
     }
     else if (connect != nullptr)
     {
-        result = run_client(port, seconds < 3.0 ? 3.0 : seconds, connect, pair_code, &dir);
+        result = run_client(port, seconds < 3.0 ? 3.0 : seconds, connect, pair_code, &dir, pad);
     }
     else
     {

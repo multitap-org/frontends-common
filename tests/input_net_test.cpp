@@ -1,0 +1,128 @@
+// Checks remote pads (net_input packets, input_net into the router):
+//   - packets round-trip, newest-first on the wire, oldest-first when read;
+//     malformed ones are refused;
+//   - a peer's first pad packet plugs in a gamepad with a guid from its key
+//     and a controller for it; held buttons and axes arrive;
+//   - a tap (press and release between two delivered packets, the packet in
+//     between lost) still reaches the router as a tap;
+//   - an old packet arriving late changes nothing;
+//   - the peer leaving unplugs the pad; coming back reuses the same device.
+//
+// Exit code 0 = all checks passed. Each failure is printed.
+
+#include <cstdio>
+#include <cstring>
+
+#include "input_bindings.h"
+#include "input_net.h"
+#include "net_input.h"
+
+static int g_failures = 0;
+
+static void check(bool condition, const char* what)
+{
+    if (!condition)
+    {
+        std::printf("FAIL %s\n", what);
+        g_failures++;
+    }
+}
+
+static uint32_t bit(InputButton button)
+{
+    return 1u << static_cast<uint32_t>(button);
+}
+
+int main()
+{
+    // Packets.
+    NetPadSender sender;
+    uint8_t packet[NET_INPUT_MAX_PACKET];
+    NetPadState state;
+    state.buttons = bit(InputButton::south);
+    state.axes[0] = 16000;
+    size_t size = net_input_push(&sender, 1, &state, packet, sizeof(packet));
+    check(size == 3 + NET_INPUT_STATE_SIZE, "first packet holds one state");
+    for (int i = 0; i < 5; i++)
+    {
+        size = net_input_push(&sender, 1, &state, packet, sizeof(packet));
+    }
+    check(size == NET_INPUT_MAX_PACKET, "later packets hold the full history");
+    uint8_t pad = 0;
+    NetPadState read[NET_INPUT_HISTORY];
+    uint32_t count = 0;
+    check(net_input_read(packet, size, &pad, read, &count) && pad == 1 && count == NET_INPUT_HISTORY, "packet read");
+    check(read[0].frame == 3 && read[3].frame == 6, "states come out oldest first");
+    check(read[3].buttons == bit(InputButton::south) && read[3].axes[0] == 16000, "state fields");
+    check(!net_input_read(packet, size - 1, &pad, read, &count), "short packet refused");
+    packet[1] = NET_INPUT_MAX_PADS;
+    check(!net_input_read(packet, size, &pad, read, &count), "bad pad index refused");
+
+    // Into the router.
+    InputSystem* system = new InputSystem{};
+    InputNet* net = new InputNet{};
+    uint8_t key[32];
+    for (uint32_t i = 0; i < 32; i++)
+    {
+        key[i] = static_cast<uint8_t>(0xA0 + i);
+    }
+    NetPadSender phone;
+    NetPadState held;
+    held.buttons = bit(InputButton::start) | bit(InputButton::dpad_left);
+    held.axes[static_cast<uint32_t>(InputAxis::left_x)] = -32767;
+    size = net_input_push(&phone, 0, &held, packet, sizeof(packet));
+    input_net_receive(net, system, 2, key, "ANA'S PHONE", packet, size);
+    check(net->pads[2][0].active, "pad plugged in");
+    uint32_t device_id = net->pads[2][0].device;
+    const InputDevice* device = input_devices_find_const(&system->devices, device_id);
+    check(device != nullptr && device->kind == InputDeviceKind::gamepad && device->connected, "it's a connected gamepad");
+    check(device != nullptr && device->guid == "net:a0a1a2a3a4a5a6a7:0", "guid from the device key");
+    check(device != nullptr && device->name == "ANA'S PHONE", "named after the device");
+    check(input_first_controller(system, device_id) >= 0, "it got a controller");
+    check(device != nullptr && device->held[static_cast<uint32_t>(InputButton::start)] &&
+              device->held[static_cast<uint32_t>(InputButton::dpad_left)],
+          "held buttons arrived");
+    check(device != nullptr && device->axes[static_cast<uint32_t>(InputAxis::left_x)] < -0.99f, "axis arrived");
+
+    // A tap: press A in one state, let go in the next; the packet with the
+    // press is lost, the next one (which repeats it) arrives.
+    input_devices_end_frame(&system->devices);
+    NetPadState press = held;
+    press.buttons |= bit(InputButton::south);
+    uint8_t lost[NET_INPUT_MAX_PACKET];
+    size_t lost_size = net_input_push(&phone, 0, &press, lost, sizeof(lost));
+    size = net_input_push(&phone, 0, &held, packet, sizeof(packet));
+    input_net_receive(net, system, 2, key, "ANA'S PHONE", packet, size);
+    device = input_devices_find_const(&system->devices, device_id);
+    uint32_t south = static_cast<uint32_t>(InputButton::south);
+    check(device != nullptr && !device->held[south] && device->tapped[south], "a tap inside a lost packet still counts");
+
+    // The lost packet arrives late: older than what's applied, nothing changes.
+    input_devices_end_frame(&system->devices);
+    input_net_receive(net, system, 2, key, "ANA'S PHONE", lost, lost_size);
+    device = input_devices_find_const(&system->devices, device_id);
+    check(device != nullptr && !device->held[south] && !device->tapped[south], "a late packet changes nothing");
+
+    input_net_receive(net, system, 2, key, "ANA'S PHONE", packet, 2);
+    check(net->dropped == 1, "garbage counted, ignored");
+
+    input_net_peer_gone(net, system, 2);
+    device = input_devices_find_const(&system->devices, device_id);
+    check(device != nullptr && !device->connected && !device->held[static_cast<uint32_t>(InputButton::start)],
+          "peer gone: pad unplugged and released");
+    check(!net->pads[2][0].active, "slot freed");
+
+    // Back (maybe on another peer slot): the same device comes back.
+    NetPadSender again;
+    size = net_input_push(&again, 0, &held, packet, sizeof(packet));
+    input_net_receive(net, system, 5, key, "ANA'S PHONE", packet, size);
+    check(net->pads[5][0].active && net->pads[5][0].device == device_id, "the same device comes back");
+
+    delete net;
+    delete system;
+    if (g_failures == 0)
+    {
+        std::printf("all input_net checks passed\n");
+    }
+    return g_failures == 0 ? 0 : 1;
+}
