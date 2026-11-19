@@ -75,6 +75,18 @@ else()
     target_sources(frontend_common PRIVATE game_mode_none.cpp)
 endif()
 
+# Shader presets (shader_chain): only librashader's MIT C header from
+# deps/librashader (nothing built from its Rust tree; the library is loaded
+# at run time). Built only for frontends that have that submodule.
+set(MULTITAP_LIBRASHADER_INCLUDE "${MULTITAP_DEPS_DIR}/librashader/include")
+if(EXISTS "${MULTITAP_LIBRASHADER_INCLUDE}/librashader.h")
+    target_sources(frontend_common PRIVATE shader_chain.cpp)
+    target_include_directories(frontend_common SYSTEM PUBLIC "${MULTITAP_LIBRASHADER_INCLUDE}")
+    target_compile_definitions(frontend_common PUBLIC LIBRA_RUNTIME_VULKAN
+        PRIVATE "MULTITAP_LIBRASHADER_FILE=\"librashader${CMAKE_SHARED_LIBRARY_SUFFIX}\"")
+    set(MULTITAP_HAS_SHADER_CHAIN ON PARENT_SCOPE)
+endif()
+
 target_include_directories(frontend_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(frontend_common PUBLIC imgui SDL3::SDL3 Vulkan::Vulkan host_common multitap_dep_libsamplerate)
 
