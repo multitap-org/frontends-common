@@ -11,6 +11,10 @@
 //   --pad       with --connect / --pair: once in, act as a gamepad for
 //               --seconds: START (joins a port), then the d-pad, A and the
 //               left stick in turn, 60 states a second
+//   --cores     with --connect: list the host's cores (needs FULL access)
+//   --list PATH with --connect: list a folder of the host's game folders
+//               ("" = the game folders themselves; net_content.h)
+//   --load CORE PATH  with --connect: start a game ("" = the core alone)
 //   --dir DIR   where net_probe keeps its device key and paired devices
 //               (net_probe_identity.cfg, net_probe_devices.cfg; default ".")
 //
@@ -29,6 +33,8 @@
 #include "host_log.h"
 #include "net_access.h"
 #include "net_client.h"
+#include "net_content.h"
+#include "net_link.h"
 #include "net_session.h"
 #include "input_devices.h"
 #include "net_input.h"
@@ -37,7 +43,8 @@
 static void usage()
 {
     std::printf("usage: net_probe [--port N] [--seconds S] [--dir DIR]\n"
-                "                 [--at ADDRESS | --listen NAME | --pair ADDRESS CODE | --connect ADDRESS]\n");
+                "                 [--at ADDRESS | --listen NAME | --pair ADDRESS CODE | --connect ADDRESS]\n"
+                "                 [--pad | --cores | --list PATH | --load CORE PATH]\n");
 }
 
 static void print_key(const char* what, const uint8_t* key)
@@ -197,8 +204,117 @@ static void pad_script(double t, NetPadState* state)
     }
 }
 
+// --cores / --list / --load: one request, its pages printed as they come.
+enum class ContentAsk
+{
+    none,
+    cores,
+    list,
+    load,
+};
+
+struct ContentProbe
+{
+    ContentAsk  ask = ContentAsk::none;
+    const char* path = "";
+    const char* core = "";
+    uint32_t    received = 0;
+};
+
+static const char* status_text(NetContentStatus status)
+{
+    switch (status)
+    {
+    case NetContentStatus::ok:
+        return "ok";
+    case NetContentStatus::not_found:
+        return "not found";
+    case NetContentStatus::refused:
+        return "refused";
+    case NetContentStatus::failed:
+        return "failed";
+    }
+    return "?";
+}
+
+static void content_send(NetClient* client, ContentProbe* probe)
+{
+    std::vector<uint8_t> out(NET_LINK_MAX_PAYLOAD);
+    size_t size = 0;
+    if (probe->ask == ContentAsk::cores)
+    {
+        size = net_content_write_cores_request(out.data(), out.size(), 1, probe->received);
+    }
+    else if (probe->ask == ContentAsk::list)
+    {
+        size = net_content_write_list_request(out.data(), out.size(), 1, probe->received, probe->path);
+    }
+    else if (probe->ask == ContentAsk::load)
+    {
+        size = net_content_write_load_request(out.data(), out.size(), 1, probe->core, probe->path);
+    }
+    if (size > 0)
+    {
+        net_client_send(client, NetChannel::control, out.data(), size);
+    }
+}
+
+// True when the answer is complete (or wrong): the probe is done.
+static bool content_receive(NetClient* client, ContentProbe* probe, const uint8_t* data, size_t size)
+{
+    uint32_t id = 0;
+    uint32_t start = 0;
+    uint32_t total = 0;
+    NetContentStatus status = NetContentStatus::failed;
+    std::vector<NetContentCore> cores;
+    std::vector<NetContentEntry> entries;
+    if (net_content_read_cores_result(data, size, &id, &status, &start, &total, &cores))
+    {
+        for (size_t i = 0; i < cores.size(); i++)
+        {
+            std::printf("core %s: %s %s [%s]%s\n", cores[i].file.c_str(), cores[i].name.c_str(),
+                        cores[i].version.c_str(), cores[i].extensions.c_str(),
+                        (cores[i].flags & NET_CONTENT_CORE_NO_GAME) != 0 ? " (no game too)" : "");
+        }
+        probe->received += static_cast<uint32_t>(cores.size());
+    }
+    else if (net_content_read_list_result(data, size, &id, &status, &start, &total, &entries))
+    {
+        for (size_t i = 0; i < entries.size(); i++)
+        {
+            const char* kind = entries[i].kind == NetContentKind::folder
+                                   ? "folder "
+                                   : (entries[i].kind == NetContentKind::archive ? "archive" : "file   ");
+            std::printf("%s %12llu  %s\n", kind, static_cast<unsigned long long>(entries[i].size),
+                        entries[i].name.c_str());
+        }
+        probe->received += static_cast<uint32_t>(entries.size());
+    }
+    else if (net_content_read_load_result(data, size, &id, &status))
+    {
+        std::printf("load: %s\n", status_text(status));
+        return true;
+    }
+    else
+    {
+        return false;   // something else: keep waiting
+    }
+    if (status != NetContentStatus::ok)
+    {
+        std::printf("%s\n", status_text(status));
+        return true;
+    }
+    if (probe->received >= total || (cores.empty() && entries.empty()))
+    {
+        std::printf("%u in all\n", total);
+        return true;
+    }
+    content_send(client, probe);   // the next page
+    return false;
+}
+
 static int run_client(uint16_t port, double seconds, const char* at, const char* code, const std::string* dir,
-                      bool pad)
+                      bool pad, ContentProbe* content)
 {
     NetKeypair identity;
     NetAddress address;
@@ -242,6 +358,7 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
                 }
                 result = 0;
                 ready = true;
+                content_send(client, content);
                 pad_start = std::chrono::steady_clock::now();
                 next_state = pad_start;
             }
@@ -249,6 +366,11 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
             {
                 std::printf("refused: %s\n", refusal_text(event.refusal));
                 done = true;
+            }
+            else if (event.type == NetClientEventType::message && content->ask != ContentAsk::none &&
+                     event.channel == NetChannel::control)
+            {
+                done = content_receive(client, content, event.data, event.size);
             }
             else if (event.type == NetClientEventType::message)
             {
@@ -352,6 +474,7 @@ int main(int argc, char** argv)
     const char* pair_code = nullptr;
     std::string dir = ".";
     bool pad = false;
+    ContentProbe content;
     for (int i = 1; i < argc; i++)
     {
         bool has_value = i + 1 < argc;
@@ -375,6 +498,21 @@ int main(int argc, char** argv)
         else if (std::strcmp(argv[i], "--pad") == 0)
         {
             pad = true;
+        }
+        else if (std::strcmp(argv[i], "--cores") == 0)
+        {
+            content.ask = ContentAsk::cores;
+        }
+        else if (std::strcmp(argv[i], "--list") == 0 && has_value)
+        {
+            content.ask = ContentAsk::list;
+            content.path = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "--load") == 0 && i + 2 < argc)
+        {
+            content.ask = ContentAsk::load;
+            content.core = argv[++i];
+            content.path = argv[++i];
         }
         else if (std::strcmp(argv[i], "--dir") == 0 && has_value)
         {
@@ -405,7 +543,7 @@ int main(int argc, char** argv)
     }
     else if (connect != nullptr)
     {
-        result = run_client(port, seconds < 3.0 ? 3.0 : seconds, connect, pair_code, &dir, pad);
+        result = run_client(port, seconds < 3.0 ? 3.0 : seconds, connect, pair_code, &dir, pad, &content);
     }
     else
     {
