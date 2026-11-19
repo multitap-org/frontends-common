@@ -27,6 +27,11 @@
 //   --controllers  with --connect: what the core expects on each port
 //   --port-device PAD DEVICE  with --connect: change the device on the port
 //               this device's PAD plays on (DEVICE: a RETRO_DEVICE_* number)
+//   --ping      with --connect: the connection's round trip, jitter and loss, each second
+//   --speedtest with --connect: rising rates down (host -> us) then up, one second
+//               each, until the loss passes 2% (needs STREAM access)
+//   --unpair    with --connect: once in, unpair (the host forgets us too)
+//   --forget N  forget paired host N (0 = the first) here only, without connecting
 //   --dir DIR   where net_probe keeps its device key and paired devices
 //               (net_probe_identity.cfg, net_probe_devices.cfg; default ".")
 //
@@ -48,6 +53,7 @@
 #include "net_content.h"
 #include "net_link.h"
 #include "net_settings.h"
+#include "net_speed.h"
 #include "net_session.h"
 #include "input_devices.h"
 #include "net_input.h"
@@ -140,6 +146,9 @@ static int run_listener(uint16_t port, const char* name, const std::string* dir)
                 break;
             case NetAccessEventType::closed:
                 std::printf("\"%s\" disconnected\n", device);
+                break;
+            case NetAccessEventType::unpaired:
+                std::printf("\"%s\" unpaired itself (forgotten here too)\n", event.name);
                 break;
             case NetAccessEventType::pairing_failed:
                 std::printf("pairing failed; %s\n", access->pairing_open ? "new code" : "pairing closed");
@@ -245,6 +254,102 @@ static void retropad_script(double t, NetRetroPadState* state)
     }
 }
 
+// --speedtest: rising rates, down then up, one second each.
+static const uint32_t SPEED_RATES_KBPS[] = {5000, 10000, 20000, 50000, 100000, 200000};
+constexpr uint32_t SPEED_RATE_COUNT = sizeof(SPEED_RATES_KBPS) / sizeof(SPEED_RATES_KBPS[0]);
+constexpr uint32_t SPEED_TEST_MS = 1000;
+constexpr double   SPEED_MAX_LOSS = 0.02;
+
+struct SpeedProbe
+{
+    bool              on = false;
+    bool              waiting = false;   // a request is out, its report not in yet
+    NetSpeedDirection direction = NetSpeedDirection::down;
+    uint32_t          step = 0;          // into SPEED_RATES_KBPS
+    uint32_t          next_id = 1;
+    NetSpeedReceiver  receiver;          // down
+    NetSpeedSender    sender;            // up
+    bool              done = false;
+};
+
+static void speed_next(NetClient* client, SpeedProbe* speed)
+{
+    if (speed->step >= SPEED_RATE_COUNT)
+    {
+        if (speed->direction == NetSpeedDirection::up)
+        {
+            speed->done = true;
+            return;
+        }
+        speed->direction = NetSpeedDirection::up;
+        speed->step = 0;
+    }
+    uint32_t id = speed->next_id++;
+    uint32_t rate = SPEED_RATES_KBPS[speed->step];
+    uint8_t out[32];
+    size_t size = net_speed_write_request(out, sizeof(out), id, speed->direction, rate, SPEED_TEST_MS);
+    net_client_send(client, NetChannel::control, out, size);
+    double now = net_seconds();
+    if (speed->direction == NetSpeedDirection::down)
+    {
+        net_speed_receiver_start(&speed->receiver, id, 0, 0.0);
+    }
+    else
+    {
+        net_speed_sender_start(&speed->sender, id, 0, rate, SPEED_TEST_MS, now);
+    }
+    speed->waiting = true;
+}
+
+// A report: one line of the table, then the next rate (or the next
+// direction once the loss is too high).
+static void speed_report(NetClient* client, SpeedProbe* speed, const NetSpeedReport* report)
+{
+    if (!speed->waiting || report->direction != speed->direction)
+    {
+        return;
+    }
+    double sent = 0.0;
+    double received = 0.0;
+    double bytes = 0.0;
+    double seconds = 0.0;
+    if (report->direction == NetSpeedDirection::down)
+    {
+        if (report->id != speed->receiver.id)
+        {
+            return;
+        }
+        NetSpeedReport ours;
+        net_speed_receiver_report(&speed->receiver, NetSpeedDirection::down, &ours);
+        sent = report->packets;
+        received = ours.packets;
+        bytes = static_cast<double>(ours.bytes);
+        seconds = report->seconds;
+        speed->receiver.active = false;
+    }
+    else
+    {
+        if (report->id != speed->sender.id)
+        {
+            return;
+        }
+        sent = speed->sender.sent;
+        received = report->packets;
+        bytes = static_cast<double>(report->bytes);
+        seconds = speed->sender.duration;
+    }
+    double loss = sent > 0.0 ? 1.0 - received / sent : 1.0;
+    loss = loss < 0.0 ? 0.0 : loss;
+    double mbps = seconds > 0.0 ? bytes * 8.0 / seconds / 1000000.0 : 0.0;
+    std::printf("speed %s  asked %6.1f Mbit/s  got %6.1f Mbit/s  loss %5.1f%%  (%u of %u packets)\n",
+                report->direction == NetSpeedDirection::down ? "down" : "up  ",
+                SPEED_RATES_KBPS[speed->step] / 1000.0, mbps, loss * 100.0, static_cast<unsigned>(received),
+                static_cast<unsigned>(sent));
+    speed->waiting = false;
+    speed->step = loss > SPEED_MAX_LOSS ? SPEED_RATE_COUNT : speed->step + 1;
+    speed_next(client, speed);
+}
+
 // --cores / --list / --load: one request, its pages printed as they come.
 enum class ContentAsk
 {
@@ -258,6 +363,7 @@ enum class ContentAsk
     action,
     controllers,
     port_device,
+    unpair,
 };
 
 struct ContentProbe
@@ -525,7 +631,7 @@ static bool content_receive(NetClient* client, ContentProbe* probe, const uint8_
 }
 
 static int run_client(uint16_t port, double seconds, const char* at, const char* code, const std::string* dir,
-                      bool pad, bool retropad, ContentProbe* content)
+                      bool pad, bool retropad, ContentProbe* content, bool ping, bool speedtest)
 {
     NetKeypair identity;
     NetAddress address;
@@ -551,6 +657,8 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
     NetGameState game_state;
     bool action_released = false;
     NetRetroPadSender retropad_sender;
+    SpeedProbe speed;
+    std::chrono::steady_clock::time_point next_ping = std::chrono::steady_clock::now();
     std::chrono::steady_clock::time_point end =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int64_t>(seconds * 1000.0));
     while (!done && std::chrono::steady_clock::now() < end)
@@ -573,6 +681,11 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
                 result = 0;
                 ready = true;
                 content_send(client, content);
+                if (speedtest)
+                {
+                    speed.on = true;
+                    speed_next(client, &speed);
+                }
                 pad_start = std::chrono::steady_clock::now();
                 next_state = pad_start;
             }
@@ -600,15 +713,64 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
             {
                 done = content_receive(client, content, event.data, event.size);
             }
+            else if (event.type == NetClientEventType::message && event.channel == NetChannel::input &&
+                     net_speed_receive(&speed.receiver, event.data, event.size, net_seconds()))
+            {
+                // a speed test packet, counted
+            }
+            else if (event.type == NetClientEventType::message && event.channel == NetChannel::control &&
+                     event.size > 0 && event.data[0] == NET_SPEED_REPORT)
+            {
+                NetSpeedReport report;
+                if (net_speed_read_report(event.data, event.size, &report))
+                {
+                    speed_report(client, &speed, &report);
+                    done = speed.done;
+                }
+            }
             else if (event.type == NetClientEventType::message)
             {
                 print_message(event.channel, event.data, event.size);
+            }
+            else if (event.type == NetClientEventType::unpaired)
+            {
+                std::printf("the host unpaired us (forgotten here too)\n");
             }
             else if (event.type == NetClientEventType::closed)
             {
                 std::printf("the host closed the connection\n");
                 done = true;
             }
+        }
+        // --speedtest up: our packets that are due.
+        if (speed.on && speed.sender.active)
+        {
+            uint8_t packet[NET_SPEED_PACKET_SIZE];
+            uint32_t due = net_speed_sender_due(&speed.sender, net_seconds());
+            for (uint32_t i = 0; i < due; i++)
+            {
+                size_t size = net_speed_write_data(packet, sizeof(packet), speed.sender.id, speed.sender.sent);
+                net_client_send(client, NetChannel::input, packet, size);
+                net_speed_sender_sent(&speed.sender, size);
+            }
+        }
+        // --ping: once a second.
+        if (ping && ready && std::chrono::steady_clock::now() >= next_ping)
+        {
+            NetLinkStats stats;
+            if (net_client_stats(client, &stats))
+            {
+                std::printf("ping %u ms  jitter %u ms  loss %.1f%%\n", stats.round_trip_ms, stats.jitter_ms,
+                            static_cast<double>(stats.loss) * 100.0);
+            }
+            next_ping += std::chrono::seconds(1);
+        }
+        // --unpair: right away once in.
+        if (content->ask == ContentAsk::unpair && ready && !action_released)
+        {
+            std::printf("unpairing from \"%s\"\n", client->host_name);
+            net_client_unpair(client, static_cast<uint32_t>(client->device));
+            action_released = true;
         }
         // --port-device: a second in, so a --retropad pad has joined a port.
         if (content->ask == ContentAsk::port_device && ready && !action_released &&
@@ -654,7 +816,7 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
             }
             next_state += std::chrono::microseconds(16667);
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(pad && ready ? 2 : 10));
+        std::this_thread::sleep_for(std::chrono::milliseconds((pad || speed.on) && ready ? 1 : 10));
     }
     if (pad)
     {
@@ -733,6 +895,9 @@ int main(int argc, char** argv)
     std::string dir = ".";
     bool pad = false;
     bool retropad = false;
+    bool ping = false;
+    bool speedtest = false;
+    int forget = -1;
     ContentProbe content;
     for (int i = 1; i < argc; i++)
     {
@@ -788,6 +953,22 @@ int main(int argc, char** argv)
             content.pad_index = static_cast<uint32_t>(std::atoi(argv[++i]));
             content.device = static_cast<uint32_t>(std::atoi(argv[++i]));
         }
+        else if (std::strcmp(argv[i], "--ping") == 0)
+        {
+            ping = true;
+        }
+        else if (std::strcmp(argv[i], "--speedtest") == 0)
+        {
+            speedtest = true;
+        }
+        else if (std::strcmp(argv[i], "--unpair") == 0)
+        {
+            content.ask = ContentAsk::unpair;
+        }
+        else if (std::strcmp(argv[i], "--forget") == 0 && has_value)
+        {
+            forget = std::atoi(argv[++i]);
+        }
         else if (std::strcmp(argv[i], "--settings") == 0)
         {
             content.ask = ContentAsk::settings;
@@ -834,6 +1015,20 @@ int main(int argc, char** argv)
     {
         return 1;
     }
+    if (forget >= 0)
+    {
+        // Only our list: nothing is sent (the offline case of unpairing).
+        NetKeypair identity;
+        NetClient* client = new NetClient();
+        std::string devices = dir + "/net_probe_devices.cfg";
+        bool ok = load_identity(&dir, &identity) && net_client_create(client, &identity, "NET PROBE", devices.c_str()) &&
+                  net_client_unpair(client, static_cast<uint32_t>(forget));
+        std::printf(ok ? "forgotten here\n" : "no such host\n");
+        net_client_destroy(client);
+        delete client;
+        net_shutdown();
+        return ok ? 0 : 1;
+    }
     int result = 0;
     if (listen != nullptr)
     {
@@ -841,7 +1036,7 @@ int main(int argc, char** argv)
     }
     else if (connect != nullptr)
     {
-        result = run_client(port, seconds < 3.0 ? 3.0 : seconds, connect, pair_code, &dir, pad, retropad, &content);
+        result = run_client(port, seconds < 3.0 ? 3.0 : seconds, connect, pair_code, &dir, pad, retropad, &content, ping, speedtest);
     }
     else
     {
