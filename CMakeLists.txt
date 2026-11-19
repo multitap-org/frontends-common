@@ -1,8 +1,15 @@
-# frontend_common: code shared by every frontend (piccolo, the host-libretro
-# test frontend, later Multitap): Vulkan instance/device, swapchain, frame
-# rendering, Dear ImGui glue, settings. Plain static library, no frontend-specific
-# code. Links host_common for its file helpers (host_fs: atomic writes); the
-# other direction (hosts using frontend or SDL code) is what's not allowed.
+# frontend_common: code shared by every frontend (piccolo, libretro-test-frontend,
+# piccolette, later Multitap): Vulkan instance/device, swapchain, frame
+# rendering, Dear ImGui glue, settings, audio output, the input router.
+# Plain static library, no frontend-specific code. Links host_common for its
+# file helpers (host_fs: atomic writes); the other direction (hosts using
+# frontend or SDL code) is what's not allowed.
+# A library: it doesn't build alone. The frontend adds hosts-common first,
+# defines imgui, SDL3::SDL3 and Vulkan::Vulkan, and sets MULTITAP_DEPS_DIR to
+# its deps folder (libsamplerate, gamemode; for the resampler tool also
+# speexdsp and libretro-common), built here from their sources.
+
+multitap_require(frontends-common host_common imgui SDL3::SDL3 Vulkan::Vulkan VAR:MULTITAP_DEPS_DIR)
 
 # libsamplerate (deps/, BSD-2-Clause): audio_output's resampler, chosen by
 # measurement (tools/resampler_measure.cpp). Built from its sources without
@@ -15,11 +22,11 @@ file(WRITE "${LIBSAMPLERATE_CONFIG}/config.h"
      "#define ENABLE_SINC_FAST_CONVERTER 1\n#define ENABLE_SINC_MEDIUM_CONVERTER 1\n"
      "#define ENABLE_SINC_BEST_CONVERTER 1\n")
 add_library(multitap_dep_libsamplerate STATIC
-    "${CMAKE_SOURCE_DIR}/deps/libsamplerate/src/samplerate.c"
-    "${CMAKE_SOURCE_DIR}/deps/libsamplerate/src/src_linear.c"
-    "${CMAKE_SOURCE_DIR}/deps/libsamplerate/src/src_sinc.c"
-    "${CMAKE_SOURCE_DIR}/deps/libsamplerate/src/src_zoh.c")
-target_include_directories(multitap_dep_libsamplerate SYSTEM PUBLIC "${CMAKE_SOURCE_DIR}/deps/libsamplerate/include")
+    "${MULTITAP_DEPS_DIR}/libsamplerate/src/samplerate.c"
+    "${MULTITAP_DEPS_DIR}/libsamplerate/src/src_linear.c"
+    "${MULTITAP_DEPS_DIR}/libsamplerate/src/src_sinc.c"
+    "${MULTITAP_DEPS_DIR}/libsamplerate/src/src_zoh.c")
+target_include_directories(multitap_dep_libsamplerate SYSTEM PUBLIC "${MULTITAP_DEPS_DIR}/libsamplerate/include")
 target_include_directories(multitap_dep_libsamplerate PRIVATE "${LIBSAMPLERATE_CONFIG}")
 target_compile_definitions(multitap_dep_libsamplerate PRIVATE HAVE_CONFIG_H)
 # Optimized even in Debug builds: it runs for every audio frame and we don't debug it.
@@ -62,7 +69,7 @@ add_library(frontend_common STATIC
 # stub, chosen here instead of #if in the code.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(frontend_common PRIVATE game_mode_linux.cpp)
-    target_include_directories(frontend_common SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/deps/gamemode/lib")
+    target_include_directories(frontend_common SYSTEM PRIVATE "${MULTITAP_DEPS_DIR}/gamemode/lib")
     target_link_libraries(frontend_common PRIVATE ${CMAKE_DL_LIBS})
 else()
     target_sources(frontend_common PRIVATE game_mode_none.cpp)
@@ -166,7 +173,7 @@ if(MULTITAP_BUILD_TESTS)
     # Resampler comparison (plan-milestones, milestone 2): every candidate is
     # built here from deps/ (read-only, without our warning flags) only for
     # this tool. The one chosen moves into the real audio path later.
-    set(MULTITAP_DEPS "${CMAKE_SOURCE_DIR}/deps")
+    set(MULTITAP_DEPS "${MULTITAP_DEPS_DIR}")
 
     # speexdsp: only its resampler, built standalone with our own symbol prefix.
     add_library(multitap_dep_speex_resampler STATIC "${MULTITAP_DEPS}/speexdsp/libspeexdsp/resample.c")
