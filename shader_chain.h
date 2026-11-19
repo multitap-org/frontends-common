@@ -105,7 +105,7 @@ struct ShaderChain
     ShaderStage stages[SHADER_CHAIN_STAGES] = {};
 
     ShaderChainImage input  = {};
-    ShaderChainImage middle = {};
+    ShaderChainImage middle = {};   // stage 0's result; has an ImGui texture id (drawable by the frontend)
     ShaderChainImage output = {};
 
     // What this frame draws (set by shader_chain_prepare).

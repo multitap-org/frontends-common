@@ -420,8 +420,10 @@ bool shader_chain_prepare(ShaderChain* chain, const VulkanContext* context, cons
     {
         VkImageUsageFlags middle_usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                                          VK_IMAGE_USAGE_SAMPLED_BIT;
+        // An ImGui texture too: a frontend may show it (piccolo: IMAGE
+        // SETTINGS' preview, with pass 0's effect).
         if (!ensure_image(&chain->middle, context, viewport->source_width, viewport->source_height, middle_usage,
-                          false, "Shader chain middle"))
+                          true, "Shader chain middle"))
         {
             return false;
         }
