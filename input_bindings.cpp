@@ -1228,6 +1228,15 @@ static void stick(const InputController* controller, const InputBindingSet* set,
 }
 
 // The modifier, by the controller's mode: is the HOTKEY layer on?
+// The hotkeys a game-only (remote) device may use: the ones that act on the
+// game. Not MENU / QUICK MENU (they open an interface it can't drive, and
+// pause the game for everyone) nor GRAB MOUSE (this machine's mouse).
+static bool game_only_hotkey(InputAction action)
+{
+    return action == InputAction::hotkey_save_state || action == InputAction::hotkey_load_state ||
+           action == InputAction::hotkey_fast_forward;
+}
+
 static bool modifier_active(InputController* controller, const bool* held, const bool* pressed, uint64_t now_ms)
 {
     uint32_t modifier = index_of(InputAction::hotkey_enable);
@@ -1624,9 +1633,11 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         bool on_port1 = input_port_has(system, 0, index);
 
         // The layer: HOTKEY > INTERFACE > GAME. Hotkeys and the interface are
-        // port 1's and the keyboard's, and never a game-only device's (remote).
+        // port 1's and the keyboard's. A game-only device (remote) never
+        // drives the interface, and of the hotkeys gets only the game's
+        // (game_only_hotkey).
         bool local = !device->game_only;
-        bool hotkeys = local && (on_port1 || keyboard) && modifier_active(controller, held, pressed, now_ms);
+        bool hotkeys = (on_port1 || keyboard) && modifier_active(controller, held, pressed, now_ms);
         bool drives_ui = local && (keyboard || on_port1);
         InputLayer layer = InputLayer::none;
         if (hotkeys)
@@ -1678,6 +1689,10 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             bool fired = false;
             for (uint32_t a = modifier + 1; a < INPUT_ACTION_COUNT; a++)
             {
+                if (!local && !game_only_hotkey(static_cast<InputAction>(a)))
+                {
+                    continue;
+                }
                 frame->held[a] = frame->held[a] || held[a];
                 frame->pressed[a] = frame->pressed[a] || pressed[a];
                 frame->keyboard_pressed[a] = frame->keyboard_pressed[a] || (keyboard && pressed[a]);

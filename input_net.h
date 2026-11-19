@@ -4,8 +4,9 @@
 // gamepads of authorized network peers (net_access.h) become gamepads in the
 // router, so everything local controllers have works for them too: START
 // joins the first free port (N:N), profiles, remaps, turbo, combos. Only for
-// playing (InputDevice::game_only): a remote pad never drives the interface
-// or hotkeys, even on port 1. (Configuring the frontend from the remote app
+// playing (InputDevice::game_only): a remote pad never drives the interface,
+// even on port 1; on port 1 it has the game's hotkeys (save / load state,
+// fast forward). (Configuring the frontend from the remote app
 // will be its own messages, later, not pad input.)
 //
 // A remote pad's identity (its guid) is "net:<16 hex digits of the device
