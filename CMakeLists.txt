@@ -190,6 +190,7 @@ if(MULTITAP_HAVE_ENET)
     add_library(frontend_net STATIC
         net_discovery.cpp
         net_host.cpp
+        net_memory.cpp
         net_noise.cpp
         net_link.cpp
         net_session.cpp
