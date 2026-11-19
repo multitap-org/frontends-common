@@ -15,6 +15,7 @@
 //   --list PATH with --connect: list a folder of the host's game folders
 //               ("" = the game folders themselves; net_content.h)
 //   --load CORE PATH  with --connect: start a game ("" = the core alone)
+//   (what the host runs is printed whenever it says: at connection and on changes)
 //   --dir DIR   where net_probe keeps its device key and paired devices
 //               (net_probe_identity.cfg, net_probe_devices.cfg; default ".")
 //
@@ -337,6 +338,7 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
     std::chrono::steady_clock::time_point pad_start;
     std::chrono::steady_clock::time_point next_state;
     uint32_t states_sent = 0;
+    NetGameState game_state;
     std::chrono::steady_clock::time_point end =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int64_t>(seconds * 1000.0));
     while (!done && std::chrono::steady_clock::now() < end)
@@ -366,6 +368,20 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
             {
                 std::printf("refused: %s\n", refusal_text(event.refusal));
                 done = true;
+            }
+            else if (event.type == NetClientEventType::message && event.channel == NetChannel::control &&
+                     net_content_read_game_state(event.data, event.size, &game_state))
+            {
+                if (game_state.running)
+                {
+                    std::printf("running: %s %s (%s)%s%s\n", game_state.core_name.c_str(),
+                                game_state.core_version.c_str(), game_state.core_file.c_str(),
+                                game_state.game.empty() ? "" : ", ", game_state.game.c_str());
+                }
+                else
+                {
+                    std::printf("running: nothing\n");
+                }
             }
             else if (event.type == NetClientEventType::message && content->ask != ContentAsk::none &&
                      event.channel == NetChannel::control)

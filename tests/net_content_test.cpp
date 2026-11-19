@@ -73,6 +73,24 @@ static void test_requests()
     out[5] = 9;
     check(!net_content_read_load_result(out, size, &id, &status), "unknown status refused");
 
+    NetGameState state;
+    state.running = true;
+    state.core_file = "snes9x_libretro.so";
+    state.core_name = "Snes9x";
+    state.core_version = "1.63";
+    state.game = "Chrono Trigger (USA)";
+    size = net_content_write_game_state(out, sizeof(out), &state);
+    NetGameState read;
+    check(size > 0 && net_content_read_game_state(out, size, &read) && read.running &&
+              read.core_file == "snes9x_libretro.so" && read.core_name == "Snes9x" && read.core_version == "1.63" &&
+              read.game == "Chrono Trigger (USA)",
+          "game_state read");
+    out[1] = 2;
+    check(!net_content_read_game_state(out, size, &read), "game_state with a bad flag refused");
+    NetGameState idle;
+    size = net_content_write_game_state(out, sizeof(out), &idle);
+    check(net_content_read_game_state(out, size, &read) && !read.running && read.game.empty(), "idle game_state read");
+
     std::string long_path(NET_CONTENT_PATH_MAX + 1, 'a');
     check(net_content_write_list_request(out, sizeof(out), 1, 0, long_path.c_str()) == 0, "too long a path not written");
     check(net_content_write_cores_request(out, 8, 1, 0) == 0, "too small a buffer not written");
