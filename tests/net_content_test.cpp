@@ -376,6 +376,8 @@ int main(int argc, char** argv)
     test_paging();
 #if defined(MULTITAP_TEST_ARCHIVES)
     test_folders(argv[1], argv[2]);
+#else
+    (void)argv;   // the folders are only for the archive checks
 #endif
     if (g_failures == 0)
     {

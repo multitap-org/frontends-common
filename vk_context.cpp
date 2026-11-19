@@ -10,7 +10,9 @@
 // Constants
 // ---------------------------------------------------------------------------
 
+#if defined(MULTITAP_VULKAN_VALIDATION)
 static const char* const VALIDATION_LAYER_NAME = "VK_LAYER_KHRONOS_validation";
+#endif
 
 constexpr uint32_t MAX_ENABLED_INSTANCE_EXTENSIONS = 32;
 constexpr uint32_t MAX_ENABLED_DEVICE_EXTENSIONS   = 8;
@@ -63,6 +65,9 @@ bool vk_succeeded(VkResult result, const char* what)
     return false;
 }
 
+// Only the validation layer is looked for (Debug builds): in Release this
+// would be unused, which -Werror refuses.
+#if defined(MULTITAP_VULKAN_VALIDATION)
 static bool instance_layer_available(const char* layer_name)
 {
     uint32_t count = 0;
@@ -88,6 +93,7 @@ static bool instance_layer_available(const char* layer_name)
     delete[] layers;
     return found;
 }
+#endif
 
 static bool instance_extension_available(const char* extension_name)
 {
