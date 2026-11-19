@@ -6,8 +6,8 @@
 # frontend or SDL code) is what's not allowed.
 # A library: it doesn't build alone. The frontend adds hosts-common first,
 # defines imgui, SDL3::SDL3 and Vulkan::Vulkan, and sets MULTITAP_DEPS_DIR to
-# its deps folder (libsamplerate, gamemode; for the resampler tool also
-# libretro-common), built here from their sources.
+# its deps folder (libsamplerate, gamemode, miniz, 7zip; for the resampler
+# tool also libretro-common), built here from their sources.
 
 multitap_require(frontends-common host_common imgui SDL3::SDL3 Vulkan::Vulkan VAR:MULTITAP_DEPS_DIR)
 
@@ -38,6 +38,39 @@ if(MATH_LIBRARY)
     target_link_libraries(multitap_dep_libsamplerate PUBLIC ${MATH_LIBRARY})
 endif()
 
+# miniz (deps/, MIT): zip archives (archive.cpp). Its headers include a
+# CMake-generated miniz_export.h: ours, in the build folder (a static
+# library: nothing to export).
+set(MINIZ_CONFIG "${CMAKE_CURRENT_BINARY_DIR}/miniz_config")
+file(WRITE "${MINIZ_CONFIG}/miniz_export.h" "#pragma once\n#define MINIZ_EXPORT\n")
+add_library(multitap_dep_miniz STATIC
+    "${MULTITAP_DEPS_DIR}/miniz/miniz.c"
+    "${MULTITAP_DEPS_DIR}/miniz/miniz_tdef.c"
+    "${MULTITAP_DEPS_DIR}/miniz/miniz_tinfl.c"
+    "${MULTITAP_DEPS_DIR}/miniz/miniz_zip.c")
+target_include_directories(multitap_dep_miniz SYSTEM PUBLIC "${MULTITAP_DEPS_DIR}/miniz" "${MINIZ_CONFIG}")
+# Large files (zip64) without miniz's own fopen: we read through SDL.
+target_compile_definitions(multitap_dep_miniz PUBLIC MINIZ_NO_STDIO MINIZ_NO_TIME)
+
+# 7-Zip's C code (deps/7zip/C, the LZMA SDK, public domain): 7z archives
+# (archive.cpp). Only the decoder, the same files as 7-Zip's own 7zdec
+# sample (C/Util/7z/makefile.gcc), without its asm.
+set(SEVEN_ZIP_C "${MULTITAP_DEPS_DIR}/7zip/C")
+add_library(multitap_dep_7z STATIC
+    "${SEVEN_ZIP_C}/7zArcIn.c" "${SEVEN_ZIP_C}/7zBuf.c" "${SEVEN_ZIP_C}/7zBuf2.c"
+    "${SEVEN_ZIP_C}/7zCrc.c" "${SEVEN_ZIP_C}/7zCrcOpt.c" "${SEVEN_ZIP_C}/7zDec.c"
+    "${SEVEN_ZIP_C}/7zStream.c" "${SEVEN_ZIP_C}/Bcj2.c" "${SEVEN_ZIP_C}/Bra.c"
+    "${SEVEN_ZIP_C}/Bra86.c" "${SEVEN_ZIP_C}/BraIA64.c" "${SEVEN_ZIP_C}/CpuArch.c"
+    "${SEVEN_ZIP_C}/Delta.c" "${SEVEN_ZIP_C}/Lzma2Dec.c" "${SEVEN_ZIP_C}/LzmaDec.c"
+    "${SEVEN_ZIP_C}/Ppmd7.c" "${SEVEN_ZIP_C}/Ppmd7Dec.c")
+target_include_directories(multitap_dep_7z SYSTEM PUBLIC "${SEVEN_ZIP_C}")
+target_compile_definitions(multitap_dep_7z PRIVATE Z7_PPMD_SUPPORT Z7_EXTRACT_ONLY)
+# Decoding runs when a game loads; optimized even in Debug builds, like libsamplerate.
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(multitap_dep_miniz PRIVATE -O2)
+    target_compile_options(multitap_dep_7z PRIVATE -O2)
+endif()
+
 add_library(frontend_common STATIC
     vk_context.cpp
     vk_swapchain.cpp
@@ -62,6 +95,8 @@ add_library(frontend_common STATIC
     input_config.cpp
     input_sdl_mapping.cpp
     input_layouts.cpp
+    archive.cpp
+    content_cache.cpp
 )
 
 # GameMode (deps/gamemode, BSD-3-Clause): only its client header, which
@@ -76,7 +111,8 @@ else()
 endif()
 
 target_include_directories(frontend_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(frontend_common PUBLIC imgui SDL3::SDL3 Vulkan::Vulkan host_common multitap_dep_libsamplerate)
+target_link_libraries(frontend_common PUBLIC imgui SDL3::SDL3 Vulkan::Vulkan host_common multitap_dep_libsamplerate
+                      PRIVATE multitap_dep_miniz multitap_dep_7z)
 
 # Vulkan validation layers + debug messenger are enabled in Debug builds only.
 target_compile_definitions(frontend_common PRIVATE $<$<CONFIG:Debug>:MULTITAP_VULKAN_VALIDATION=1>)
@@ -169,6 +205,30 @@ if(MULTITAP_BUILD_TESTS)
     add_test(NAME frontend_rate_control COMMAND frontend_rate_control_test)
     set_tests_properties(frontend_rate_control PROPERTIES
                          FAIL_REGULAR_EXPRESSION "ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    # Zip and 7z: a zip the test makes itself (miniz's writer), 7z files
+    # made with 7-Zip (tests/data/README.md says how).
+    add_executable(frontend_archive_test tests/archive_test.cpp)
+    target_link_libraries(frontend_archive_test PRIVATE frontend_common multitap_dep_miniz)
+    multitap_set_project_flags(frontend_archive_test)
+    add_test(NAME frontend_archive
+             COMMAND frontend_archive_test "${CMAKE_CURRENT_SOURCE_DIR}/tests/data" "${CMAKE_CURRENT_BINARY_DIR}/archive_test")
+    set_tests_properties(frontend_archive PROPERTIES
+                         PASS_REGULAR_EXPRESSION "archive: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    add_executable(frontend_content_cache_test tests/content_cache_test.cpp)
+    target_link_libraries(frontend_content_cache_test PRIVATE frontend_common)
+    multitap_set_project_flags(frontend_content_cache_test)
+    set(CONTENT_CACHE_SCRATCH "${CMAKE_CURRENT_BINARY_DIR}/content_cache_test")
+    add_test(NAME frontend_content_cache_clean COMMAND ${CMAKE_COMMAND} -E rm -rf "${CONTENT_CACHE_SCRATCH}")
+    set_tests_properties(frontend_content_cache_clean PROPERTIES FIXTURES_SETUP content_cache_scratch)
+    add_test(NAME frontend_content_cache
+             COMMAND frontend_content_cache_test "${CMAKE_CURRENT_SOURCE_DIR}/tests/data" "${CONTENT_CACHE_SCRATCH}")
+    set_tests_properties(frontend_content_cache PROPERTIES
+                         FIXTURES_REQUIRED content_cache_scratch
+                         PASS_REGULAR_EXPRESSION "content cache: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
     # Only for frontends that have deps/libretro-common (piccoletto doesn't:
     # it runs no cores).

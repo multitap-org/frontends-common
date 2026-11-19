@@ -50,6 +50,7 @@ void app_paths_fill(AppPaths* paths)
     paths->saves = join(root, "saves");
     paths->states = join(root, "states");
     paths->system = join(root, "system");
+    paths->cache = join(root, "cache");
 }
 
 // `value` with a leading `prefix` (followed by a separator or the end)

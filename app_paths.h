@@ -9,7 +9,7 @@
 //   Windows:                next to the executable (portable).
 //   macOS:                  ~/Library/Application Support/<program>.
 //
-// Inside it: settings/, cores/, saves/, states/, system/. The settings may
+// Inside it: settings/, cores/, saves/, states/, system/, cache/. The settings may
 // later point some of them elsewhere; these are the defaults.
 // <program> is "piccolo" for piccolo and "host-libretro" for the test frontend.
 //
@@ -30,6 +30,7 @@ struct AppPaths
     std::string saves;      // <root>/saves
     std::string states;     // <root>/states
     std::string system;     // <root>/system (BIOS and other files cores ask for)
+    std::string cache;      // <root>/cache (files extracted from archives, content_cache.h; safe to delete)
 };
 
 // The old folder's "last used" file (e.g. "piccolo.cfg") is copied to
