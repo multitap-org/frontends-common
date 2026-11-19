@@ -120,6 +120,11 @@ struct InputDevice
     // The user's word on it: auto = ignored only if it looks fake.
     InputIgnore ignore = InputIgnore::automatic;
 
+    // Only for playing: never the interface or hotkeys, even on port 1. Set
+    // for remote devices (input_net): someone on the network plays, but the
+    // menus and hotkeys stay with the people at this machine.
+    bool    game_only = false;
+
     // A mouse: how far it moved since the last end_frame, and where it is
     // in the window (when the system says; not while it is grabbed).
     float   motion_x = 0.0f;

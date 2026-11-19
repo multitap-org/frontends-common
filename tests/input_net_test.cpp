@@ -6,7 +6,10 @@
 //   - a tap (press and release between two delivered packets, the packet in
 //     between lost) still reaches the router as a tap;
 //   - an old packet arriving late changes nothing;
-//   - the peer leaving unplugs the pad; coming back reuses the same device.
+//   - the peer leaving unplugs the pad; coming back reuses the same device;
+//   - a remote pad only plays: on port 1 with the UI up it drives nothing,
+//     and its HOTKEY ENABLE + hotkey fires nothing, while the same buttons
+//     on a local pad on port 1 do.
 //
 // Exit code 0 = all checks passed. Each failure is printed.
 
@@ -117,6 +120,46 @@ int main()
     size = net_input_push(&again, 0, &held, packet, sizeof(packet));
     input_net_receive(net, system, 5, key, "ANA'S PHONE", packet, size);
     check(net->pads[5][0].active && net->pads[5][0].device == device_id, "the same device comes back");
+
+    // Only for playing. A local pad and the remote one, both on port 1.
+    device = input_devices_find_const(&system->devices, net->pads[5][0].device);
+    check(device != nullptr && device->game_only, "remote pads are game-only");
+    check(device != nullptr && !input_devices_ignored(device), "a stick held at plug-in doesn't make it look fake");
+    uint32_t local = input_devices_add(&system->devices, InputDeviceKind::gamepad, "local-pad", "LOCAL PAD");
+    input_add_controllers_for_device(system, local);
+    int32_t local_controller = input_first_controller(system, local);
+    int32_t remote_controller = input_first_controller(system, net->pads[5][0].device);
+    check(local_controller >= 0 && remote_controller >= 0, "both have controllers");
+    if (local_controller >= 0 && remote_controller >= 0)
+    {
+        input_port_add(system, 0, static_cast<uint32_t>(remote_controller));
+        system->settings.ui_active = true;
+        uint32_t down = static_cast<uint32_t>(InputButton::dpad_down);
+        NetPadState pressing;
+        pressing.buttons = bit(InputButton::dpad_down);
+        size = net_input_push(&again, 0, &pressing, packet, sizeof(packet));
+        input_net_receive(net, system, 5, key, "ANA'S PHONE", packet, size);
+        InputFrame frame;
+        input_update(system, 1000, &frame);
+        bool any_ui = false;
+        for (uint32_t a = 0; a < INPUT_ACTION_COUNT; a++)
+        {
+            any_ui = any_ui || frame.held[a] || frame.pressed[a] || frame.gamepad_held[a];
+        }
+        check(!any_ui, "a remote pad on port 1 doesn't drive the interface");
+
+        // The same press on a local pad on port 1 does.
+        input_port_add(system, 0, static_cast<uint32_t>(local_controller));
+        input_devices_set_code(&system->devices, local, down, true);
+        InputFrame local_frame;
+        input_update(system, 1016, &local_frame);
+        bool local_ui = false;
+        for (uint32_t a = 0; a < INPUT_ACTION_COUNT; a++)
+        {
+            local_ui = local_ui || local_frame.held[a];
+        }
+        check(local_ui, "a local pad on port 1 does (the check itself works)");
+    }
 
     delete net;
     delete system;

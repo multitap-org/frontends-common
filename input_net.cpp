@@ -25,6 +25,14 @@ static uint32_t pad_device(InputNet* net, InputSystem* system, uint32_t peer, ui
         std::snprintf(label, sizeof(label), "%s %u", name, static_cast<unsigned>(pad + 1));
     }
     entry->device = input_devices_add(&system->devices, InputDeviceKind::gamepad, guid, label);
+    InputDevice* device = input_devices_find(&system->devices, entry->device);
+    if (device != nullptr)
+    {
+        device->game_only = true;   // plays; never the menus or hotkeys
+        // Never "looks fake": a phone's stick may be held at an edge when its
+        // first state arrives, which the router would take for a stuck receiver.
+        device->ignore = InputIgnore::no;
+    }
     entry->active = true;
     entry->last_frame = 0;
     input_add_controllers_for_device(system, entry->device);

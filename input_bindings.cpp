@@ -1623,9 +1623,11 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         bool joined = port != INPUT_NO_PORT;
         bool on_port1 = input_port_has(system, 0, index);
 
-        // The layer: HOTKEY > INTERFACE > GAME.
-        bool hotkeys = (on_port1 || keyboard) && modifier_active(controller, held, pressed, now_ms);   // (port 1's, like the UI)
-        bool drives_ui = keyboard || on_port1;
+        // The layer: HOTKEY > INTERFACE > GAME. Hotkeys and the interface are
+        // port 1's and the keyboard's, and never a game-only device's (remote).
+        bool local = !device->game_only;
+        bool hotkeys = local && (on_port1 || keyboard) && modifier_active(controller, held, pressed, now_ms);
+        bool drives_ui = local && (keyboard || on_port1);
         InputLayer layer = InputLayer::none;
         if (hotkeys)
         {
@@ -1874,7 +1876,7 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         }
 
         // SELECT held by itself on port 1's gamepad (the UI may use it: hold to go back).
-        if (!keyboard && on_port1 && controller->held_last[modifier] && !controller->modifier_used)
+        if (local && !keyboard && on_port1 && controller->held_last[modifier] && !controller->modifier_used)
         {
             frame->gamepad_enable_alone = true;
         }
