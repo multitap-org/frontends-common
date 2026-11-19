@@ -7,7 +7,7 @@
 # A library: it doesn't build alone. The frontend adds hosts-common first,
 # defines imgui, SDL3::SDL3 and Vulkan::Vulkan, and sets MULTITAP_DEPS_DIR to
 # its deps folder (libsamplerate, gamemode; for the resampler tool also
-# speexdsp and libretro-common), built here from their sources.
+# libretro-common), built here from their sources.
 
 multitap_require(frontends-common host_common imgui SDL3::SDL3 Vulkan::Vulkan VAR:MULTITAP_DEPS_DIR)
 
@@ -175,13 +175,6 @@ if(MULTITAP_BUILD_TESTS)
     # this tool. The one chosen moves into the real audio path later.
     set(MULTITAP_DEPS "${MULTITAP_DEPS_DIR}")
 
-    # speexdsp: only its resampler, built standalone with our own symbol prefix.
-    add_library(multitap_dep_speex_resampler STATIC "${MULTITAP_DEPS}/speexdsp/libspeexdsp/resample.c")
-    target_include_directories(multitap_dep_speex_resampler SYSTEM PUBLIC "${MULTITAP_DEPS}/speexdsp/include/speex")
-    target_include_directories(multitap_dep_speex_resampler PRIVATE "${MULTITAP_DEPS}/speexdsp/libspeexdsp")
-    target_compile_definitions(multitap_dep_speex_resampler PUBLIC OUTSIDE_SPEEX RANDOM_PREFIX=multitap_speex
-                               PRIVATE FLOATING_POINT EXPORT=)
-
     # libretro-common's sinc driver (MIT-style license in the file itself):
     # its C path only (no SIMD mask), plus the aligned allocator it needs.
     add_library(multitap_dep_retro_sinc STATIC
@@ -189,7 +182,7 @@ if(MULTITAP_BUILD_TESTS)
         "${MULTITAP_DEPS}/libretro-common/memmap/memalign.c")
     target_include_directories(multitap_dep_retro_sinc SYSTEM PUBLIC "${MULTITAP_DEPS}/libretro-common/include")
 
-    foreach(dep multitap_dep_speex_resampler multitap_dep_retro_sinc)
+    foreach(dep multitap_dep_retro_sinc)
         if(MATH_LIBRARY)
             target_link_libraries(${dep} PUBLIC ${MATH_LIBRARY})
         endif()
@@ -197,7 +190,7 @@ if(MULTITAP_BUILD_TESTS)
 
     add_executable(resampler_measure tools/resampler_measure.cpp)
     target_link_libraries(resampler_measure PRIVATE SDL3::SDL3 multitap_dep_libsamplerate
-                          multitap_dep_speex_resampler multitap_dep_retro_sinc)
+                          multitap_dep_retro_sinc)
     multitap_set_project_flags(resampler_measure)
     add_test(NAME frontend_resampler_measure COMMAND resampler_measure --quick)
     set_tests_properties(frontend_resampler_measure PROPERTIES
