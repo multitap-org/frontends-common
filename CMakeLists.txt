@@ -1,5 +1,5 @@
 # frontend_common: code shared by every frontend (piccolo, libretro-test-frontend,
-# piccolette, later Multitap): Vulkan instance/device, swapchain, frame
+# piccoletto, later Multitap): Vulkan instance/device, swapchain, frame
 # rendering, Dear ImGui glue, settings, audio output, the input router.
 # Plain static library, no frontend-specific code. Links host_common for its
 # file helpers (host_fs: atomic writes); the other direction (hosts using
@@ -170,30 +170,34 @@ if(MULTITAP_BUILD_TESTS)
     set_tests_properties(frontend_rate_control PROPERTIES
                          FAIL_REGULAR_EXPRESSION "ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
-    # Resampler comparison (plan-milestones, milestone 2): every candidate is
-    # built here from deps/ (read-only, without our warning flags) only for
-    # this tool. The one chosen moves into the real audio path later.
-    set(MULTITAP_DEPS "${MULTITAP_DEPS_DIR}")
+    # Only for frontends that have deps/libretro-common (piccoletto doesn't:
+    # it runs no cores).
+    if(EXISTS "${MULTITAP_DEPS_DIR}/libretro-common/audio/resampler/drivers/sinc_resampler.c")
+        # Resampler comparison (plan-milestones, milestone 2): every candidate is
+        # built here from deps/ (read-only, without our warning flags) only for
+        # this tool. The one chosen moves into the real audio path later.
+        set(MULTITAP_DEPS "${MULTITAP_DEPS_DIR}")
 
-    # libretro-common's sinc driver (MIT-style license in the file itself):
-    # its C path only (no SIMD mask), plus the aligned allocator it needs.
-    add_library(multitap_dep_retro_sinc STATIC
-        "${MULTITAP_DEPS}/libretro-common/audio/resampler/drivers/sinc_resampler.c"
-        "${MULTITAP_DEPS}/libretro-common/memmap/memalign.c")
-    target_include_directories(multitap_dep_retro_sinc SYSTEM PUBLIC "${MULTITAP_DEPS}/libretro-common/include")
+        # libretro-common's sinc driver (MIT-style license in the file itself):
+        # its C path only (no SIMD mask), plus the aligned allocator it needs.
+        add_library(multitap_dep_retro_sinc STATIC
+            "${MULTITAP_DEPS}/libretro-common/audio/resampler/drivers/sinc_resampler.c"
+            "${MULTITAP_DEPS}/libretro-common/memmap/memalign.c")
+        target_include_directories(multitap_dep_retro_sinc SYSTEM PUBLIC "${MULTITAP_DEPS}/libretro-common/include")
 
-    foreach(dep multitap_dep_retro_sinc)
-        if(MATH_LIBRARY)
-            target_link_libraries(${dep} PUBLIC ${MATH_LIBRARY})
-        endif()
-    endforeach()
+        foreach(dep multitap_dep_retro_sinc)
+            if(MATH_LIBRARY)
+                target_link_libraries(${dep} PUBLIC ${MATH_LIBRARY})
+            endif()
+        endforeach()
 
-    add_executable(resampler_measure tools/resampler_measure.cpp)
-    target_link_libraries(resampler_measure PRIVATE SDL3::SDL3 multitap_dep_libsamplerate
-                          multitap_dep_retro_sinc)
-    multitap_set_project_flags(resampler_measure)
-    add_test(NAME frontend_resampler_measure COMMAND resampler_measure --quick)
-    set_tests_properties(frontend_resampler_measure PROPERTIES
-                         PASS_REGULAR_EXPRESSION "all candidates ran"
-                         FAIL_REGULAR_EXPRESSION "FAILED|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+        add_executable(resampler_measure tools/resampler_measure.cpp)
+        target_link_libraries(resampler_measure PRIVATE SDL3::SDL3 multitap_dep_libsamplerate
+                              multitap_dep_retro_sinc)
+        multitap_set_project_flags(resampler_measure)
+        add_test(NAME frontend_resampler_measure COMMAND resampler_measure --quick)
+        set_tests_properties(frontend_resampler_measure PROPERTIES
+                             PASS_REGULAR_EXPRESSION "all candidates ran"
+                             FAIL_REGULAR_EXPRESSION "FAILED|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    endif()
 endif()

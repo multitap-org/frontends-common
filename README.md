@@ -1,7 +1,7 @@
 # frontends-common
 
 Code shared by multitap's frontends (piccolo, libretro-test-frontend,
-piccolette, later Multitap): Vulkan rendering, the window, Dear ImGui glue,
+piccoletto, later Multitap): Vulkan rendering, the window, Dear ImGui glue,
 audio output, settings, localization, and the input router (devices, ports,
 bindings, remaps, combos, macros, turbo, the cursor). No host code.
 
