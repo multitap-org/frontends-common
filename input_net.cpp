@@ -4,12 +4,28 @@
 
 #include "host_log.h"
 
+static void set_retropad(InputSystem* system, uint32_t id, bool retropad)
+{
+    InputDevice* device = input_devices_find(&system->devices, id);
+    if (device != nullptr && device->retropad != retropad)
+    {
+        input_devices_release_all(&system->devices, id);   // nothing stays held across the switch
+        device->retropad = retropad;
+    }
+}
+
 static uint32_t pad_device(InputNet* net, InputSystem* system, uint32_t peer, uint8_t pad, const uint8_t* key,
-                           const char* name)
+                           const char* name, bool retropad)
 {
     InputNetPad* entry = &net->pads[peer][pad];
     if (entry->active)
     {
+        const InputDevice* device = input_devices_find_const(&system->devices, entry->device);
+        if (device != nullptr && device->retropad != retropad)
+        {
+            entry->last_frame = 0;   // the other kind of packet has its own counter
+        }
+        set_retropad(system, entry->device, retropad);
         return entry->device;
     }
     char guid[48];
@@ -35,6 +51,7 @@ static uint32_t pad_device(InputNet* net, InputSystem* system, uint32_t peer, ui
     }
     entry->active = true;
     entry->last_frame = 0;
+    set_retropad(system, entry->device, retropad);
     input_add_controllers_for_device(system, entry->device);
     host_log(LogLevel::info, "Network: pad \"%s\" (%s) plugged in", label, guid);
     return entry->device;
@@ -58,13 +75,28 @@ void input_net_receive(InputNet* net, InputSystem* system, uint32_t peer, const 
 {
     uint8_t pad = 0;
     NetPadState states[NET_INPUT_HISTORY];
+    NetRetroPadState retropads[NET_INPUT_HISTORY];
     uint32_t count = 0;
+    if (peer < NET_MAX_PEERS && net_input_read_retropad(data, size, &pad, retropads, &count))
+    {
+        uint32_t device = pad_device(net, system, peer, pad, key, name, true);
+        InputNetPad* entry = &net->pads[peer][pad];
+        for (uint32_t i = 0; i < count; i++)
+        {
+            if (retropads[i].frame > entry->last_frame)
+            {
+                input_devices_set_retropad(&system->devices, device, retropads[i].buttons, retropads[i].analog);
+                entry->last_frame = retropads[i].frame;
+            }
+        }
+        return;
+    }
     if (peer >= NET_MAX_PEERS || !net_input_read(data, size, &pad, states, &count))
     {
         net->dropped++;
         return;
     }
-    uint32_t device = pad_device(net, system, peer, pad, key, name);
+    uint32_t device = pad_device(net, system, peer, pad, key, name, false);
     InputNetPad* entry = &net->pads[peer][pad];
     // Oldest first, only what's new: a press and release that came in one
     // packet (the one before it was lost) both happen, and the router counts

@@ -189,6 +189,75 @@ int main()
               "but not open the menus");
     }
 
+    // RetroPad packets (type 2): the phone mapped its controls itself; the
+    // router passes them to the port as they are.
+    NetRetroPadSender retro;
+    NetRetroPadState start_state;
+    start_state.buttons = 1u << 3;   // RETRO_DEVICE_ID_JOYPAD_START
+    uint8_t retro_packet[3 + NET_INPUT_HISTORY * NET_RETROPAD_STATE_SIZE];
+    size_t retro_size = net_input_push_retropad(&retro, 1, &start_state, retro_packet, sizeof(retro_packet));
+    uint8_t retro_pad = 0;
+    NetRetroPadState retro_read[NET_INPUT_HISTORY];
+    uint32_t retro_count = 0;
+    check(net_input_read_retropad(retro_packet, retro_size, &retro_pad, retro_read, &retro_count) && retro_pad == 1 &&
+              retro_count == 1 && retro_read[0].buttons == (1u << 3),
+          "RetroPad packet read");
+    check(!net_input_read(retro_packet, retro_size, &pad, read, &count), "a RetroPad packet isn't a pad packet");
+    uint8_t key2[32];
+    for (uint32_t i = 0; i < 32; i++)
+    {
+        key2[i] = static_cast<uint8_t>(0x10 + i);
+    }
+    input_net_receive(net, system, 6, key2, "BEN'S PHONE", retro_packet, retro_size);
+    check(net->pads[6][1].active, "RetroPad device plugged in");
+    uint32_t retro_device = net->pads[6][1].device;
+    device = input_devices_find_const(&system->devices, retro_device);
+    check(device != nullptr && device->retropad && device->game_only, "it's a game-only RetroPad device");
+    InputFrame join_frame;
+    input_update(system, 2000, &join_frame);
+    int32_t retro_port = join_frame.joined_port;
+    check(retro_port != INPUT_NO_PORT, "START on the RetroPad joins a port");
+    input_devices_end_frame(&system->devices);
+    if (retro_port != INPUT_NO_PORT)
+    {
+        uint32_t p = static_cast<uint32_t>(retro_port);
+        NetRetroPadState playing;
+        playing.buttons = (1u << 0) | (1u << 8);   // B and A
+        playing.analog[0][0] = 12345;
+        playing.analog[1][1] = -20000;
+        retro_size = net_input_push_retropad(&retro, 1, &playing, retro_packet, sizeof(retro_packet));
+        input_net_receive(net, system, 6, key2, "BEN'S PHONE", retro_packet, retro_size);
+        InputFrame play_frame;
+        input_update(system, 2016, &play_frame);
+        check(play_frame.pad_buttons[p] == ((1u << 0) | (1u << 8)), "its RetroPad buttons reach the port as they are");
+        check(play_frame.analog[p][0][0] == 12345 && play_frame.analog[p][1][1] == -20000, "and its sticks");
+        input_devices_end_frame(&system->devices);
+
+        // A tap between two frames: pressed and let go in two states that
+        // arrive together.
+        NetRetroPadState none;
+        NetRetroPadState tap;
+        tap.buttons = 1u << 9;   // X
+        retro_size = net_input_push_retropad(&retro, 1, &none, retro_packet, sizeof(retro_packet));
+        input_net_receive(net, system, 6, key2, "BEN'S PHONE", retro_packet, retro_size);
+        InputFrame idle_frame;
+        input_update(system, 2032, &idle_frame);
+        input_devices_end_frame(&system->devices);
+        net_input_push_retropad(&retro, 1, &tap, retro_packet, sizeof(retro_packet));
+        retro_size = net_input_push_retropad(&retro, 1, &none, retro_packet, sizeof(retro_packet));
+        input_net_receive(net, system, 6, key2, "BEN'S PHONE", retro_packet, retro_size);
+        InputFrame tap_frame;
+        input_update(system, 2048, &tap_frame);
+        check((tap_frame.pad_buttons[p] & (1u << 9)) != 0, "a tap between frames reaches the core for a frame");
+        input_devices_end_frame(&system->devices);
+        InputFrame after_tap;
+        input_update(system, 2064, &after_tap);
+        check((after_tap.pad_buttons[p] & (1u << 9)) == 0, "and is let go after it");
+    }
+    input_net_peer_gone(net, system, 6);
+    device = input_devices_find_const(&system->devices, retro_device);
+    check(device != nullptr && !device->connected && device->retropad_buttons == 0, "RetroPad device unplugged");
+
     delete net;
     delete system;
     if (g_failures == 0)

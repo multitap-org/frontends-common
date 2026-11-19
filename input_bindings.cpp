@@ -1172,6 +1172,14 @@ static float set_value(const InputBindingSet* set, const InputDevice* device, In
 
 static float action_value(const InputController* controller, const InputDevice* device, InputAction action)
 {
+    if (device->retropad)
+    {
+        // A RetroPad device has no bindings: its RetroPad buttons are its
+        // own (START joins a port); nothing else (no interface, no hotkeys).
+        uint32_t index = index_of(action);
+        uint16_t buttons = static_cast<uint16_t>(device->retropad_buttons | device->retropad_tapped);
+        return index < INPUT_PAD_BUTTON_COUNT && (buttons & (1u << index)) != 0 ? 1.0f : 0.0f;
+    }
     float value = 0.0f;
     const InputSource* slots = controller->bindings.sources[index_of(action)];
     for (uint32_t s = 0; s < INPUT_SOURCES_PER_ACTION; s++)
@@ -1729,6 +1737,24 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             {
                 if (!input_port_has(system, play_port, index))
                 {
+                    continue;
+                }
+                if (device->retropad)
+                {
+                    // Already the core's RetroPad (the remote app mapped it).
+                    uint16_t buttons = static_cast<uint16_t>(device->retropad_buttons | device->retropad_tapped);
+                    frame->pad_buttons[play_port] = static_cast<uint16_t>(frame->pad_buttons[play_port] | buttons);
+                    for (int s = 0; s < 2; s++)
+                    {
+                        const int16_t* axes = device->retropad_analog[s];
+                        int32_t reach = static_cast<int32_t>(axes[0]) * axes[0] / 2 + static_cast<int32_t>(axes[1]) * axes[1] / 2;
+                        if (reach > stick_reach[play_port][s])
+                        {
+                            stick_reach[play_port][s] = reach;
+                            frame->analog[play_port][s][0] = axes[0];
+                            frame->analog[play_port][s][1] = axes[1];
+                        }
+                    }
                     continue;
                 }
                 InputBindingSet effective = {};

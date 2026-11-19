@@ -87,3 +87,75 @@ bool net_input_read(const uint8_t* data, size_t size, uint8_t* pad, NetPadState*
     }
     return true;
 }
+
+static void write_u16(uint8_t* out, uint16_t value)
+{
+    out[0] = static_cast<uint8_t>(value & 0xFF);
+    out[1] = static_cast<uint8_t>(value >> 8);
+}
+
+static uint16_t read_u16(const uint8_t* data)
+{
+    return static_cast<uint16_t>(data[0] | (data[1] << 8));
+}
+
+size_t net_input_push_retropad(NetRetroPadSender* sender, uint8_t pad, const NetRetroPadState* state, uint8_t* out,
+                               size_t capacity)
+{
+    for (uint32_t i = NET_INPUT_HISTORY - 1; i > 0; i--)
+    {
+        sender->history[i] = sender->history[i - 1];
+    }
+    sender->history[0] = *state;
+    sender->history[0].frame = sender->next_frame;
+    sender->next_frame++;
+    if (sender->count < NET_INPUT_HISTORY)
+    {
+        sender->count++;
+    }
+    size_t size = 3 + sender->count * NET_RETROPAD_STATE_SIZE;
+    if (capacity < size)
+    {
+        return 0;
+    }
+    out[0] = NET_INPUT_TYPE_RETROPAD;
+    out[1] = pad;
+    out[2] = static_cast<uint8_t>(sender->count);
+    uint8_t* at = out + 3;
+    for (uint32_t i = 0; i < sender->count; i++)
+    {
+        const NetRetroPadState* entry = &sender->history[i];
+        write_u32(at, entry->frame);
+        write_u16(at + 4, entry->buttons);
+        write_i16(at + 6, entry->analog[0][0]);
+        write_i16(at + 8, entry->analog[0][1]);
+        write_i16(at + 10, entry->analog[1][0]);
+        write_i16(at + 12, entry->analog[1][1]);
+        at += NET_RETROPAD_STATE_SIZE;
+    }
+    return size;
+}
+
+bool net_input_read_retropad(const uint8_t* data, size_t size, uint8_t* pad, NetRetroPadState* states,
+                             uint32_t* count)
+{
+    if (size < 3 || data[0] != NET_INPUT_TYPE_RETROPAD || data[1] >= NET_INPUT_MAX_PADS || data[2] == 0 ||
+        data[2] > NET_INPUT_HISTORY || size != 3 + data[2] * NET_RETROPAD_STATE_SIZE)
+    {
+        return false;
+    }
+    *pad = data[1];
+    *count = data[2];
+    for (uint32_t i = 0; i < *count; i++)
+    {
+        const uint8_t* at = data + 3 + (*count - 1 - i) * NET_RETROPAD_STATE_SIZE;
+        NetRetroPadState* state = &states[i];
+        state->frame = read_u32(at);
+        state->buttons = read_u16(at + 4);
+        state->analog[0][0] = read_i16(at + 6);
+        state->analog[0][1] = read_i16(at + 8);
+        state->analog[1][0] = read_i16(at + 10);
+        state->analog[1][1] = read_i16(at + 12);
+    }
+    return true;
+}

@@ -19,12 +19,29 @@
 //   client -> host  actions_request   id u32 | language
 //   host -> client  actions_result    id u32 | count u16 | count x action   (id 0 = sent unasked: the list changed)
 //   client -> host  action            key | pressed u8
+//   client -> host  controllers_request  id u32
+//   host -> client  controllers       id u32 | pad_ports 4 x i8 | port_count u8 | port_count x port
+//                                     (id 0 = sent unasked: something in it changed)
+//   client -> host  port_device       pad u8 | device u32
 //
 //   setting = type u8 | flags u8 | page | subpage | section | label | help |
 //             min i32 | max i32 | step i32 | min_real | max_real | step_real |
 //             choice_count u16 | choice_count x { key | label } | values
 //   values  = key | set u8 | global | core | game | effective | source u8
 //   action  = key | label | kind u8 | state u32
+//   port    = device u32 | device_count u16 | device_count x { id u32 | name } |
+//             descriptor_count u16 | descriptor_count x { device u8 | index u8 | id u8 | name }
+//
+// Controllers: what the core expects on each port, for an app that maps its
+// controls itself and sends RetroPad (net_input.h type 2; Andrés: the phone
+// does the mapping). Per port, the devices the core offers there ("SNES
+// Joypad", "SNES Mouse": its controller info; ids are RETRO_DEVICE_* values)
+// and the one in use, and what its buttons and sticks do (the core's input
+// descriptors: device, index and id as libretro numbers them, "B", "Left
+// Analog X"). `pad_ports` says which port each of this device's pads
+// (0..3) plays on, -1 = none. port_device asks to change the device on the
+// port one of this device's pads plays on (any access level: its own port
+// only; FULL devices can change any port through the settings).
 //
 // `language` is a code ("es"); the host answers in it when it has it, else
 // in English. Layers are SettingLayer's numbers (1 global, 2 core, 3 game);
@@ -51,6 +68,9 @@ enum class NetSettingsMessage : uint8_t
     actions_request = 17,
     actions_result = 18,
     action = 19,
+    controllers_request = 20,
+    controllers = 21,
+    port_device = 22,
     settings_request = 136,
     settings_result = 137,
     setting_set = 138,
@@ -115,6 +135,35 @@ struct NetAction
     uint32_t      state = 0;   // toggle: on / off; others: what the host shows next to it (the slot)
 };
 
+struct NetPortDevice
+{
+    uint32_t    id = 0;   // RETRO_DEVICE_* (with subclass)
+    std::string name;     // "SNES Joypad"
+};
+
+struct NetPortDescriptor
+{
+    uint8_t     device = 0;   // RETRO_DEVICE_JOYPAD, RETRO_DEVICE_ANALOG...
+    uint8_t     index = 0;
+    uint8_t     id = 0;
+    std::string name;         // "B", "Left Analog X"
+};
+
+struct NetPort
+{
+    uint32_t                       device = 0;   // in use now
+    std::vector<NetPortDevice>     devices;      // what the core offers here (may be empty: it said nothing)
+    std::vector<NetPortDescriptor> descriptors;
+};
+
+constexpr uint32_t NET_CONTROLLERS_PADS = 4;   // NET_INPUT_MAX_PADS
+
+struct NetControllers
+{
+    int8_t               pad_ports[NET_CONTROLLERS_PADS] = {-1, -1, -1, -1};
+    std::vector<NetPort> ports;
+};
+
 // --- messages ---------------------------------------------------------------
 // Writers return the size (0 if it doesn't fit); readers are false unless
 // the payload is exactly that message.
@@ -150,6 +199,15 @@ bool   net_settings_read_actions(const uint8_t* data, size_t size, uint32_t* id,
 
 size_t net_settings_write_action(uint8_t* out, size_t capacity, const char* key, bool pressed);
 bool   net_settings_read_action(const uint8_t* data, size_t size, std::string* key, bool* pressed);
+
+size_t net_settings_write_controllers_request(uint8_t* out, size_t capacity, uint32_t id);
+bool   net_settings_read_controllers_request(const uint8_t* data, size_t size, uint32_t* id);
+
+size_t net_settings_write_controllers(uint8_t* out, size_t capacity, uint32_t id, const NetControllers* controllers);
+bool   net_settings_read_controllers(const uint8_t* data, size_t size, uint32_t* id, NetControllers* controllers);
+
+size_t net_settings_write_port_device(uint8_t* out, size_t capacity, uint8_t pad, uint32_t device);
+bool   net_settings_read_port_device(const uint8_t* data, size_t size, uint8_t* pad, uint32_t* device);
 
 // --- the host's side ----------------------------------------------------------
 

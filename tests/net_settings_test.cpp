@@ -101,6 +101,45 @@ static void test_messages()
     size = net_settings_write_actions_request(out, sizeof(out), 8, "en");
     check(net_settings_read_actions_request(out, size, &id, &language) && id == 8 && language == "en",
           "actions_request read");
+    NetControllers controllers;
+    controllers.pad_ports[0] = 1;
+    NetPort port;
+    port.device = 1;
+    NetPortDevice joypad;
+    joypad.id = 1;
+    joypad.name = "SNES Joypad";
+    port.devices.push_back(joypad);
+    NetPortDevice mouse;
+    mouse.id = 2;
+    mouse.name = "SNES Mouse";
+    port.devices.push_back(mouse);
+    NetPortDescriptor b_button;
+    b_button.device = 1;
+    b_button.id = 0;
+    b_button.name = "B";
+    port.descriptors.push_back(b_button);
+    controllers.ports.push_back(port);
+    controllers.ports.push_back(NetPort{});
+    NetControllers controllers_read;
+    size = net_settings_write_controllers(out, sizeof(out), 0, &controllers);
+    check(net_settings_read_controllers(out, size, &id, &controllers_read) && id == 0 &&
+              controllers_read.pad_ports[0] == 1 && controllers_read.pad_ports[1] == -1 &&
+              controllers_read.ports.size() == 2 && controllers_read.ports[0].devices.size() == 2 &&
+              controllers_read.ports[0].devices[1].name == "SNES Mouse" &&
+              controllers_read.ports[0].descriptors.size() == 1 && controllers_read.ports[0].descriptors[0].name == "B" &&
+              controllers_read.ports[1].devices.empty(),
+          "controllers read");
+    check(!net_settings_read_controllers(out, size - 1, &id, &controllers_read), "controllers cut refused");
+    uint8_t which_pad = 9;
+    uint32_t which_device = 0;
+    size = net_settings_write_port_device(out, sizeof(out), 0, 2);
+    check(net_settings_read_port_device(out, size, &which_pad, &which_device) && which_pad == 0 && which_device == 2,
+          "port_device read");
+    size = net_settings_write_port_device(out, sizeof(out), 7, 2);
+    check(!net_settings_read_port_device(out, size, &which_pad, &which_device), "port_device for pad 7 refused");
+    size = net_settings_write_controllers_request(out, sizeof(out), 3);
+    check(net_settings_read_controllers_request(out, size, &id) && id == 3, "controllers_request read");
+
     bool pressed = false;
     size = net_settings_write_action(out, sizeof(out), "fast_forward", true);
     check(net_settings_read_action(out, size, &key, &pressed) && key == "fast_forward" && pressed, "action read");

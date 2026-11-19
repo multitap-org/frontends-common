@@ -126,6 +126,15 @@ struct InputDevice
     // stay with the people at this machine.
     bool    game_only = false;
 
+    // A RetroPad from the network (input_net): the remote app already mapped
+    // its controls to the core's RetroPad (Andrés: the phone does the
+    // mapping), so the router hands these to the device's port as they are:
+    // no bindings, remaps, turbo or combos. START still joins a port.
+    bool     retropad = false;
+    uint16_t retropad_buttons = 0;        // bit N = RETRO_DEVICE_ID_JOYPAD_N, held now
+    uint16_t retropad_tapped = 0;         // went down since the last end_frame (a tap inside one frame counts)
+    int16_t  retropad_analog[2][2] = {};  // [left/right][x/y], -0x7fff..0x7fff
+
     // A mouse: how far it moved since the last end_frame, and where it is
     // in the window (when the system says; not while it is grabbed).
     float   motion_x = 0.0f;
@@ -148,6 +157,9 @@ void     input_devices_disconnect(InputDevices* devices, uint32_t id);
 
 InputDevice*       input_devices_find(InputDevices* devices, uint32_t id);
 const InputDevice* input_devices_find_const(const InputDevices* devices, uint32_t id);
+
+// A RetroPad device's state (see InputDevice::retropad).
+void input_devices_set_retropad(InputDevices* devices, uint32_t id, uint16_t buttons, const int16_t analog[2][2]);
 
 // Keys (keyboard) and buttons (gamepad) share the code space of `held`.
 void input_devices_set_code(InputDevices* devices, uint32_t id, uint32_t code, bool down);

@@ -22,6 +22,11 @@
 //   --actions   with --connect: what this device may trigger
 //   --action KEY  with --connect: trigger it (a hold action is held for a second)
 //   --lang CODE the language to ask for (default "en")
+//   --retropad  like --pad, but RetroPad states (net_input type 2: START, then
+//               RIGHT, B, the left stick), as an app that maps its controls itself
+//   --controllers  with --connect: what the core expects on each port
+//   --port-device PAD DEVICE  with --connect: change the device on the port
+//               this device's PAD plays on (DEVICE: a RETRO_DEVICE_* number)
 //   --dir DIR   where net_probe keeps its device key and paired devices
 //               (net_probe_identity.cfg, net_probe_devices.cfg; default ".")
 //
@@ -212,6 +217,34 @@ static void pad_script(double t, NetPadState* state)
     }
 }
 
+// The same script as RetroPad bits (RETRO_DEVICE_ID_JOYPAD_*).
+static void retropad_script(double t, NetRetroPadState* state)
+{
+    *state = {};
+    if (t < 0.3)
+    {
+        return;
+    }
+    if (t < 0.6)
+    {
+        state->buttons = 1u << 3;   // START
+        return;
+    }
+    double cycle = std::fmod(t - 0.6, 1.2);
+    if (cycle < 0.3)
+    {
+        state->buttons = 1u << 7;   // RIGHT
+    }
+    else if (cycle < 0.4)
+    {
+        state->buttons = 1u << 0;   // B, a short press
+    }
+    else if (cycle < 0.8)
+    {
+        state->analog[0][0] = -32767;   // left stick full left
+    }
+}
+
 // --cores / --list / --load: one request, its pages printed as they come.
 enum class ContentAsk
 {
@@ -223,6 +256,8 @@ enum class ContentAsk
     set,
     actions,
     action,
+    controllers,
+    port_device,
 };
 
 struct ContentProbe
@@ -234,6 +269,8 @@ struct ContentProbe
     const char* key = "";
     const char* value = "";
     const char* language = "en";
+    uint32_t    pad_index = 0;
+    uint32_t    device = 0;
     uint32_t    received = 0;
 };
 
@@ -289,6 +326,11 @@ static void content_send(NetClient* client, ContentProbe* probe)
     {
         size = net_settings_write_action(out.data(), out.size(), probe->key, true);
     }
+    else if (probe->ask == ContentAsk::controllers)
+    {
+        size = net_settings_write_controllers_request(out.data(), out.size(), 1);
+    }
+
     if (size > 0)
     {
         net_client_send(client, NetChannel::control, out.data(), size);
@@ -378,6 +420,29 @@ static bool content_receive_settings(NetClient* client, ContentProbe* probe, con
         }
         return false;
     }
+    NetControllers controllers;
+    if (net_settings_read_controllers(data, size, &id, &controllers))
+    {
+        std::printf("controllers%s: pads on ports %d %d %d %d (0 = none)\n", id == 0 ? " (sent unasked)" : "",
+                    controllers.pad_ports[0] + 1, controllers.pad_ports[1] + 1, controllers.pad_ports[2] + 1,
+                    controllers.pad_ports[3] + 1);
+        for (size_t p = 0; p < controllers.ports.size(); p++)
+        {
+            const NetPort* port = &controllers.ports[p];
+            std::printf("  port %zu: device %u, offers", p + 1, port->device);
+            for (size_t d = 0; d < port->devices.size(); d++)
+            {
+                std::printf(" %u=\"%s\"", port->devices[d].id, port->devices[d].name.c_str());
+            }
+            std::printf("; %zu descriptors", port->descriptors.size());
+            for (size_t d = 0; d < port->descriptors.size() && d < 4; d++)
+            {
+                std::printf(" \"%s\"", port->descriptors[d].name.c_str());
+            }
+            std::printf("\n");
+        }
+        return id != 0 && probe->ask == ContentAsk::controllers;
+    }
     std::vector<NetAction> actions;
     if (net_settings_read_actions(data, size, &id, &actions))
     {
@@ -431,14 +496,15 @@ static bool content_receive(NetClient* client, ContentProbe* probe, const uint8_
         return true;
     }
     else if (probe->ask == ContentAsk::settings || probe->ask == ContentAsk::set || probe->ask == ContentAsk::actions ||
-             probe->ask == ContentAsk::action)
+             probe->ask == ContentAsk::action || probe->ask == ContentAsk::controllers ||
+             probe->ask == ContentAsk::port_device)
     {
         bool done = content_receive_settings(client, probe, data, size);
         if (probe->ask == ContentAsk::settings)
         {
             return probe->received == UINT32_MAX;
         }
-        return done && probe->ask == ContentAsk::actions;   // --set / --action: listen until --seconds ends
+        return done && (probe->ask == ContentAsk::actions || probe->ask == ContentAsk::controllers);   // --set / --action: listen until --seconds ends
     }
     else
     {
@@ -459,7 +525,7 @@ static bool content_receive(NetClient* client, ContentProbe* probe, const uint8_
 }
 
 static int run_client(uint16_t port, double seconds, const char* at, const char* code, const std::string* dir,
-                      bool pad, ContentProbe* content)
+                      bool pad, bool retropad, ContentProbe* content)
 {
     NetKeypair identity;
     NetAddress address;
@@ -484,6 +550,7 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
     uint32_t states_sent = 0;
     NetGameState game_state;
     bool action_released = false;
+    NetRetroPadSender retropad_sender;
     std::chrono::steady_clock::time_point end =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int64_t>(seconds * 1000.0));
     while (!done && std::chrono::steady_clock::now() < end)
@@ -543,6 +610,16 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
                 done = true;
             }
         }
+        // --port-device: a second in, so a --retropad pad has joined a port.
+        if (content->ask == ContentAsk::port_device && ready && !action_released &&
+            std::chrono::steady_clock::now() - pad_start > std::chrono::seconds(1))
+        {
+            uint8_t request[16];
+            size_t size = net_settings_write_port_device(request, sizeof(request),
+                                                         static_cast<uint8_t>(content->pad_index), content->device);
+            net_client_send(client, NetChannel::control, request, size);
+            action_released = true;
+        }
         // --action: released a second after the press (a hold action needs it).
         if (content->ask == ContentAsk::action && ready && !action_released &&
             std::chrono::steady_clock::now() - pad_start > std::chrono::seconds(1))
@@ -556,10 +633,21 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
         std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
         if (pad && ready && now >= next_state)
         {
-            NetPadState state;
-            pad_script(std::chrono::duration<double>(now - pad_start).count(), &state);
-            uint8_t packet[NET_INPUT_MAX_PACKET];
-            size_t size = net_input_push(&sender, 0, &state, packet, sizeof(packet));
+            uint8_t packet[3 + NET_INPUT_HISTORY * NET_RETROPAD_STATE_SIZE];
+            size_t size = 0;
+            double t = std::chrono::duration<double>(now - pad_start).count();
+            if (retropad)
+            {
+                NetRetroPadState state;
+                retropad_script(t, &state);
+                size = net_input_push_retropad(&retropad_sender, 0, &state, packet, sizeof(packet));
+            }
+            else
+            {
+                NetPadState state;
+                pad_script(t, &state);
+                size = net_input_push(&sender, 0, &state, packet, sizeof(packet));
+            }
             if (net_client_send(client, NetChannel::input, packet, size))
             {
                 states_sent++;
@@ -644,6 +732,7 @@ int main(int argc, char** argv)
     const char* pair_code = nullptr;
     std::string dir = ".";
     bool pad = false;
+    bool retropad = false;
     ContentProbe content;
     for (int i = 1; i < argc; i++)
     {
@@ -683,6 +772,21 @@ int main(int argc, char** argv)
             content.ask = ContentAsk::load;
             content.core = argv[++i];
             content.path = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "--retropad") == 0)
+        {
+            pad = true;
+            retropad = true;
+        }
+        else if (std::strcmp(argv[i], "--controllers") == 0)
+        {
+            content.ask = ContentAsk::controllers;
+        }
+        else if (std::strcmp(argv[i], "--port-device") == 0 && i + 2 < argc)
+        {
+            content.ask = ContentAsk::port_device;
+            content.pad_index = static_cast<uint32_t>(std::atoi(argv[++i]));
+            content.device = static_cast<uint32_t>(std::atoi(argv[++i]));
         }
         else if (std::strcmp(argv[i], "--settings") == 0)
         {
@@ -737,7 +841,7 @@ int main(int argc, char** argv)
     }
     else if (connect != nullptr)
     {
-        result = run_client(port, seconds < 3.0 ? 3.0 : seconds, connect, pair_code, &dir, pad, &content);
+        result = run_client(port, seconds < 3.0 ? 3.0 : seconds, connect, pair_code, &dir, pad, retropad, &content);
     }
     else
     {
