@@ -230,7 +230,8 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
         {
             if (event.type == NetClientEventType::ready)
             {
-                std::printf("%s \"%s\", ", event.newly_paired ? "paired with" : "welcomed by", client->host_name);
+                std::printf("%s \"%s\" (access: %s), ", event.newly_paired ? "paired with" : "welcomed by",
+                            client->host_name, net_access_level_name(event.access));
                 print_key("its key is", client->host_key);
                 std::vector<uint8_t> control = app_message("hello on control");
                 std::vector<uint8_t> input = app_message("hello on input");
