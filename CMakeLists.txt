@@ -6,8 +6,8 @@
 # frontend or SDL code) is what's not allowed.
 # A library: it doesn't build alone. The frontend adds hosts-common first,
 # defines imgui, SDL3::SDL3 and Vulkan::Vulkan, and sets MULTITAP_DEPS_DIR to
-# its deps folder (libsamplerate, gamemode, miniz, 7zip; for the resampler
-# tool also libretro-common), built here from their sources.
+# its deps folder (libsamplerate, gamemode, miniz, 7zip, enet, monocypher; for the
+# resampler tool also libretro-common), built here from their sources.
 
 multitap_require(frontends-common host_common imgui SDL3::SDL3 Vulkan::Vulkan VAR:MULTITAP_DEPS_DIR)
 
@@ -81,6 +81,58 @@ if(EXISTS "${MULTITAP_DEPS_DIR}/miniz/miniz_zip.c" AND EXISTS "${MULTITAP_DEPS_D
     endif()
 endif()
 
+# ENet (deps/enet, MIT): connections over UDP for frontend_net. Built from
+# its sources without our warning flags. Its configure checks are replaced by
+# what every POSIX system we target has (Linux, macOS, Android); Windows uses
+# win32.c and Winsock instead.
+# Optional: only frontends whose deps/ has enet get frontend_net (others,
+# like libretro-test-frontend, build as before).
+set(MULTITAP_ENET "${MULTITAP_DEPS_DIR}/enet")
+if(EXISTS "${MULTITAP_ENET}/host.c")
+    set(MULTITAP_HAVE_ENET ON)
+else()
+    set(MULTITAP_HAVE_ENET OFF)
+endif()
+if(MULTITAP_HAVE_ENET)
+    add_library(multitap_dep_enet STATIC
+        "${MULTITAP_ENET}/callbacks.c"
+        "${MULTITAP_ENET}/compress.c"
+        "${MULTITAP_ENET}/host.c"
+        "${MULTITAP_ENET}/list.c"
+        "${MULTITAP_ENET}/packet.c"
+        "${MULTITAP_ENET}/peer.c"
+        "${MULTITAP_ENET}/protocol.c")
+    target_include_directories(multitap_dep_enet SYSTEM PUBLIC "${MULTITAP_ENET}/include")
+    if(WIN32)
+        target_sources(multitap_dep_enet PRIVATE "${MULTITAP_ENET}/win32.c")
+        target_link_libraries(multitap_dep_enet PUBLIC ws2_32 winmm)
+    else()
+        target_sources(multitap_dep_enet PRIVATE "${MULTITAP_ENET}/unix.c")
+        target_compile_definitions(multitap_dep_enet PRIVATE
+            HAS_FCNTL=1 HAS_POLL=1 HAS_GETADDRINFO=1 HAS_GETNAMEINFO=1 HAS_INET_PTON=1 HAS_INET_NTOP=1
+            HAS_MSGHDR_FLAGS=1 HAS_SOCKLEN_T=1)
+    endif()
+endif()
+
+# Monocypher (deps/monocypher, BSD-2-Clause or CC0): X25519, ChaCha20-Poly1305
+# and BLAKE2b for frontend_net's Noise handshake. One C file; built without
+# our warning flags. Optional like ENet.
+set(MULTITAP_MONOCYPHER "${MULTITAP_DEPS_DIR}/monocypher")
+if(MULTITAP_HAVE_ENET AND NOT EXISTS "${MULTITAP_MONOCYPHER}/src/monocypher.c")
+    message(FATAL_ERROR "deps/enet is there but deps/monocypher isn't: frontend_net needs both")
+endif()
+if(MULTITAP_HAVE_ENET)
+    # optional/: SHA-512, for CPace (pairing).
+    add_library(multitap_dep_monocypher STATIC "${MULTITAP_MONOCYPHER}/src/monocypher.c"
+                "${MULTITAP_MONOCYPHER}/src/optional/monocypher-ed25519.c")
+    target_include_directories(multitap_dep_monocypher SYSTEM PUBLIC "${MULTITAP_MONOCYPHER}/src"
+                               "${MULTITAP_MONOCYPHER}/src/optional")
+    # Optimized even in Debug builds: handshakes and every packet go through it.
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(multitap_dep_monocypher PRIVATE -O2)
+    endif()
+endif()
+
 add_library(frontend_common STATIC
     vk_context.cpp
     vk_barrier.cpp
@@ -131,6 +183,49 @@ endif()
 target_compile_definitions(frontend_common PRIVATE $<$<CONFIG:Debug>:MULTITAP_VULKAN_VALIDATION=1>)
 
 multitap_set_project_flags(frontend_common)
+
+if(MULTITAP_HAVE_ENET)
+    # frontend_net: the network layer (one UDP port: ENet + our own datagrams,
+    # see net_host.h). Its own library so frontends without networking don't
+    # link ENet. It calls no SDL itself (it links frontend_common only for
+    # settings_file).
+    add_library(frontend_net STATIC
+        net_discovery.cpp
+        net_host.cpp
+        net_memory.cpp
+        net_noise.cpp
+        net_link.cpp
+        net_session.cpp
+        net_cpace.cpp
+        net_trust.cpp
+        net_pairing.cpp
+        net_access.cpp
+        net_client.cpp
+        net_content.cpp
+        net_wire.cpp
+        net_settings.cpp
+        net_input.cpp
+        input_net.cpp
+    )
+    if(MULTITAP_ARCHIVES)
+        target_sources(frontend_net PRIVATE net_content_folders.cpp)   # the host's game folders browse archives
+    endif()
+    if(WIN32)
+        target_sources(frontend_net PRIVATE net_random_windows.cpp)
+        target_link_libraries(frontend_net PRIVATE bcrypt)
+    else()
+        target_sources(frontend_net PRIVATE net_random_posix.cpp)
+    endif()
+    target_include_directories(frontend_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    # frontend_common: settings_file (the trust and identity files).
+    target_link_libraries(frontend_net PUBLIC host_common frontend_common PRIVATE multitap_dep_enet multitap_dep_monocypher)
+    multitap_set_project_flags(frontend_net)
+
+    # net_probe: LAN discovery on a real network, without a frontend.
+    add_executable(net_probe tools/net_probe.cpp)
+    target_link_libraries(net_probe PRIVATE frontend_net)
+    multitap_set_project_flags(net_probe)
+endif()
 
 # Build-time tool: a frontend's strings.txt -> its string IDs, English table
 # and .pot (see tools/strings_generator.cpp).
@@ -288,4 +383,55 @@ if(MULTITAP_BUILD_TESTS)
                              PASS_REGULAR_EXPRESSION "all candidates ran"
                              FAIL_REGULAR_EXPRESSION "FAILED|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
     endif()
+endif()
+
+if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
+    # Discovery packets, then a listener and a client over loopback.
+    add_executable(frontend_net_test tests/net_test.cpp)
+    target_link_libraries(frontend_net_test PRIVATE frontend_net multitap_dep_enet)
+    multitap_set_project_flags(frontend_net_test)
+    add_test(NAME frontend_net COMMAND frontend_net_test "${CMAKE_CURRENT_BINARY_DIR}/net_test")
+    set_tests_properties(frontend_net PROPERTIES
+                         PASS_REGULAR_EXPRESSION "all net checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    # Games from a client: messages, pages, and the game folders (with archives).
+    add_executable(frontend_net_content_test tests/net_content_test.cpp)
+    target_link_libraries(frontend_net_content_test PRIVATE frontend_net)
+    if(MULTITAP_ARCHIVES)
+        target_compile_definitions(frontend_net_content_test PRIVATE MULTITAP_TEST_ARCHIVES)
+    endif()
+    multitap_set_project_flags(frontend_net_content_test)
+    add_test(NAME frontend_net_content
+             COMMAND frontend_net_content_test "${CMAKE_CURRENT_SOURCE_DIR}/tests/data" "${CMAKE_CURRENT_BINARY_DIR}/net_content_test")
+    set_tests_properties(frontend_net_content PROPERTIES
+                         PASS_REGULAR_EXPRESSION "net content: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    # Settings and actions from a client: messages, pages, the host's side.
+    add_executable(frontend_net_settings_test tests/net_settings_test.cpp)
+    target_link_libraries(frontend_net_settings_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_net_settings_test)
+    add_test(NAME frontend_net_settings COMMAND frontend_net_settings_test)
+    set_tests_properties(frontend_net_settings PROPERTIES
+                         PASS_REGULAR_EXPRESSION "net settings: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    # Remote pads: packets, then into the router.
+    add_executable(frontend_input_net_test tests/input_net_test.cpp)
+    target_link_libraries(frontend_input_net_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_input_net_test)
+    add_test(NAME frontend_input_net COMMAND frontend_input_net_test)
+    set_tests_properties(frontend_input_net PROPERTIES
+                         PASS_REGULAR_EXPRESSION "all input_net checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    # The Noise handshake against the official test vector, then failures.
+    add_executable(frontend_net_noise_test tests/net_noise_test.cpp)
+    target_link_libraries(frontend_net_noise_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_net_noise_test)
+    add_test(NAME frontend_net_noise COMMAND frontend_net_noise_test)
+    set_tests_properties(frontend_net_noise PROPERTIES
+                         PASS_REGULAR_EXPRESSION "all noise checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 endif()

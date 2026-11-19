@@ -14,6 +14,8 @@ static void release(InputDevice* device)
     {
         device->axes[a] = 0.0f;
     }
+    device->retropad_buttons = 0;
+    std::memset(device->retropad_analog, 0, sizeof(device->retropad_analog));
 }
 
 uint32_t input_devices_add(InputDevices* devices, InputDeviceKind kind, const char* guid, const char* name)
@@ -130,9 +132,22 @@ void input_devices_end_frame(InputDevices* devices)
     for (size_t i = 0; i < devices->devices.size(); i++)
     {
         std::memset(devices->devices[i].tapped, 0, sizeof(devices->devices[i].tapped));
+        devices->devices[i].retropad_tapped = 0;
         devices->devices[i].motion_x = 0.0f;
         devices->devices[i].motion_y = 0.0f;
     }
+}
+
+void input_devices_set_retropad(InputDevices* devices, uint32_t id, uint16_t buttons, const int16_t analog[2][2])
+{
+    InputDevice* device = input_devices_find(devices, id);
+    if (device == nullptr)
+    {
+        return;
+    }
+    device->retropad_tapped = static_cast<uint16_t>(device->retropad_tapped | (buttons & ~device->retropad_buttons));
+    device->retropad_buttons = buttons;
+    std::memcpy(device->retropad_analog, analog, sizeof(device->retropad_analog));
 }
 
 void input_devices_add_motion(InputDevices* devices, uint32_t id, float dx, float dy)

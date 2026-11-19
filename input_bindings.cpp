@@ -1172,6 +1172,14 @@ static float set_value(const InputBindingSet* set, const InputDevice* device, In
 
 static float action_value(const InputController* controller, const InputDevice* device, InputAction action)
 {
+    if (device->retropad)
+    {
+        // A RetroPad device has no bindings: its RetroPad buttons are its
+        // own (START joins a port); nothing else (no interface, no hotkeys).
+        uint32_t index = index_of(action);
+        uint16_t buttons = static_cast<uint16_t>(device->retropad_buttons | device->retropad_tapped);
+        return index < INPUT_PAD_BUTTON_COUNT && (buttons & (1u << index)) != 0 ? 1.0f : 0.0f;
+    }
     float value = 0.0f;
     const InputSource* slots = controller->bindings.sources[index_of(action)];
     for (uint32_t s = 0; s < INPUT_SOURCES_PER_ACTION; s++)
@@ -1228,6 +1236,15 @@ static void stick(const InputController* controller, const InputBindingSet* set,
 }
 
 // The modifier, by the controller's mode: is the HOTKEY layer on?
+// The hotkeys a game-only (remote) device may use: the ones that act on the
+// game. Not MENU / QUICK MENU (they open an interface it can't drive, and
+// pause the game for everyone) nor GRAB MOUSE (this machine's mouse).
+static bool game_only_hotkey(InputAction action)
+{
+    return action == InputAction::hotkey_save_state || action == InputAction::hotkey_load_state ||
+           action == InputAction::hotkey_fast_forward;
+}
+
 static bool modifier_active(InputController* controller, const bool* held, const bool* pressed, uint64_t now_ms)
 {
     uint32_t modifier = index_of(InputAction::hotkey_enable);
@@ -1623,9 +1640,13 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         bool joined = port != INPUT_NO_PORT;
         bool on_port1 = input_port_has(system, 0, index);
 
-        // The layer: HOTKEY > INTERFACE > GAME.
-        bool hotkeys = (on_port1 || keyboard) && modifier_active(controller, held, pressed, now_ms);   // (port 1's, like the UI)
-        bool drives_ui = keyboard || on_port1;
+        // The layer: HOTKEY > INTERFACE > GAME. Hotkeys and the interface are
+        // port 1's and the keyboard's. A game-only device (remote) never
+        // drives the interface, and of the hotkeys gets only the game's
+        // (game_only_hotkey).
+        bool local = !device->game_only;
+        bool hotkeys = (on_port1 || keyboard) && modifier_active(controller, held, pressed, now_ms);
+        bool drives_ui = local && (keyboard || on_port1);
         InputLayer layer = InputLayer::none;
         if (hotkeys)
         {
@@ -1676,6 +1697,10 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             bool fired = false;
             for (uint32_t a = modifier + 1; a < INPUT_ACTION_COUNT; a++)
             {
+                if (!local && !game_only_hotkey(static_cast<InputAction>(a)))
+                {
+                    continue;
+                }
                 frame->held[a] = frame->held[a] || held[a];
                 frame->pressed[a] = frame->pressed[a] || pressed[a];
                 frame->keyboard_pressed[a] = frame->keyboard_pressed[a] || (keyboard && pressed[a]);
@@ -1712,6 +1737,24 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             {
                 if (!input_port_has(system, play_port, index))
                 {
+                    continue;
+                }
+                if (device->retropad)
+                {
+                    // Already the core's RetroPad (the remote app mapped it).
+                    uint16_t buttons = static_cast<uint16_t>(device->retropad_buttons | device->retropad_tapped);
+                    frame->pad_buttons[play_port] = static_cast<uint16_t>(frame->pad_buttons[play_port] | buttons);
+                    for (int s = 0; s < 2; s++)
+                    {
+                        const int16_t* axes = device->retropad_analog[s];
+                        int32_t reach = static_cast<int32_t>(axes[0]) * axes[0] / 2 + static_cast<int32_t>(axes[1]) * axes[1] / 2;
+                        if (reach > stick_reach[play_port][s])
+                        {
+                            stick_reach[play_port][s] = reach;
+                            frame->analog[play_port][s][0] = axes[0];
+                            frame->analog[play_port][s][1] = axes[1];
+                        }
+                    }
                     continue;
                 }
                 InputBindingSet effective = {};
@@ -1874,7 +1917,7 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         }
 
         // SELECT held by itself on port 1's gamepad (the UI may use it: hold to go back).
-        if (!keyboard && on_port1 && controller->held_last[modifier] && !controller->modifier_used)
+        if (local && !keyboard && on_port1 && controller->held_last[modifier] && !controller->modifier_used)
         {
             frame->gamepad_enable_alone = true;
         }
