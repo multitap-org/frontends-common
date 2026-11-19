@@ -520,6 +520,18 @@ static void test_shared_ports()
     input_port_add(system, 2, 4);
     check(input_port_has(system, 2, 4), "n:n: added by hand to a taken port");
 
+    // Hotkeys are port 1's: port 4's SELECT + START is the game's.
+    input_devices_set_code(&system->devices, pads[3], static_cast<uint32_t>(InputButton::back), true);
+    frame(system, 700, &out);
+    frame(system, 900, &out);
+    input_devices_set_code(&system->devices, pads[3], static_cast<uint32_t>(InputButton::start), true);
+    frame(system, 916, &out);
+    check(!out.pressed[static_cast<uint32_t>(InputAction::hotkey_quick_menu)] && (out.pad_buttons[3] & PAD_BIT_START) != 0,
+          "n:n: hotkeys only from port 1");
+    input_devices_set_code(&system->devices, pads[3], static_cast<uint32_t>(InputButton::back), false);
+    input_devices_set_code(&system->devices, pads[3], static_cast<uint32_t>(InputButton::start), false);
+    frame(system, 932, &out);
+
     // Swapping ports moves whole member lists.
     input_swap_ports(system, 1, 2);
     check(input_port_has(system, 1, 2) && input_port_has(system, 1, 4) && input_port_has(system, 2, 1), "n:n: swap moves the lists");

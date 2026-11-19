@@ -24,8 +24,8 @@
 //     member from then on; a port with only it still counts as free, so the
 //     first gamepad's START joins it there. Without it, it joins with START
 //     like the others. The keyboard's interface and hotkey keys always work.
-//   - Only port 1's members drive the UI (interface actions); the keyboard
-//     always does.
+//   - Only port 1's members drive the UI (interface actions) and fire
+//     hotkeys; the keyboard always does.
 //   - A disconnected device leaves its ports (reported in the frame); when
 //     it comes back it is put on all of them again.
 //   - Layers (inspired by Steam Input and reWASD): each controller is in one

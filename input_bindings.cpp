@@ -1624,7 +1624,7 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         bool on_port1 = input_port_has(system, 0, index);
 
         // The layer: HOTKEY > INTERFACE > GAME.
-        bool hotkeys = (joined || keyboard) && modifier_active(controller, held, pressed, now_ms);
+        bool hotkeys = (on_port1 || keyboard) && modifier_active(controller, held, pressed, now_ms);   // (port 1's, like the UI)
         bool drives_ui = keyboard || on_port1;
         InputLayer layer = InputLayer::none;
         if (hotkeys)
