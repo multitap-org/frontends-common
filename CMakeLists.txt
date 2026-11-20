@@ -6,7 +6,7 @@
 # frontend or SDL code) is what's not allowed.
 # A library: it doesn't build alone. The frontend adds hosts-common first,
 # defines imgui, SDL3::SDL3 and Vulkan::Vulkan, and sets MULTITAP_DEPS_DIR to
-# its deps folder (libsamplerate, gamemode, miniz, 7zip; for the resampler
+# its deps folder (libsamplerate, gamemode, miniz, 7zip, monocypher; for the resampler
 # tool also libretro-common), built here from their sources.
 
 multitap_require(frontends-common host_common imgui SDL3::SDL3 Vulkan::Vulkan VAR:MULTITAP_DEPS_DIR)
@@ -125,6 +125,29 @@ if(MULTITAP_ARCHIVES)
     target_link_libraries(frontend_common PRIVATE multitap_dep_miniz multitap_dep_7z)
 endif()
 
+# Downloads (frontend_download: signature now; HTTP and file hashes next) for
+# the core downloader: only for frontends that have deps/monocypher.
+# Monocypher (deps/monocypher, BSD-2-Clause or CC0): EdDSA signature checks.
+# The same target as frontend_net's (netcode), defined once.
+set(MULTITAP_DOWNLOADS OFF)
+if(EXISTS "${MULTITAP_DEPS_DIR}/monocypher/src/monocypher.c")
+    set(MULTITAP_DOWNLOADS ON)
+    if(NOT TARGET multitap_dep_monocypher)
+        add_library(multitap_dep_monocypher STATIC "${MULTITAP_DEPS_DIR}/monocypher/src/monocypher.c")
+        target_include_directories(multitap_dep_monocypher SYSTEM PUBLIC "${MULTITAP_DEPS_DIR}/monocypher/src")
+        if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(multitap_dep_monocypher PRIVATE -O2)
+        endif()
+    endif()
+
+    add_library(frontend_download STATIC
+        signature.cpp
+    )
+    target_include_directories(frontend_download PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(frontend_download PUBLIC host_common PRIVATE multitap_dep_monocypher)
+    multitap_set_project_flags(frontend_download)
+endif()
+
 # Vulkan validation layers + debug messenger are enabled in Debug builds only.
 target_compile_definitions(frontend_common PRIVATE $<$<CONFIG:Debug>:MULTITAP_VULKAN_VALIDATION=1>)
 
@@ -239,6 +262,16 @@ if(MULTITAP_BUILD_TESTS)
         set_tests_properties(frontend_content_cache PROPERTIES
                              FIXTURES_REQUIRED content_cache_scratch
                              PASS_REGULAR_EXPRESSION "content cache: all checks passed"
+                             FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    endif()
+
+    if(MULTITAP_DOWNLOADS)
+        add_executable(frontend_signature_test tests/signature_test.cpp)
+        target_link_libraries(frontend_signature_test PRIVATE frontend_download)
+        multitap_set_project_flags(frontend_signature_test)
+        add_test(NAME frontend_signature COMMAND frontend_signature_test)
+        set_tests_properties(frontend_signature PROPERTIES
+                             PASS_REGULAR_EXPRESSION "signature: all checks passed"
                              FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
     endif()
 
