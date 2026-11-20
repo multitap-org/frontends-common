@@ -248,6 +248,23 @@ bool audio_output_create(AudioOutput* output, double sample_rate, const AudioOut
     return open_stream(output);
 }
 
+int32_t audio_output_device_rate(const AudioOutputConfig* config)
+{
+    int32_t rate = 48000;
+    if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
+    {
+        return rate;
+    }
+    SDL_AudioSpec spec = {};
+    int buffer_frames = 0;
+    if (SDL_GetAudioDeviceFormat(find_device(config->device), &spec, &buffer_frames) && spec.freq > 0)
+    {
+        rate = spec.freq;
+    }
+    SDL_QuitSubSystem(SDL_INIT_AUDIO);
+    return rate;
+}
+
 void audio_output_destroy(AudioOutput* output)
 {
     close_stream(output);

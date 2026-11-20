@@ -138,6 +138,12 @@ struct AudioOutput
 bool audio_output_create(AudioOutput* output, double sample_rate, const AudioOutputConfig* config);
 void audio_output_destroy(AudioOutput* output);
 
+// The rate the device in `config` (or the system default) plays at, before
+// anything is opened: told to cores that can produce any rate
+// (GET_TARGET_SAMPLE_RATE), so their audio needs no resampling. 48000 if the
+// device doesn't say.
+int32_t audio_output_device_rate(const AudioOutputConfig* config);
+
 // Applies what changed in `config`: volume and mute at once; a new device
 // reopens the stream (a short gap); a new quality rebuilds the resampler; a
 // new latency restarts the target from it. Nothing when unchanged.
