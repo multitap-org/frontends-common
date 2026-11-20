@@ -297,13 +297,31 @@ static void present_gl(AppShell* shell, ClearColor clear_color)
     gl->Disable(GL_SCISSOR_TEST);
     gl->ClearColor(clear_color.r, clear_color.g, clear_color.b, clear_color.a);
     gl->Clear(GL_COLOR_BUFFER_BIT);
+    uint64_t started = SDL_GetTicksNS();
     debug_ui_render_gl();
-    SDL_GL_SwapWindow(shell->window);
+    uint64_t drawn = SDL_GetTicksNS();
+    if (!SDL_GL_SwapWindow(shell->window))
+    {
+        SDL_LogError(SDL_LOG_CATEGORY_GPU, "SDL_GL_SwapWindow failed: %s", SDL_GetError());
+    }
+    uint64_t swapped = SDL_GetTicksNS();
     // Low latency: wait for the GPU to finish this frame (GL can't wait for
     // the screen), so the next frame starts as late as possible.
     if (shell->renderer.wait_for_present)
     {
         gl->Finish();
+    }
+    uint64_t finished = SDL_GetTicksNS();
+    // A present that takes a quarter of a second is a stall (a driver or a
+    // surface problem): said in the log, at most once a second.
+    constexpr uint64_t STALL_NS = 250000000;
+    if ((swapped - drawn > STALL_NS || finished - swapped > STALL_NS || drawn - started > STALL_NS) &&
+        finished - shell->gl.stall_logged_ns > 1000000000)
+    {
+        shell->gl.stall_logged_ns = finished;
+        SDL_LogWarn(SDL_LOG_CATEGORY_GPU, "GL present stalled: ImGui %.0f ms, swap %.0f ms, finish %.0f ms",
+                    static_cast<double>(drawn - started) / 1e6, static_cast<double>(swapped - drawn) / 1e6,
+                    static_cast<double>(finished - swapped) / 1e6);
     }
     gl_check_errors(&shell->gl, "present");
 }

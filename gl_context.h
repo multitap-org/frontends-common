@@ -93,6 +93,7 @@ struct GlContext
     char          version[128]  = {};   // GL_VERSION
     GlCopyProgram copy    = {};
     int32_t       swap_interval = 1;    // what SDL accepted (0 = no vsync)
+    uint64_t      stall_logged_ns = 0;  // when a slow present was last logged (app_shell)
 };
 
 // Asks SDL for a GLES context on `window` (made with SDL_WINDOW_OPENGL):
