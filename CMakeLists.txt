@@ -186,6 +186,7 @@ add_library(frontend_common STATIC
     app_paths.cpp
     viewport.cpp
     frame_delta.cpp
+    state_delta.cpp
     video_texture.cpp
     video_output.cpp
     gl_context.cpp
@@ -482,6 +483,14 @@ if(MULTITAP_BUILD_TESTS)
     add_test(NAME frontend_frame_delta COMMAND frontend_frame_delta_test)
     set_tests_properties(frontend_frame_delta PROPERTIES
                          PASS_REGULAR_EXPRESSION "frame delta: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    add_executable(frontend_state_delta_test tests/state_delta_test.cpp)
+    target_link_libraries(frontend_state_delta_test PRIVATE frontend_common)
+    multitap_set_project_flags(frontend_state_delta_test)
+    add_test(NAME frontend_state_delta COMMAND frontend_state_delta_test)
+    set_tests_properties(frontend_state_delta PROPERTIES
+                         PASS_REGULAR_EXPRESSION "state delta: all checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
     add_executable(frontend_rate_control_test tests/rate_control_test.cpp)
