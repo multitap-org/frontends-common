@@ -146,6 +146,7 @@ add_library(frontend_common STATIC
     settings.cpp
     app_paths.cpp
     viewport.cpp
+    frame_delta.cpp
     picture.cpp
     window_size.cpp
     localization.cpp
@@ -305,6 +306,14 @@ if(MULTITAP_BUILD_TESTS)
     multitap_set_project_flags(frontend_frame_delay_test)
     add_test(NAME frontend_frame_delay COMMAND frontend_frame_delay_test)
     set_tests_properties(frontend_frame_delay PROPERTIES PASS_REGULAR_EXPRESSION "frame delay: all checks passed")
+
+    add_executable(frontend_frame_delta_test tests/frame_delta_test.cpp)
+    target_link_libraries(frontend_frame_delta_test PRIVATE frontend_common)
+    multitap_set_project_flags(frontend_frame_delta_test)
+    add_test(NAME frontend_frame_delta COMMAND frontend_frame_delta_test)
+    set_tests_properties(frontend_frame_delta PROPERTIES
+                         PASS_REGULAR_EXPRESSION "frame delta: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
     add_executable(frontend_rate_control_test tests/rate_control_test.cpp)
     target_link_libraries(frontend_rate_control_test PRIVATE frontend_common)
