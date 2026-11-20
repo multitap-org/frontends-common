@@ -84,8 +84,55 @@ static void host_drain(NetService* service)
     net_service_unlock(service);
 }
 
+// Lost audio found from frame numbers and pieces' places (pure).
+static void check_audio_gaps()
+{
+    const double spf = 533.5;      // frames alternate 533 / 534 pairs
+    const uint32_t max_gap = 3204; // 100 ms at 32040 Hz
+    NetAudioGaps gaps;
+    uint32_t found = 0;
+    // A frame's pieces: 256, 256, the rest.
+    uint32_t frame = 1;
+    for (; frame <= 20; frame++)
+    {
+        uint32_t total = frame % 2 == 0 ? 534 : 533;
+        found += net_audio_gaps_next(&gaps, frame, 0, 256, spf, max_gap);
+        found += net_audio_gaps_next(&gaps, frame, 256, 256, spf, max_gap);
+        found += net_audio_gaps_next(&gaps, frame, 512, total - 512, spf, max_gap);
+    }
+    check(found == 0, "audio gaps: nothing lost, nothing found");
+    // The middle piece of a frame lost: 256 found when the next piece comes.
+    uint32_t gap = net_audio_gaps_next(&gaps, frame, 0, 256, spf, max_gap);
+    gap += net_audio_gaps_next(&gaps, frame, 512, 22, spf, max_gap);
+    check(gap == 256, "audio gaps: a lost middle piece");
+    frame++;
+    // A frame's last piece lost: found when the next frame starts.
+    net_audio_gaps_next(&gaps, frame, 0, 256, spf, max_gap);
+    net_audio_gaps_next(&gaps, frame, 256, 256, spf, max_gap);
+    frame++;
+    gap = net_audio_gaps_next(&gaps, frame, 0, 256, spf, max_gap);
+    check(gap >= 20 && gap <= 23, "audio gaps: a frame's lost last piece");
+    net_audio_gaps_next(&gaps, frame, 256, 256, spf, max_gap);
+    net_audio_gaps_next(&gaps, frame, 512, 21, spf, max_gap);
+    // Two loops' audio sent in one go (the frame number jumps by 2): not a loss.
+    frame += 2;
+    found = 0;
+    for (uint32_t first = 0; first < 1067; first += 256)
+    {
+        uint32_t count = 1067 - first < 256 ? 1067 - first : 256;
+        found += net_audio_gaps_next(&gaps, frame, first, count, spf, max_gap);
+    }
+    frame++;
+    found += net_audio_gaps_next(&gaps, frame, 0, 256, spf, max_gap);
+    check(found == 0, "audio gaps: two loops in one go aren't a loss");
+    // A pause (the frame jumps far): not filled.
+    frame += 300;
+    check(net_audio_gaps_next(&gaps, frame, 256, 256, spf, max_gap) == 0, "audio gaps: a pause isn't filled");
+}
+
 int main(int argc, char** argv)
 {
+    check_audio_gaps();
     if (argc < 2 || !net_init())
     {
         std::printf("FAIL usage: frontend_net_client_service_test <scratch folder>\n");

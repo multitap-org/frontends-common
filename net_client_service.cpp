@@ -9,11 +9,117 @@
 
 // --- remote play, on the thread (under `lock`) --------------------------------
 
+uint32_t net_audio_gaps_next(NetAudioGaps* gaps, uint32_t frame, uint32_t first, uint32_t count,
+                             double samples_per_frame, uint32_t max_gap)
+{
+    if (!gaps->started)
+    {
+        gaps->started = true;
+        gaps->base_frame = frame;
+        gaps->played = static_cast<double>(first + count);   // (what came before it in this frame isn't ours to fill)
+        gaps->last_frame = frame;
+        gaps->last_end = first + count;
+        return 0;
+    }
+    if (frame < gaps->last_frame || (frame == gaps->last_frame && first < gaps->last_end))
+    {
+        return 0;   // older than what was played (can't be put back): only counted
+    }
+    double missing = 0.0;
+    if (frame == gaps->last_frame)
+    {
+        missing = static_cast<double>(first - gaps->last_end);
+    }
+    else
+    {
+        // Everything up to the end of the last frame should have come by
+        // now; and this frame's own start.
+        double due = static_cast<double>(gaps->last_frame - gaps->base_frame + 1) * samples_per_frame;
+        double behind = due - gaps->played;
+        double frames_by = static_cast<double>(frame - gaps->last_frame - 1);
+        if (behind < -static_cast<double>(max_gap) || frames_by * samples_per_frame > static_cast<double>(max_gap))
+        {
+            missing = -1.0;   // far more than the frames account for, or frames without audio (a pause): start over
+        }
+        else
+        {
+            missing = (behind > NET_CLIENT_SERVICE_GAP_SLACK ? behind : 0.0) + static_cast<double>(first);
+        }
+    }
+    if (missing < 0.0 || missing > static_cast<double>(max_gap))
+    {
+        // A pause, a fast forward, a restart: count from here.
+        gaps->base_frame = frame;
+        gaps->played = static_cast<double>(first + count);   // (what came before it in this frame isn't ours to fill)
+        gaps->last_frame = frame;
+        gaps->last_end = first + count;
+        return 0;
+    }
+    uint32_t gap = static_cast<uint32_t>(missing + 0.5);
+    gaps->played += static_cast<double>(gap) + static_cast<double>(count);
+    gaps->last_frame = frame;
+    gaps->last_end = first + count;
+    return gap;
+}
+
+// Made-up audio for `gap` missing pairs: the last pairs played, repeated and
+// fading to silence (a hole of silence would click; a hold of the last value
+// would hum).
+static void fill_gap(NetClientServiceStream* stream, uint32_t gap)
+{
+    stream->audio_fill.resize(static_cast<size_t>(gap) * 2);   // reserved at the first stream: doesn't allocate after
+    uint32_t history = stream->audio_history_count;
+    for (uint32_t i = 0; i < gap; i++)
+    {
+        float gain = 1.0f - static_cast<float>(i + 1) / static_cast<float>(gap + 1);
+        int16_t left = 0;
+        int16_t right = 0;
+        if (history > 0)
+        {
+            uint32_t from = NET_CLIENT_SERVICE_AUDIO_HISTORY - history + i % history;
+            left = stream->audio_history[from * 2];
+            right = stream->audio_history[from * 2 + 1];
+        }
+        stream->audio_fill[i * 2] = static_cast<int16_t>(static_cast<float>(left) * gain);
+        stream->audio_fill[i * 2 + 1] = static_cast<int16_t>(static_cast<float>(right) * gain);
+    }
+}
+
+// Keeps the newest pairs played (what a gap is filled with).
+static void remember_audio(NetClientServiceStream* stream, const int16_t* samples, uint32_t count)
+{
+    const uint32_t keep = NET_CLIENT_SERVICE_AUDIO_HISTORY;
+    if (count >= keep)
+    {
+        std::memcpy(stream->audio_history, samples + (count - keep) * 2, keep * 2 * sizeof(int16_t));
+        stream->audio_history_count = keep;
+        return;
+    }
+    std::memmove(stream->audio_history, stream->audio_history + count * 2, (keep - count) * 2 * sizeof(int16_t));
+    std::memcpy(stream->audio_history + (keep - count) * 2, samples, count * 2 * sizeof(int16_t));
+    uint32_t total = stream->audio_history_count + count;
+    stream->audio_history_count = total > keep ? keep : total;
+}
+
 // Audio as it comes: the device opens on the first piece (at the stream's
 // rate), the rate follows the pieces.
 static void stream_audio(NetClientServiceStream* stream, const NetStreamAudio* audio)
 {
     stream->stats.audio_samples += audio->count;
+    // What went missing before this piece.
+    uint32_t gap = 0;
+    if (audio->sample_rate > 0.0)
+    {
+        double fps = stream->has_info && stream->info.fps > 0.0 ? stream->info.fps : 60.0;
+        uint32_t max_gap = static_cast<uint32_t>(audio->sample_rate * NET_CLIENT_SERVICE_MAX_GAP_SECONDS);
+        gap = net_audio_gaps_next(&stream->audio_gaps, audio->frame, audio->first, audio->count,
+                                  audio->sample_rate / fps, max_gap);
+    }
+    if (gap > 0)
+    {
+        stream->stats.audio_gaps++;
+        stream->stats.audio_filled += gap;
+    }
     if (!stream->play_audio || stream->audio_failed || audio->sample_rate <= 0.0)
     {
         return;
@@ -32,9 +138,17 @@ static void stream_audio(NetClientServiceStream* stream, const NetStreamAudio* a
         // rate, rate control absorbs the clocks' drift.
         audio_output_set_speed(&stream->audio, 1.0, true);
         stream->audio_open = true;
+        // The most a gap can make up, so filling one never allocates.
+        stream->audio_fill.reserve(static_cast<size_t>(audio->sample_rate * NET_CLIENT_SERVICE_MAX_GAP_SECONDS + 1.0) * 2);
     }
     audio_output_set_sample_rate(&stream->audio, audio->sample_rate);
+    if (gap > 0)
+    {
+        fill_gap(stream, gap);
+        audio_output_push(&stream->audio, stream->audio_fill.data(), gap);
+    }
     audio_output_push(&stream->audio, audio->samples, audio->count);
+    remember_audio(stream, audio->samples, audio->count);
     stream->stats.audio_queued_ms = audio_output_queued_ms(&stream->audio);
     stream->stats.audio_underruns = static_cast<uint32_t>(stream->audio.underruns);
 }
@@ -48,6 +162,8 @@ static void stream_close_audio(NetClientServiceStream* stream)
         stream->audio_open = false;
     }
     stream->audio_failed = false;
+    stream->audio_gaps = NetAudioGaps{};
+    stream->audio_history_count = 0;
 }
 
 // The picture and the counts start over (a new stream, or none).

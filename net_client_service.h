@@ -45,6 +45,13 @@ constexpr uint32_t NET_CLIENT_SERVICE_QUEUE = 256;              // events betwee
 constexpr uint32_t NET_CLIENT_SERVICE_POLL_MS = 1;
 constexpr double   NET_CLIENT_SERVICE_KEYFRAME_SECONDS = 0.1;   // between two keyframe requests
 constexpr uint32_t NET_CLIENT_SERVICE_FRAMES = 4;               // pictures the queue holds at most
+// Lost audio: a gap longer than this isn't filled (the host paused, or the
+// stream restarted: there's nothing to keep in step with).
+constexpr double   NET_CLIENT_SERVICE_MAX_GAP_SECONDS = 0.1;
+constexpr uint32_t NET_CLIENT_SERVICE_AUDIO_HISTORY = 128;      // stereo pairs kept to fill a gap with
+// Less missing than this isn't filled (frames hold rate / fps pairs only on
+// average: one holds 533, the next 534).
+constexpr double   NET_CLIENT_SERVICE_GAP_SLACK = 16.0;
 
 struct NetClientServiceSlot
 {
@@ -63,6 +70,8 @@ struct NetClientStreamStats
     uint32_t audio_queued_ms = 0;   // audio waiting to play now
     uint32_t audio_underruns = 0;
     uint32_t skipped = 0;           // whole frames never shown (the queue was past its depth)
+    uint32_t audio_gaps = 0;        // lost audio filled in (pieces that never came)
+    uint64_t audio_filled = 0;      // stereo pairs made up for them
 };
 
 // A whole picture waiting for the app.
@@ -75,6 +84,26 @@ struct NetClientServiceFrame
     uint32_t             frame = 0;          // the host's loop number
     NetStreamInfo        info;               // the stream_info in force when it was decoded
 };
+
+// Finding lost audio: pieces of one frame must follow each other (first =
+// where the last one ended); across frames, the pairs played since the first
+// frame must match the frames that went by times samples_per_frame (so
+// audio the host sent in one go for two loops isn't taken for a loss). A
+// gap longer than max_gap, or more audio than the frames account for by as
+// much, starts over (a pause, a fast forward). Pure, for tests.
+struct NetAudioGaps
+{
+    bool     started = false;
+    uint32_t base_frame = 0;     // counting from this frame's start
+    double   played = 0.0;       // pairs received or filled since then
+    uint32_t last_frame = 0;     // the newest piece's frame
+    uint32_t last_end = 0;       // where it ended in that frame (first + count)
+};
+
+// The pairs missing before this piece (0 = none); counts the piece and the
+// fill as played.
+uint32_t net_audio_gaps_next(NetAudioGaps* gaps, uint32_t frame, uint32_t first, uint32_t count,
+                             double samples_per_frame, uint32_t max_gap);
 
 struct NetClientServiceStream
 {
@@ -89,6 +118,13 @@ struct NetClientServiceStream
     bool                 audio_open = false;
     bool                 audio_failed = false; // no device: don't try again this stream
     std::vector<int16_t> audio_storage;
+    // Lost audio (a piece that never came) is filled in, so the queue keeps
+    // its length: otherwise every lost piece shortens it for good, faster
+    // than rate control's 0.5% can make up, and the latency target climbs.
+    NetAudioGaps         audio_gaps;
+    int16_t              audio_history[NET_CLIENT_SERVICE_AUDIO_HISTORY * 2] = {};   // the last pairs played
+    uint32_t             audio_history_count = 0;
+    std::vector<int16_t> audio_fill;            // scratch for the made-up audio (reserved once)
     NetClientStreamStats stats;
     // The pictures waiting for the app, oldest first, under `frame_lock`.
     NetClientServiceFrame frames[NET_CLIENT_SERVICE_FRAMES];
@@ -134,6 +170,7 @@ bool net_client_service_next(NetClientService* service, NetClientEvent* event);
 // or stops it (0: stream_stop); either way the picture, the counts and the
 // audio start over. False when the client isn't ready.
 bool net_client_service_set_stream(NetClientService* service, uint8_t flags);
+
 
 // Locked: the stream's info (false until the host sent it) and counts.
 bool net_client_service_stream_info(NetClientService* service, NetStreamInfo* info);
