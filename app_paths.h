@@ -8,11 +8,15 @@
 //                           split across XDG config/data/state.
 //   Windows:                next to the executable (portable).
 //   macOS:                  ~/Library/Application Support/<program>.
-//   Android:                $MULTITAP_DATA_DIR/<program> (piccolo's activity sets it to
-//                           /sdcard when it has "All files access"), else the app's
-//                           private folder. cores/ is always in the app's private
+//   Android:                $MULTITAP_DATA_DIR/<program>: the activity sets it to
+//                           /sdcard with storage access, else to the app's
+//                           Android/media folder (no permission needed, browsable
+//                           with file managers, deleted on uninstall). Not set: the
+//                           app's private folder. A .nomedia file keeps it out of
+//                           gallery apps. cores/ is always in the app's private
 //                           storage: shared storage is mounted noexec, so cores
-//                           (.so files) can't be loaded from it.
+//                           (.so files) can't be loaded from it. cache/ is the
+//                           app's own cache folder (<cache>/<program>).
 //
 // Inside it: settings/, cores/, saves/, states/, system/, cache/. The settings may
 // later point some of them elsewhere; these are the defaults.
@@ -26,6 +30,7 @@
 // user to delete. Files already in the new folder are never overwritten.
 
 #include <string>
+#include <vector>
 
 struct AppPaths
 {
@@ -51,6 +56,12 @@ bool app_paths_init(AppPaths* paths, const char* program_name, const char* old_l
 // by the Java activity as MULTITAP_HOME_DIR: SDL has no user folders there).
 // nullptr if unknown.
 const char* app_paths_home_folder();
+
+// Other storage the user can browse, as folders: on Android the SD cards and
+// USB drives mounted now (/storage/XXXX-XXXX; readable with storage access),
+// read again at every call so a drive plugged in later shows up. Empty on
+// desktop (and when nothing is mounted or readable).
+void app_paths_storage_volumes(std::vector<std::string>* volumes);
 
 // --- The pieces of app_paths_init, separate so they can be tested ---------
 
