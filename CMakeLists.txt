@@ -205,6 +205,7 @@ if(MULTITAP_HAVE_ENET)
         net_settings.cpp
         net_speed.cpp
         net_service.cpp
+        net_stream.cpp
         net_input.cpp
         input_net.cpp
     )
@@ -430,6 +431,15 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
              COMMAND frontend_net_service_test "${CMAKE_CURRENT_BINARY_DIR}/net_service_test")
     set_tests_properties(frontend_net_service PROPERTIES
                          PASS_REGULAR_EXPRESSION "net service: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    # Remote play's stream: chunks, reassembly, loss and keyframes, audio.
+    add_executable(frontend_net_stream_test tests/net_stream_test.cpp)
+    target_link_libraries(frontend_net_stream_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_net_stream_test)
+    add_test(NAME frontend_net_stream COMMAND frontend_net_stream_test)
+    set_tests_properties(frontend_net_stream PROPERTIES
+                         PASS_REGULAR_EXPRESSION "net stream: all checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
     # Remote pads: packets, then into the router.

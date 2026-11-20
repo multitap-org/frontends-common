@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "net_access.h"
+#include "net_stream.h"
 
 constexpr uint32_t NET_SERVICE_QUEUE = 1024;     // events between two drains (input packets included)
 constexpr uint32_t NET_SERVICE_POLL_MS = 1;
@@ -31,6 +32,40 @@ struct NetServiceSlot
 {
     NetAccessEvent       event;
     std::vector<uint8_t> data;   // the event's payload, copied (reused: grows, never shrinks)
+};
+
+// Remote play (net_stream.h), done on the thread: the frontend hands over
+// each frame it shows and the audio of the frames it ran; the thread codes
+// the frame once (frame_delta.h: one delta for every device; a keyframe only
+// for the ones that need it) and sends both to the devices streaming.
+struct NetServiceStream
+{
+    // Handed over by the frontend (under `frame_lock`).
+    std::vector<uint8_t> pixels;
+    uint32_t             width = 0;
+    uint32_t             height = 0;
+    FramePixelFormat     format = FramePixelFormat::rgb565;
+    uint32_t             frame = 0;          // the frontend's loop number
+    bool                 video_ready = false;
+    std::vector<int16_t> audio;              // stereo pairs since the thread last took them
+    uint32_t             audio_frame = 0;
+    NetStreamInfo        info;
+    // The thread's own.
+    std::vector<uint8_t> work_pixels;
+    std::vector<int16_t> work_audio;
+    FrameDeltaEncoder    encoder;            // the deltas everyone gets
+    FrameDeltaEncoder    key_encoder;        // keyframes, for who asks
+    std::vector<uint8_t> coded;
+    std::vector<uint8_t> key_coded;
+    std::vector<uint8_t> packet;
+    NetStreamInfo        sent_info;          // the last stream_info sent
+    // Per peer, guarded by the service's `lock` (set by the frontend from
+    // stream_start / stream_stop / keyframe_request).
+    uint8_t              flags[NET_MAX_PEERS] = {};      // NET_STREAM_WANT_*, 0 = not streaming
+    bool                 keyframe_wanted[NET_MAX_PEERS] = {};
+    bool                 info_wanted[NET_MAX_PEERS] = {};
+    uint32_t             frames_sent = 0;
+    uint32_t             keyframes_sent = 0;
 };
 
 struct NetService
@@ -44,6 +79,8 @@ struct NetService
     uint32_t       count = 0;
     uint32_t       dropped = 0;          // events lost to a full queue (logged)
     std::vector<uint8_t> current;        // the payload of the event net_service_next last gave
+    std::mutex     frame_lock;           // the frame and audio handed over (stream), apart from `lock`
+    NetServiceStream stream;
 };
 
 // Creates the NetAccess (as net_access_create) and starts the thread.
@@ -59,3 +96,22 @@ void net_service_unlock(NetService* service);
 // Locked: the next queued event, oldest first; its `data` stays valid until
 // the next call. False when the queue is empty.
 bool net_service_next(NetService* service, NetAccessEvent* event);
+
+// --- remote play --------------------------------------------------------------
+
+// Locked: a peer starts (flags NET_STREAM_WANT_*) or stops (0) streaming. A
+// start gets stream_info and a keyframe first.
+void net_service_set_stream(NetService* service, uint32_t peer, uint8_t flags);
+// Locked: the peer lost a frame and needs a keyframe.
+void net_service_request_keyframe(NetService* service, uint32_t peer);
+// Locked: is any peer streaming? (The frontend hands frames over only then.)
+bool net_service_streaming(const NetService* service);
+
+// Not locked (takes `frame_lock` briefly): the frame the frontend shows now,
+// tightly packed in `format`, with its loop number and the stream's info. A
+// frame not taken yet is replaced (the thread codes the newest).
+void net_service_submit_frame(NetService* service, const uint8_t* pixels, uint32_t width, uint32_t height,
+                              FramePixelFormat format, uint32_t frame, const NetStreamInfo* info);
+// Not locked: the audio of the frames run in this loop (stereo pairs), added
+// to what the thread hasn't sent yet.
+void net_service_submit_audio(NetService* service, const int16_t* samples, size_t count, uint32_t frame);

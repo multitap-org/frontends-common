@@ -30,6 +30,12 @@
 //   --ping      with --connect: the connection's round trip, jitter and loss, each second
 //   --speedtest with --connect: rising rates down (host -> us) then up, one second
 //               each, until the loss passes 2% (needs STREAM access)
+//   --watch     with --connect: remote play: receive the stream (video and
+//               audio), decode it, print frames / Mbit/s / losses each second
+//               (needs STREAM access; a game must be running on the host)
+//   --save FILE with --watch: write the last frame shown as a PPM picture
+//   --drop P    with --watch: throw away P% of the stream's packets (a bad
+//               network, to see keyframe requests and recovery)
 //   --unpair    with --connect: once in, unpair (the host forgets us too)
 //   --forget N  forget paired host N (0 = the first) here only, without connecting
 //   --dir DIR   where net_probe keeps its device key and paired devices
@@ -54,6 +60,7 @@
 #include "net_link.h"
 #include "net_settings.h"
 #include "net_speed.h"
+#include "net_stream.h"
 #include "net_session.h"
 #include "input_devices.h"
 #include "net_input.h"
@@ -358,6 +365,104 @@ static void speed_report(NetClient* client, SpeedProbe* speed, const NetSpeedRep
     speed_next(client, speed);
 }
 
+// --watch: the stream, decoded, and what it took.
+struct WatchProbe
+{
+    bool              on = false;
+    const char*       save = nullptr;
+    NetStreamReceiver receiver;
+    NetStreamInfo     info;
+    bool              has_info = false;
+    uint64_t          bytes = 0;            // this second's stream payload
+    uint64_t          total_bytes = 0;
+    uint32_t          frames = 0;           // this second's
+    uint32_t          audio_samples = 0;    // this second's (stereo pairs)
+    uint32_t          keyframe_requests = 0;
+    double            last_request = 0.0;
+    uint32_t          drop_percent = 0;
+    uint32_t          random = 1;
+    uint32_t          dropped = 0;
+    std::vector<int16_t> audio_storage;
+};
+
+static void watch_packet(NetClient* client, WatchProbe* watch, const uint8_t* data, size_t size)
+{
+    if (watch->drop_percent > 0)
+    {
+        watch->random = watch->random * 1103515245u + 12345u;
+        if ((watch->random >> 8) % 100 < watch->drop_percent)
+        {
+            watch->dropped++;
+            return;   // lost on purpose
+        }
+    }
+    watch->bytes += size;
+    watch->total_bytes += size;
+    NetStreamAudio audio;
+    if (net_stream_read_audio(data, size, &audio, &watch->audio_storage))
+    {
+        watch->audio_samples += audio.count;
+        return;
+    }
+    NetStreamResult result = net_stream_receive_video(&watch->receiver, data, size);
+    if (result == NetStreamResult::frame)
+    {
+        watch->frames++;
+    }
+    // At most ten keyframe requests a second: one loss is enough to ask.
+    double now = net_seconds();
+    if (watch->receiver.asked && now - watch->last_request > 0.1)
+    {
+        uint8_t request = NET_STREAM_KEYFRAME_REQUEST;
+        net_client_send(client, NetChannel::control, &request, 1);
+        watch->receiver.asked = false;
+        watch->last_request = now;
+        watch->keyframe_requests++;
+    }
+}
+
+// The last frame as a PPM (8-bit RGB), for a look.
+static void watch_save(const WatchProbe* watch)
+{
+    const FrameDeltaDecoder* decoder = &watch->receiver.decoder;
+    if (watch->save == nullptr || !decoder->has_frame)
+    {
+        return;
+    }
+    FILE* file = std::fopen(watch->save, "wb");
+    if (file == nullptr)
+    {
+        return;
+    }
+    std::fprintf(file, "P6\n%u %u\n255\n", decoder->width, decoder->height);
+    uint32_t bytes = frame_pixel_bytes(decoder->format);
+    for (size_t i = 0; i < static_cast<size_t>(decoder->width) * decoder->height; i++)
+    {
+        const uint8_t* at = decoder->frame.data() + i * bytes;
+        uint8_t rgb[3];
+        if (decoder->format == FramePixelFormat::xrgb8888)
+        {
+            rgb[0] = at[2];
+            rgb[1] = at[1];
+            rgb[2] = at[0];
+        }
+        else
+        {
+            uint32_t pixel = static_cast<uint32_t>(at[0]) | (static_cast<uint32_t>(at[1]) << 8);
+            bool is565 = decoder->format == FramePixelFormat::rgb565;
+            uint32_t red = is565 ? (pixel >> 11) & 31 : (pixel >> 10) & 31;
+            uint32_t green = is565 ? ((pixel >> 5) & 63) * 31 / 63 : (pixel >> 5) & 31;
+            uint32_t blue = pixel & 31;
+            rgb[0] = static_cast<uint8_t>(red * 255 / 31);
+            rgb[1] = static_cast<uint8_t>(green * 255 / 31);
+            rgb[2] = static_cast<uint8_t>(blue * 255 / 31);
+        }
+        std::fwrite(rgb, 1, 3, file);
+    }
+    std::fclose(file);
+    std::printf("last frame saved to %s\n", watch->save);
+}
+
 // --cores / --list / --load: one request, its pages printed as they come.
 enum class ContentAsk
 {
@@ -639,7 +744,7 @@ static bool content_receive(NetClient* client, ContentProbe* probe, const uint8_
 }
 
 static int run_client(uint16_t port, double seconds, const char* at, const char* code, const std::string* dir,
-                      bool pad, bool retropad, ContentProbe* content, bool ping, bool speedtest)
+                      bool pad, bool retropad, ContentProbe* content, bool ping, bool speedtest, WatchProbe* watch)
 {
     NetKeypair identity;
     NetAddress address;
@@ -694,6 +799,13 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
                     speed.on = true;
                     speed_next(client, &speed);
                 }
+                if (watch->on)
+                {
+                    uint8_t start[2];
+                    net_client_send(client, NetChannel::control, start,
+                                    net_stream_write_start(start, sizeof(start),
+                                                           NET_STREAM_WANT_VIDEO | NET_STREAM_WANT_AUDIO));
+                }
                 pad_start = std::chrono::steady_clock::now();
                 next_state = pad_start;
             }
@@ -720,6 +832,17 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
                      event.channel == NetChannel::control)
             {
                 done = content_receive(client, content, event.data, event.size);
+            }
+            else if (event.type == NetClientEventType::message && event.channel == NetChannel::stream)
+            {
+                watch_packet(client, watch, event.data, event.size);
+            }
+            else if (event.type == NetClientEventType::message && event.channel == NetChannel::control &&
+                     net_stream_read_info(event.data, event.size, &watch->info))
+            {
+                watch->has_info = true;
+                std::printf("stream: %ux%u, aspect %.4f, %.3f fps, audio %.1f Hz\n", watch->info.width,
+                            watch->info.height, watch->info.aspect, watch->info.fps, watch->info.sample_rate);
             }
             else if (event.type == NetClientEventType::message && event.channel == NetChannel::input &&
                      net_speed_receive(&speed.receiver, event.data, event.size, net_seconds()))
@@ -762,7 +885,23 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
                 net_speed_sender_sent(&speed.sender, size);
             }
         }
-        // --ping: once a second.
+        // --ping (and --watch's numbers): once a second.
+        if ((ping || watch->on) && ready && std::chrono::steady_clock::now() >= next_ping)
+        {
+            if (!ping)
+            {
+                next_ping += std::chrono::seconds(1);
+            }
+            if (watch->on)
+            {
+                std::printf("watch: %u frames, %.2f Mbit/s, audio %u samples, lost %u, keyframe requests %u\n",
+                            watch->frames, static_cast<double>(watch->bytes) * 8.0 / 1000000.0, watch->audio_samples,
+                            watch->receiver.lost, watch->keyframe_requests);
+                watch->frames = 0;
+                watch->bytes = 0;
+                watch->audio_samples = 0;
+            }
+        }
         if (ping && ready && std::chrono::steady_clock::now() >= next_ping)
         {
             NetLinkStats stats;
@@ -824,11 +963,18 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
             }
             next_state += std::chrono::microseconds(16667);
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds((pad || speed.on) && ready ? 1 : 10));
+        std::this_thread::sleep_for(std::chrono::milliseconds((pad || speed.on || watch->on) && ready ? 1 : 10));
     }
     if (pad)
     {
         std::printf("sent %u pad states\n", states_sent);
+    }
+    if (watch->on)
+    {
+        std::printf("watch: %u frames shown in all, %u lost, %.2f MB received, %u packets dropped on purpose\n",
+                    watch->receiver.shown, watch->receiver.lost, static_cast<double>(watch->total_bytes) / 1000000.0,
+                    watch->dropped);
+        watch_save(watch);
     }
     net_client_close(client);
     for (int i = 0; i < 20; i++)   // let the goodbye go out
@@ -905,6 +1051,7 @@ int main(int argc, char** argv)
     bool retropad = false;
     bool ping = false;
     bool speedtest = false;
+    WatchProbe watch;   // a few vectors: fine here
     int forget = -1;
     ContentProbe content;
     for (int i = 1; i < argc; i++)
@@ -960,6 +1107,18 @@ int main(int argc, char** argv)
             content.ask = ContentAsk::port_device;
             content.pad_index = static_cast<uint32_t>(std::atoi(argv[++i]));
             content.device = static_cast<uint32_t>(std::atoi(argv[++i]));
+        }
+        else if (std::strcmp(argv[i], "--watch") == 0)
+        {
+            watch.on = true;
+        }
+        else if (std::strcmp(argv[i], "--drop") == 0 && has_value)
+        {
+            watch.drop_percent = static_cast<uint32_t>(std::atoi(argv[++i]));
+        }
+        else if (std::strcmp(argv[i], "--save") == 0 && has_value)
+        {
+            watch.save = argv[++i];
         }
         else if (std::strcmp(argv[i], "--ping") == 0)
         {
@@ -1044,7 +1203,7 @@ int main(int argc, char** argv)
     }
     else if (connect != nullptr)
     {
-        result = run_client(port, seconds < 3.0 ? 3.0 : seconds, connect, pair_code, &dir, pad, retropad, &content, ping, speedtest);
+        result = run_client(port, seconds < 3.0 ? 3.0 : seconds, connect, pair_code, &dir, pad, retropad, &content, ping, speedtest, &watch);
     }
     else
     {
