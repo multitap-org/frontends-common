@@ -194,7 +194,7 @@ bool app_paths_init(AppPaths* paths, const char* program_name, const char* old_l
             paths->root.pop_back();
         }
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                    "No All files access: using the app's private folder (deleted on uninstall)");
+                    "No folder from the activity: using the app's private folder (deleted on uninstall)");
     }
 #elif defined(__APPLE__)
     if (home == nullptr)
@@ -231,9 +231,26 @@ bool app_paths_init(AppPaths* paths, const char* program_name, const char* old_l
     {
         paths->cores = join(internal, "cores");
     }
+    // Extracted games and downloads aren't the user's files: the app's own
+    // cache, off shared storage (FUSE is slower for big files, and the media
+    // scanner indexes everything written there). Same partition, same space.
+    const char* cache = SDL_GetAndroidCachePath();
+    if (cache != nullptr)
+    {
+        paths->cache = join(cache, program_name);
+    }
 #endif
     std::string old_root = home != nullptr ? join(home, ".host-libretro") : std::string();
     bool ok = app_paths_setup(paths, old_root.c_str(), old_last_used_name);
+#if defined(__ANDROID__)
+    // The folder is on shared storage (/sdcard or Android/media): keep state
+    // thumbnails and screenshots out of the gallery apps.
+    std::string no_media = join(paths->root.c_str(), ".nomedia");
+    if (ok && !host_fs_exists(no_media.c_str()) && !host_fs_write_file(no_media.c_str(), "", 0))
+    {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Can't write %s", no_media.c_str());
+    }
+#endif
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "%s folder: %s", program_name, paths->root.c_str());
     return ok;
 }
