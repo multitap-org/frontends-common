@@ -257,19 +257,27 @@ int main(int argc, char** argv)
 
     // Get: the host's game into our games.
     net_share_client_copy(side.share, false, "games/Metroid Fusion.gba", "roms/gba/Metroid Fusion.gba",
-                          2 * 1024 * 1024 + 77, 0);
+                          2 * 1024 * 1024 + 77, 0, 0);
     NetShareClientDone done;
     check(wait_done(&side, &done, 20000) && done.status == NetShareStatus::ok, "get finished");
     std::string got = client_games + "/Metroid Fusion.gba";
     check(same_files(&host_game, &got), "got byte for byte");
 
     // Put: our save into the host's SAVES (its core folder made there).
-    net_share_client_copy(side.share, true, "SAVES/mGBA/Metroid Fusion.srm", "SAVES/mGBA/Metroid Fusion.srm", 0, 0);
+    net_share_client_copy(side.share, true, "SAVES/mGBA/Metroid Fusion.srm", "SAVES/mGBA/Metroid Fusion.srm", 0, 0, 0);
     check(wait_done(&side, &done, 20000) && done.status == NetShareStatus::ok, "put finished");
     std::string put = host_saves + "/mGBA/Metroid Fusion.srm";
     check(same_files(&client_save, &put), "put byte for byte");
-    net_share_client_copy(side.share, true, "SAVES/mGBA/Metroid Fusion.srm", "SAVES/mGBA/Metroid Fusion.srm", 0, 0);
+    net_share_client_copy(side.share, true, "SAVES/mGBA/Metroid Fusion.srm", "SAVES/mGBA/Metroid Fusion.srm", 0, 0, 0);
+    check(wait_done(&side, &done, 20000) && done.status == NetShareStatus::same,
+          "the same file (size and date kept by the copy) isn't sent again");
+    host_fs_write_file(client_save.c_str(), "A NEWER SAVE, LONGER", 20);
+    net_share_client_copy(side.share, true, "SAVES/mGBA/Metroid Fusion.srm", "SAVES/mGBA/Metroid Fusion.srm", 0, 0, 0);
     check(wait_done(&side, &done, 20000) && done.status == NetShareStatus::exists, "no overwrite unless asked");
+    net_share_client_copy(side.share, true, "SAVES/mGBA/Metroid Fusion.srm", "SAVES/mGBA/Metroid Fusion.srm", 0, 0,
+                          NET_SHARE_PUT_REPLACE);
+    check(wait_done(&side, &done, 20000) && done.status == NetShareStatus::ok && same_files(&client_save, &put),
+          "replaced when asked");
 
     // While the device streams, the copy waits (and goes once it stops).
     net_service_lock(side.service);
@@ -284,7 +292,7 @@ int main(int argc, char** argv)
     net_service_set_stream(side.service, peer, NET_STREAM_WANT_AUDIO);
     net_service_unlock(side.service);
     std::string second = client_games + "/second.gba";
-    net_share_client_copy(side.share, false, "games/second.gba", "roms/gba/Metroid Fusion.gba", 2 * 1024 * 1024 + 77, 0);
+    net_share_client_copy(side.share, false, "games/second.gba", "roms/gba/Metroid Fusion.gba", 2 * 1024 * 1024 + 77, 0, 0);
     for (int i = 0; i < 300; i++)
     {
         client_round(&side, true);

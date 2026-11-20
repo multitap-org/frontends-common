@@ -181,7 +181,7 @@ int main(int argc, char** argv)
               entries.size() == 1 && entries[0].name == "roms",
           "lists the host's shared folders");
 
-    net_share_link_copy(link, false, "games/Game.sfc", "roms/Game.sfc", 16, 0);
+    net_share_link_copy(link, false, "games/Game.sfc", "roms/Game.sfc", 16, 0, 0);
     std::vector<NetShareClientDone> done;
     for (int i = 0; i < 2000 && done.empty(); i++)
     {
