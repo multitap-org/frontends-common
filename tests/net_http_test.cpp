@@ -2,7 +2,8 @@
 //   net_http_test <tests/data folder> <scratch folder>
 // A download lands under its name with the right bytes; one over max_bytes,
 // a missing file and a refused scheme fail and leave nothing (no .part); the
-// threaded job reports done and its progress.
+// threaded job reports done and its progress. With MULTITAP_NET_HTTP_ONLINE_URL
+// set, a real download over the network too (CI).
 
 #include <cstdio>
 #include <cstring>
@@ -77,6 +78,30 @@ int main(int argc, char** argv)
 
     check(net_http_job_start(&job, ("file://" + data + "/no_such_file").c_str(), missing.c_str(), 0), "failing job starts");
     check(net_http_job_finish(&job) == NetHttpState::failed && job.error[0] != '\0', "failing job reports failed");
+
+    // Over the network, only when asked (CI sets it; tests don't need a
+    // network otherwise): MULTITAP_NET_HTTP_ONLINE_URL=https://... must download.
+    const char* online = SDL_getenv("MULTITAP_NET_HTTP_ONLINE_URL");
+    if (online != nullptr && online[0] != '\0')
+    {
+        std::string fetched = scratch + "/online";
+        bool ok = net_http_download(online, fetched.c_str(), 64 * 1024 * 1024, error, sizeof(error));
+        if (!ok)
+        {
+            std::printf("online download of %s: %s\n", online, error);
+        }
+        int64_t size = 0;
+        SDL_PathInfo info;
+        if (ok && SDL_GetPathInfo(fetched.c_str(), &info))
+        {
+            size = static_cast<int64_t>(info.size);
+        }
+        std::printf("online download of %s: %lld bytes\n", online, static_cast<long long>(size));
+        check(ok && size > 0, "online download");
+        check(!net_http_download("https://cores.get-piccolo.app/no/such/file", (scratch + "/online404").c_str(), 0,
+                                 error, sizeof(error)),
+              "online 404 fails");
+    }
 
     net_http_shutdown();
     if (failures == 0)

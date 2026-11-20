@@ -1,17 +1,19 @@
 #pragma once
 
 // HTTP(S) downloads to a file, for the core downloader (and later anything
-// else a frontend fetches). Backend: libcurl, the system's (Linux; later
-// built with Schannel on Windows, and a JNI backend on Android, behind this
-// same API). Only GET to a file: no uploads, no cookies, nothing kept between
+// else a frontend fetches). Backends (net_http_backend.h): libcurl, the
+// system's, on Linux; WinHTTP on Windows; Android (JNI) later, behind this
+// same API. Only GET to a file: no uploads, no cookies, nothing kept between
 // downloads.
 //
 // A download runs on its own thread (net_http_job_*) so the UI keeps
 // drawing; the frontend polls its state and progress once per frame. It
 // writes <path>.part and renames it to <path> only when it's complete, so a
 // failed or cancelled download never leaves a half file under the real name.
-// Redirects are followed (GitHub release files redirect); http, https and
-// file URLs are accepted (callers that want HTTPS only check the URL first).
+// Redirects are followed (GitHub release files redirect), never from https
+// to http; http, https and file URLs are accepted (callers that want HTTPS
+// only check the URL first). file:// is read by net_http itself, the same on
+// every platform.
 
 #include <SDL3/SDL.h>
 
@@ -20,7 +22,8 @@
 #include <string>
 
 // Once at startup, from the main thread (curl's global setup isn't thread
-// safe). `user_agent`: e.g. "piccolo/0.3". False (logged) if curl won't start.
+// safe). `user_agent`: e.g. "piccolo/0.3". False (logged) if the backend
+// won't start.
 bool net_http_init(const char* user_agent);
 void net_http_shutdown();
 
