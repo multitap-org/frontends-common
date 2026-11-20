@@ -36,6 +36,9 @@
 //   --save FILE with --watch: write the last frame shown as a PPM picture
 //   --tuning T  with --watch: ask for a frame delay while streaming: host, off,
 //               auto or a number of ms (stream_tuning; prints what's applied)
+//   --headless  with --watch: GO HEADLESS once the stream runs (the host's
+//               window goes away, the game keeps running for us); prints
+//               headless_state. Leaving gives it back (the host pauses).
 //   --run-ahead N  with --watch: run-ahead frames in the stream's tuning
 //               (applies when --tuning isn't "host")
 //   --drop P    with --watch: throw away P% of the stream's packets (a bad
@@ -430,6 +433,8 @@ struct WatchProbe
     uint32_t          drop_percent = 0;
     bool              tuning = false;
     NetStreamTuning   tuning_asked;
+    bool              headless = false;      // --headless
+    bool              headless_sent = false;
     uint32_t          random = 1;
     uint32_t          dropped = 0;
     std::vector<int16_t> audio_storage;
@@ -968,6 +973,23 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
                 watch->has_info = true;
                 std::printf("stream: %ux%u, aspect %.4f, %.3f fps, audio %.1f Hz\n", watch->info.width,
                             watch->info.height, watch->info.aspect, watch->info.fps, watch->info.sample_rate);
+                if (watch->headless && !watch->headless_sent)
+                {
+                    uint8_t go[2];
+                    net_client_send(client, NetChannel::control, go, net_stream_write_go_headless(go, sizeof(go), true));
+                    watch->headless_sent = true;
+                }
+            }
+            else if (event.type == NetClientEventType::message && event.channel == NetChannel::control &&
+                     event.size > 0 && event.data[0] == NET_STREAM_HEADLESS_STATE)
+            {
+                bool headless_on = false;
+                bool headless_yours = false;
+                if (net_stream_read_headless_state(event.data, event.size, &headless_on, &headless_yours))
+                {
+                    std::printf("headless: %s%s\n", headless_on ? "on" : "off",
+                                headless_on ? (headless_yours ? " (ours)" : " (another device)") : "");
+                }
             }
             else if (event.type == NetClientEventType::message && event.channel == NetChannel::input &&
                      net_speed_receive(&speed.receiver, event.data, event.size, net_seconds()))
@@ -1248,6 +1270,10 @@ int main(int argc, char** argv)
         else if (std::strcmp(argv[i], "--watch") == 0)
         {
             watch.on = true;
+        }
+        else if (std::strcmp(argv[i], "--headless") == 0)
+        {
+            watch.headless = true;
         }
         else if (std::strcmp(argv[i], "--tuning") == 0 && has_value)
         {

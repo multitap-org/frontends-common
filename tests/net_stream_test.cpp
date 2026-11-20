@@ -185,6 +185,16 @@ int main()
               tuning_read.flags == NET_STREAM_TUNING_WAITS_FOR_PRESENT,
           "stream_tuning_result read");
 
+    bool on = false;
+    bool yours = false;
+    size_t headless_size = net_stream_write_go_headless(out, sizeof(out), true);
+    check(net_stream_read_go_headless(out, headless_size, &on) && on, "go_headless read");
+    out[1] = 2;
+    check(!net_stream_read_go_headless(out, headless_size, &on), "go_headless with a bad value refused");
+    headless_size = net_stream_write_headless_state(out, sizeof(out), true, false);
+    check(net_stream_read_headless_state(out, headless_size, &on, &yours) && on && !yours, "headless_state read");
+    check(!net_stream_read_headless_state(out, headless_size - 1, &on, &yours), "a short headless_state refused");
+
     if (g_failures == 0)
     {
         std::printf("net stream: all checks passed\n");

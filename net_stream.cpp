@@ -31,6 +31,50 @@ bool net_stream_read_start(const uint8_t* data, size_t size, uint8_t* flags)
     return true;
 }
 
+size_t net_stream_write_go_headless(uint8_t* out, size_t capacity, bool on)
+{
+    if (capacity < 2)
+    {
+        return 0;
+    }
+    out[0] = NET_STREAM_GO_HEADLESS;
+    out[1] = on ? 1 : 0;
+    return 2;
+}
+
+bool net_stream_read_go_headless(const uint8_t* data, size_t size, bool* on)
+{
+    if (size != 2 || data[0] != NET_STREAM_GO_HEADLESS || data[1] > 1)
+    {
+        return false;
+    }
+    *on = data[1] == 1;
+    return true;
+}
+
+size_t net_stream_write_headless_state(uint8_t* out, size_t capacity, bool on, bool yours)
+{
+    if (capacity < 3)
+    {
+        return 0;
+    }
+    out[0] = NET_STREAM_HEADLESS_STATE;
+    out[1] = on ? 1 : 0;
+    out[2] = yours ? 1 : 0;
+    return 3;
+}
+
+bool net_stream_read_headless_state(const uint8_t* data, size_t size, bool* on, bool* yours)
+{
+    if (size != 3 || data[0] != NET_STREAM_HEADLESS_STATE || data[1] > 1 || data[2] > 1)
+    {
+        return false;
+    }
+    *on = data[1] == 1;
+    *yours = data[2] == 1;
+    return true;
+}
+
 static void put_double(NetWriter* writer, double value)
 {
     char text[40];
