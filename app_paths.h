@@ -30,6 +30,7 @@
 // user to delete. Files already in the new folder are never overwritten.
 
 #include <string>
+#include <vector>
 
 struct AppPaths
 {
@@ -55,6 +56,12 @@ bool app_paths_init(AppPaths* paths, const char* program_name, const char* old_l
 // by the Java activity as MULTITAP_HOME_DIR: SDL has no user folders there).
 // nullptr if unknown.
 const char* app_paths_home_folder();
+
+// Other storage the user can browse, as folders: on Android the SD cards and
+// USB drives mounted now (/storage/XXXX-XXXX; readable with storage access),
+// read again at every call so a drive plugged in later shows up. Empty on
+// desktop (and when nothing is mounted or readable).
+void app_paths_storage_volumes(std::vector<std::string>* volumes);
 
 // --- The pieces of app_paths_init, separate so they can be tested ---------
 

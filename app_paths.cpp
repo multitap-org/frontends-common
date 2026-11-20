@@ -153,6 +153,36 @@ const char* app_paths_home_folder()
 #endif
 }
 
+void app_paths_storage_volumes(std::vector<std::string>* volumes)
+{
+    volumes->clear();
+#if defined(__ANDROID__)
+    // Every volume is mounted under /storage: "emulated" holds the internal
+    // shared storage (/sdcard, HOME) and "self" links to it; the rest are SD
+    // cards and USB drives. SDL_GlobDirectory, not host_fs_list_directory:
+    // no log line when /storage can't be read (no storage access).
+    int count = 0;
+    char** names = SDL_GlobDirectory("/storage", nullptr, 0, &count);
+    if (names == nullptr)
+    {
+        return;
+    }
+    for (int i = 0; i < count; i++)
+    {
+        if (std::strcmp(names[i], "emulated") == 0 || std::strcmp(names[i], "self") == 0)
+        {
+            continue;
+        }
+        std::string path = join("/storage", names[i]);
+        if (host_fs_is_directory(path.c_str()))
+        {
+            volumes->push_back(path);
+        }
+    }
+    SDL_free(names);
+#endif
+}
+
 bool app_paths_init(AppPaths* paths, const char* program_name, const char* old_last_used_name)
 {
     *paths = AppPaths{};
