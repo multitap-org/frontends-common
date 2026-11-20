@@ -5,11 +5,23 @@
 # file helpers (host_fs: atomic writes); the other direction (hosts using
 # frontend or SDL code) is what's not allowed.
 # A library: it doesn't build alone. The frontend adds hosts-common first,
-# defines imgui, SDL3::SDL3 and Vulkan::Vulkan, and sets MULTITAP_DEPS_DIR to
+# defines imgui, SDL3::SDL3 and Vulkan::Vulkan (unless MULTITAP_GPU_VULKAN is OFF), and sets MULTITAP_DEPS_DIR to
 # its deps folder (libsamplerate, gamemode, miniz, 7zip, enet, monocypher; for the
 # resampler tool also libretro-common), built here from their sources.
 
-multitap_require(frontends-common host_common imgui SDL3::SDL3 Vulkan::Vulkan VAR:MULTITAP_DEPS_DIR)
+# Vulkan in the build (default): the window tries it first, OpenGL ES after.
+# OFF: OpenGL ES only, nothing links libvulkan (the Android 5 APK: Android 5
+# has no libvulkan.so). The Vulkan modules' entry points are then stubs
+# (vulkan_none.cpp, app_shell_vulkan_none.cpp, debug_ui_vulkan_none.cpp);
+# their headers stay (vulkan.h comes with the NDK and the system).
+if(NOT DEFINED MULTITAP_GPU_VULKAN)
+    set(MULTITAP_GPU_VULKAN ON)
+endif()
+if(MULTITAP_GPU_VULKAN)
+    multitap_require(frontends-common host_common imgui SDL3::SDL3 Vulkan::Vulkan VAR:MULTITAP_DEPS_DIR)
+else()
+    multitap_require(frontends-common host_common imgui SDL3::SDL3 VAR:MULTITAP_DEPS_DIR)
+endif()
 
 # libsamplerate (deps/, BSD-2-Clause): audio_output's resampler, chosen by
 # measurement (tools/resampler_measure.cpp). Built from its sources without
@@ -136,12 +148,7 @@ if(MULTITAP_HAVE_ENET)
 endif()
 
 add_library(frontend_common STATIC
-    vk_context.cpp
-    vk_barrier.cpp
-    vk_swapchain.cpp
-    renderer.cpp
     debug_ui.cpp
-    vk_texture.cpp
     app_shell.cpp
     audio_output.cpp
     frame_timing.cpp
@@ -150,7 +157,6 @@ add_library(frontend_common STATIC
     app_paths.cpp
     viewport.cpp
     frame_delta.cpp
-    picture.cpp
     video_texture.cpp
     video_output.cpp
     gl_context.cpp
@@ -168,6 +174,13 @@ add_library(frontend_common STATIC
     input_sdl_mapping.cpp
     input_layouts.cpp
 )
+if(MULTITAP_GPU_VULKAN)
+    target_sources(frontend_common PRIVATE vk_context.cpp vk_barrier.cpp vk_swapchain.cpp renderer.cpp vk_texture.cpp
+                   picture.cpp app_shell_vulkan.cpp debug_ui_vulkan.cpp)
+    target_link_libraries(frontend_common PUBLIC Vulkan::Vulkan)
+else()
+    target_sources(frontend_common PRIVATE vulkan_none.cpp app_shell_vulkan_none.cpp debug_ui_vulkan_none.cpp)
+endif()
 
 # GameMode (deps/gamemode, BSD-3-Clause): only its client header, which
 # loads libgamemode at run time (nothing linked). Linux only; elsewhere a
@@ -186,7 +199,9 @@ endif()
 # at run time). Built only for frontends that have that submodule.
 set(MULTITAP_LIBRASHADER_INCLUDE "${MULTITAP_DEPS_DIR}/librashader/include")
 if(EXISTS "${MULTITAP_LIBRASHADER_INCLUDE}/librashader.h")
-    target_sources(frontend_common PRIVATE shader_chain.cpp)
+    if(MULTITAP_GPU_VULKAN)
+        target_sources(frontend_common PRIVATE shader_chain.cpp)
+    endif()
     target_include_directories(frontend_common SYSTEM PUBLIC "${MULTITAP_LIBRASHADER_INCLUDE}")
     target_compile_definitions(frontend_common PUBLIC LIBRA_RUNTIME_VULKAN
         PRIVATE "MULTITAP_LIBRASHADER_FILE=\"librashader${CMAKE_SHARED_LIBRARY_SUFFIX}\"")
@@ -194,7 +209,7 @@ if(EXISTS "${MULTITAP_LIBRASHADER_INCLUDE}/librashader.h")
 endif()
 
 target_include_directories(frontend_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(frontend_common PUBLIC imgui SDL3::SDL3 Vulkan::Vulkan host_common multitap_dep_libsamplerate)
+target_link_libraries(frontend_common PUBLIC imgui SDL3::SDL3 host_common multitap_dep_libsamplerate)
 if(MULTITAP_ARCHIVES)
     target_sources(frontend_common PRIVATE archive.cpp content_cache.cpp)
     target_link_libraries(frontend_common PRIVATE multitap_dep_miniz multitap_dep_7z)

@@ -74,7 +74,7 @@ void video_texture_destroy(VideoTexture* texture, AppShell* shell)
     }
     else
     {
-        vkDeviceWaitIdle(shell->vulkan.device);   // earlier frames may still be drawing it
+        vulkan_context_wait_idle(&shell->vulkan);   // earlier frames may still be drawing it
         debug_ui_remove_texture(texture->imgui_id);
         streaming_texture_destroy(&texture->vulkan, &shell->vulkan);
     }

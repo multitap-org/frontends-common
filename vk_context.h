@@ -85,6 +85,10 @@ bool vulkan_context_create_instance(VulkanContext* context,
 // and decides the path (1.3 when the device has it, unless force_vulkan_1_1).
 bool vulkan_context_create_device(VulkanContext* context, VkSurfaceKHR surface);
 
+// Waits until the GPU has finished everything submitted (vkDeviceWaitIdle).
+// Safe before the device exists.
+void vulkan_context_wait_idle(const VulkanContext* context);
+
 void vulkan_context_destroy(VulkanContext* context);
 
 // Finds a memory type allowed by `type_bits` (from VkMemoryRequirements) that has
