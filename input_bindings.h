@@ -126,7 +126,7 @@ enum class InputAction
 
 constexpr uint32_t INPUT_ACTION_COUNT = static_cast<uint32_t>(InputAction::count);
 constexpr uint32_t INPUT_PAD_BUTTON_COUNT = 16;
-constexpr uint32_t INPUT_PORT_COUNT = 4;
+constexpr uint32_t INPUT_PORT_COUNT = 8;   // libretro hosts: LIBRETRO_MAX_PORTS
 constexpr uint32_t INPUT_SOURCES_PER_ACTION = 4;
 constexpr int32_t  INPUT_NO_PORT = -1;
 
@@ -366,7 +366,8 @@ struct InputSystem
     // InputCoreProfile for them, when it is custom.
     std::string core_name;
     std::string game_name;    // "" = no game (the core's remaps only)
-    uint32_t    port_devices[INPUT_PORT_COUNT] = {1, 1, 1, 1};   // 1 = the libretro joypad
+    uint32_t    port_devices[INPUT_PORT_COUNT] = {1, 1, 1, 1, 1, 1, 1, 1};   // 1 = the libretro joypad
+    uint32_t    join_ports = 4;   // START joins the first free port among these (the game's ports; 1..INPUT_PORT_COUNT)
     std::vector<uint32_t>        ports[INPUT_PORT_COUNT];   // each port's members (controller indexes), in the order they came
     bool                         keyboard_seated = false;   // the keyboard was put on port 1 for keyboard_shares_port1
     bool                         mouse_seated = false;      // the first mouse was put on port 1 (always)
