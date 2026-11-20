@@ -31,11 +31,19 @@ void picture_destroy(Picture* picture, const VulkanContext* context)
     {
         vkFreeMemory(context->device, picture->image_memory, nullptr);
     }
+    // Kept: what was learned about the GPU, and how to record barriers
+    // (picture_prepare destroys the copy to make a new one and then records
+    // with these: back at the defaults, the Vulkan 1.1 path would call the
+    // missing vkCmdPipelineBarrier2).
     VkFormat blit_checked = picture->blit_checked;
     bool blit_supported = picture->blit_supported;
+    VulkanPath path = picture->path;
+    PFN_vkCmdPipelineBarrier2 barrier2 = picture->barrier2;
     *picture = Picture{};
     picture->blit_checked = blit_checked;
     picture->blit_supported = blit_supported;
+    picture->path = path;
+    picture->barrier2 = barrier2;
 }
 
 static bool create_copy(Picture* picture, const VulkanContext* context, uint32_t width, uint32_t height)
