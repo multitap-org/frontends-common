@@ -306,11 +306,12 @@ endif()
 
 # Build-time tool: a frontend's strings.txt -> its string IDs, English table
 # and .pot (see tools/strings_generator.cpp).
-# Cross builds (Android) can't run what they build: there it's an imported
-# program, built for the build machine first (piccolo's android/build-apk.sh).
+# Cross builds (Android, Emscripten) can't run what they build: there it's an
+# imported program, built for the build machine first (piccolo's
+# android/build-apk.sh, web/build.sh).
 # A frontend without translated strings (piccoletto, for now) doesn't pass
 # it: then there's no generator target.
-if(ANDROID)
+if(ANDROID OR EMSCRIPTEN)
     if(MULTITAP_STRINGS_GENERATOR)
         if(NOT EXISTS "${MULTITAP_STRINGS_GENERATOR}")
             message(FATAL_ERROR "MULTITAP_STRINGS_GENERATOR: ${MULTITAP_STRINGS_GENERATOR} doesn't exist")
