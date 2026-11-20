@@ -36,6 +36,8 @@
 //   --save FILE with --watch: write the last frame shown as a PPM picture
 //   --tuning T  with --watch: ask for a frame delay while streaming: host, off,
 //               auto or a number of ms (stream_tuning; prints what's applied)
+//   --run-ahead N  with --watch: run-ahead frames in the stream's tuning
+//               (applies when --tuning isn't "host")
 //   --drop P    with --watch: throw away P% of the stream's packets (a bad
 //               network, to see keyframe requests and recovery)
 //   --unpair    with --connect: once in, unpair (the host forgets us too)
@@ -1157,6 +1159,11 @@ int main(int argc, char** argv)
                 watch.tuning_asked.delay = NetStreamDelay::manual;
                 watch.tuning_asked.delay_ms = static_cast<uint8_t>(std::atoi(value));
             }
+        }
+        else if (std::strcmp(argv[i], "--run-ahead") == 0 && has_value)
+        {
+            watch.tuning = true;
+            watch.tuning_asked.run_ahead = static_cast<uint8_t>(std::atoi(argv[++i]));
         }
         else if (std::strcmp(argv[i], "--drop") == 0 && has_value)
         {
