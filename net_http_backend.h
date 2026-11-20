@@ -7,6 +7,8 @@
 //   net_http_curl.cpp     libcurl, the system's (Linux)
 //   net_http_winhttp.cpp  WinHTTP, part of Windows (TLS by Schannel, the
 //                         system's certificates and proxy settings)
+//   net_http_android.cpp  java.net.HttpURLConnection through JNI, part of
+//                         Android (the system's certificates and proxy)
 //
 // A backend fetches http:// and https:// URLs only, follows redirects (never
 // from https to http), fails on HTTP errors (404 is an error, not a file) and
