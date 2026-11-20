@@ -11,39 +11,6 @@
 // Game folders
 // ---------------------------------------------------------------------------
 
-// The folder's own name: "/home/ana/roms/" -> "roms"; a root ("/", "C:/")
-// has none, so it's shown whole.
-static std::string folder_name(const std::string* path)
-{
-    size_t end = path->size();
-    while (end > 0 && (*path)[end - 1] == '/')
-    {
-        end--;
-    }
-    size_t begin = end;
-    while (begin > 0 && (*path)[begin - 1] != '/')
-    {
-        begin--;
-    }
-    std::string name = path->substr(begin, end - begin);
-    if (name.empty() || name.find(':') != std::string::npos)
-    {
-        name = *path;   // "/" or "C:": not a name a path could hold; replaced below
-        for (size_t i = 0; i < name.size(); i++)
-        {
-            if (name[i] == '/' || name[i] == ':')
-            {
-                name[i] = '_';
-            }
-        }
-        if (name.empty())
-        {
-            name = "_";
-        }
-    }
-    return name;
-}
-
 static bool root_named(const NetContentFolders* folders, const std::string* name)
 {
     for (size_t i = 0; i < folders->roots.size(); i++)
@@ -71,7 +38,7 @@ void net_content_set_folders(NetContentFolders* folders, const std::vector<std::
         }
         NetContentRoot root;
         root.path = canonical;
-        std::string base = folder_name(&root.path);
+        std::string base = net_content_folder_name(&root.path);
         root.name = base;
         for (uint32_t n = 2; root_named(folders, &root.name); n++)
         {
@@ -79,43 +46,6 @@ void net_content_set_folders(NetContentFolders* folders, const std::vector<std::
         }
         folders->roots.push_back(root);
     }
-}
-
-// One part of a virtual path, before it goes near the disk.
-static bool part_is_safe(const std::string* part)
-{
-    if (part->empty() || *part == "." || *part == "..")
-    {
-        return false;
-    }
-    for (size_t i = 0; i < part->size(); i++)
-    {
-        uint8_t c = static_cast<uint8_t>((*part)[i]);
-        if (c < 0x20 || c == 0x7F || c == '\\' || c == ':')
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
-static void split_parts(const char* path, std::vector<std::string>* parts)
-{
-    parts->clear();
-    std::string part;
-    for (const char* cursor = path; *cursor != '\0'; cursor++)
-    {
-        if (*cursor == '/')
-        {
-            parts->push_back(part);
-            part.clear();
-        }
-        else
-        {
-            part.push_back(*cursor);
-        }
-    }
-    parts->push_back(part);
 }
 
 // An archive's entry name without the '/' some zips end folder names with.
@@ -165,10 +95,10 @@ NetContentStatus net_content_resolve(const NetContentFolders* folders, const cha
         return NetContentStatus::refused;
     }
     std::vector<std::string> parts;
-    split_parts(path, &parts);
+    net_content_split_path(path, &parts);
     for (size_t i = 0; i < parts.size(); i++)
     {
-        if (!part_is_safe(&parts[i]))
+        if (!net_content_part_is_safe(&parts[i]))
         {
             host_log(LogLevel::warning, "Network: refused path \"%s\"", path);
             return NetContentStatus::refused;
