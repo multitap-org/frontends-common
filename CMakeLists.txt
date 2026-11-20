@@ -71,7 +71,9 @@ if(EXISTS "${MULTITAP_DEPS_DIR}/miniz/miniz_zip.c" AND EXISTS "${MULTITAP_DEPS_D
         "${SEVEN_ZIP_C}/7zCrc.c" "${SEVEN_ZIP_C}/7zCrcOpt.c" "${SEVEN_ZIP_C}/7zDec.c"
         "${SEVEN_ZIP_C}/7zStream.c" "${SEVEN_ZIP_C}/Bcj2.c" "${SEVEN_ZIP_C}/Bra.c"
         "${SEVEN_ZIP_C}/Bra86.c" "${SEVEN_ZIP_C}/BraIA64.c" "${SEVEN_ZIP_C}/CpuArch.c"
-        "${SEVEN_ZIP_C}/Delta.c" "${SEVEN_ZIP_C}/Lzma2Dec.c" "${SEVEN_ZIP_C}/LzmaDec.c")
+        "${SEVEN_ZIP_C}/Delta.c" "${SEVEN_ZIP_C}/Lzma2Dec.c" "${SEVEN_ZIP_C}/LzmaDec.c"
+        # SHA-256 (file_hash.cpp: checking downloads).
+        "${SEVEN_ZIP_C}/Sha256.c" "${SEVEN_ZIP_C}/Sha256Opt.c")
     target_include_directories(multitap_dep_7z SYSTEM PUBLIC "${SEVEN_ZIP_C}")
     target_compile_definitions(multitap_dep_7z PRIVATE Z7_EXTRACT_ONLY)
     # Decoding runs when a game loads; optimized even in Debug builds, like libsamplerate.
@@ -125,12 +127,18 @@ if(MULTITAP_ARCHIVES)
     target_link_libraries(frontend_common PRIVATE multitap_dep_miniz multitap_dep_7z)
 endif()
 
-# Downloads (frontend_download: signature now; HTTP and file hashes next) for
-# the core downloader: only for frontends that have deps/monocypher.
+# Downloads (frontend_download: signature checks, HTTP downloads, SHA-256 of
+# files) for the core downloader. Only for frontends that have deps/monocypher
+# and zip reading, and where libcurl is found: the system's on Linux (the
+# Flatpak runtime has it). Windows (curl built with Schannel) and Android (JNI)
+# come later; until then frontend_download isn't built there.
 # Monocypher (deps/monocypher, BSD-2-Clause or CC0): EdDSA signature checks.
 # The same target as frontend_net's (netcode), defined once.
 set(MULTITAP_DOWNLOADS OFF)
-if(EXISTS "${MULTITAP_DEPS_DIR}/monocypher/src/monocypher.c")
+if(MULTITAP_ARCHIVES AND EXISTS "${MULTITAP_DEPS_DIR}/monocypher/src/monocypher.c")
+    find_package(CURL QUIET)
+endif()
+if(MULTITAP_ARCHIVES AND CURL_FOUND AND EXISTS "${MULTITAP_DEPS_DIR}/monocypher/src/monocypher.c")
     set(MULTITAP_DOWNLOADS ON)
     if(NOT TARGET multitap_dep_monocypher)
         add_library(multitap_dep_monocypher STATIC "${MULTITAP_DEPS_DIR}/monocypher/src/monocypher.c")
@@ -142,9 +150,12 @@ if(EXISTS "${MULTITAP_DEPS_DIR}/monocypher/src/monocypher.c")
 
     add_library(frontend_download STATIC
         signature.cpp
+        net_http.cpp
+        file_hash.cpp
     )
     target_include_directories(frontend_download PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(frontend_download PUBLIC host_common PRIVATE multitap_dep_monocypher)
+    target_link_libraries(frontend_download PUBLIC host_common SDL3::SDL3
+                          PRIVATE multitap_dep_monocypher multitap_dep_7z CURL::libcurl)
     multitap_set_project_flags(frontend_download)
 endif()
 
@@ -272,6 +283,19 @@ if(MULTITAP_BUILD_TESTS)
         add_test(NAME frontend_signature COMMAND frontend_signature_test)
         set_tests_properties(frontend_signature PROPERTIES
                              PASS_REGULAR_EXPRESSION "signature: all checks passed"
+                             FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+        add_executable(frontend_net_http_test tests/net_http_test.cpp)
+        target_link_libraries(frontend_net_http_test PRIVATE frontend_download)
+        multitap_set_project_flags(frontend_net_http_test)
+        set(NET_HTTP_SCRATCH "${CMAKE_CURRENT_BINARY_DIR}/net_http_test")
+        add_test(NAME frontend_net_http_clean COMMAND ${CMAKE_COMMAND} -E rm -rf "${NET_HTTP_SCRATCH}")
+        set_tests_properties(frontend_net_http_clean PROPERTIES FIXTURES_SETUP net_http_scratch)
+        add_test(NAME frontend_net_http
+                 COMMAND frontend_net_http_test "${CMAKE_CURRENT_SOURCE_DIR}/tests/data" "${NET_HTTP_SCRATCH}")
+        set_tests_properties(frontend_net_http PROPERTIES
+                             FIXTURES_REQUIRED net_http_scratch
+                             PASS_REGULAR_EXPRESSION "net_http: all checks passed"
                              FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
     endif()
 
