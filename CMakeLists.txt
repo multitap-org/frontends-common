@@ -113,6 +113,18 @@ set(MULTITAP_MONOCYPHER "${MULTITAP_DEPS_DIR}/monocypher")
 if(MULTITAP_HAVE_ENET AND NOT EXISTS "${MULTITAP_MONOCYPHER}/src/monocypher.c")
     message(FATAL_ERROR "deps/enet is there but deps/monocypher isn't: frontend_net needs both")
 endif()
+# beacon (deps/beacon, multitap-org/multitap-beacon, MIT): our introduction
+# server for connections across the internet. Only its wire library (the
+# exact message layouts, no dependencies) is built here, with our flags.
+set(MULTITAP_BEACON "${MULTITAP_DEPS_DIR}/beacon")
+if(MULTITAP_HAVE_ENET AND NOT EXISTS "${MULTITAP_BEACON}/wire/beacon_wire.cpp")
+    message(FATAL_ERROR "deps/enet is there but deps/beacon isn't: frontend_net needs it (https://github.com/multitap-org/multitap-beacon)")
+endif()
+if(MULTITAP_HAVE_ENET)
+    add_library(multitap_dep_beacon_wire STATIC "${MULTITAP_BEACON}/wire/beacon_wire.cpp")
+    target_include_directories(multitap_dep_beacon_wire PUBLIC "${MULTITAP_BEACON}/wire")
+    multitap_set_project_flags(multitap_dep_beacon_wire)
+endif()
 if(MULTITAP_HAVE_ENET)
     # optional/: SHA-512, for CPace (pairing).
     add_library(multitap_dep_monocypher STATIC "${MULTITAP_MONOCYPHER}/src/monocypher.c"
@@ -243,6 +255,7 @@ if(MULTITAP_HAVE_ENET)
         net_settings.cpp
         net_speed.cpp
         net_service.cpp
+        net_beacon.cpp
         net_client_service.cpp
         net_stream.cpp
         net_input.cpp
@@ -260,7 +273,8 @@ if(MULTITAP_HAVE_ENET)
     target_include_directories(frontend_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     # frontend_common: settings_file (the trust and identity files).
     find_package(Threads REQUIRED)   # net_service's and net_client_service's threads
-    target_link_libraries(frontend_net PUBLIC host_common frontend_common Threads::Threads PRIVATE multitap_dep_enet multitap_dep_monocypher)
+    target_link_libraries(frontend_net PUBLIC host_common frontend_common Threads::Threads multitap_dep_beacon_wire
+                          PRIVATE multitap_dep_enet multitap_dep_monocypher)
     multitap_set_project_flags(frontend_net)
 
     # net_probe: LAN discovery on a real network, without a frontend.
@@ -467,6 +481,28 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
     set_tests_properties(frontend_net PROPERTIES
                          PASS_REGULAR_EXPRESSION "all net checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    # Across the internet through a beacon, end to end over loopback against
+    # the real server (deps/beacon's server code, built here for the test;
+    # Linux only, like the server).
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_library(frontend_test_beacon_server STATIC
+            "${MULTITAP_BEACON}/server/beacon_log.cpp"
+            "${MULTITAP_BEACON}/server/beacon_random.cpp"
+            "${MULTITAP_BEACON}/server/beacon_server.cpp"
+            "${MULTITAP_BEACON}/server/beacon_net.cpp")
+        target_include_directories(frontend_test_beacon_server PUBLIC "${MULTITAP_BEACON}/server")
+        target_link_libraries(frontend_test_beacon_server PUBLIC multitap_dep_beacon_wire PRIVATE multitap_dep_monocypher)
+        multitap_set_project_flags(frontend_test_beacon_server)
+        add_executable(frontend_net_beacon_test tests/net_beacon_test.cpp)
+        target_link_libraries(frontend_net_beacon_test PRIVATE frontend_net frontend_test_beacon_server)
+        multitap_set_project_flags(frontend_net_beacon_test)
+        add_test(NAME frontend_net_beacon
+                 COMMAND frontend_net_beacon_test "${CMAKE_CURRENT_BINARY_DIR}/net_beacon_test")
+        set_tests_properties(frontend_net_beacon PROPERTIES
+                             PASS_REGULAR_EXPRESSION "net beacon: all checks passed"
+                             FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    endif()
 
     # Games from a client: messages, pages, and the game folders (with archives).
     add_executable(frontend_net_content_test tests/net_content_test.cpp)

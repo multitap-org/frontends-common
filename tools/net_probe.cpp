@@ -45,6 +45,10 @@
 //   --device-port C D P  with --connect: a second in, move controller C (device
 //               D, from --devices) to port P (1-4, 0 = on none)
 //   --unpair    with --connect: once in, unpair (the host forgets us too)
+//   --beacon SERVER  across the internet (net_beacon.h): with --listen, register
+//               the paired devices with that beacon and show its status; with
+//               --connect #N, meet paired host N (in our list) through it
+//               ("beacon.get-piccolo.app", "host:port", "[v6]:port")
 //   --forget N  forget paired host N (0 = the first) here only, without connecting
 //   --dir DIR   where net_probe keeps its device key and paired devices
 //               (net_probe_identity.cfg, net_probe_devices.cfg; default ".")
@@ -77,7 +81,8 @@
 static void usage()
 {
     std::printf("usage: net_probe [--port N] [--seconds S] [--dir DIR]\n"
-                "                 [--at ADDRESS | --listen NAME | --pair ADDRESS CODE | --connect ADDRESS]\n"
+                "                 [--at ADDRESS | --listen NAME | --pair ADDRESS CODE | --connect ADDRESS | --connect #N]\n"
+                "                 [--beacon SERVER]\n"
                 "                 [--pad | --cores | --list PATH | --load CORE PATH]\n");
 }
 
@@ -123,7 +128,7 @@ static bool load_identity(const std::string* dir, NetKeypair* identity)
     return true;
 }
 
-static int run_listener(uint16_t port, const char* name, const std::string* dir)
+static int run_listener(uint16_t port, const char* name, const std::string* dir, const char* beacon)
 {
     NetKeypair identity;
     if (!load_identity(dir, &identity))
@@ -140,9 +145,38 @@ static int run_listener(uint16_t port, const char* name, const std::string* dir)
     }
     std::printf("host \"%s\" on port %u, %zu paired device(s); pairing code %s (Ctrl+C to stop)\n", name,
                 static_cast<unsigned>(port), access->trust.devices.size(), access->code);
+    if (beacon != nullptr)
+    {
+        NetAddress servers[NET_BEACON_MAX_SERVERS];
+        uint32_t count = net_address_resolve(beacon, NET_BEACON_DEFAULT_PORT, servers);
+        for (uint32_t i = 0; i < count; i++)
+        {
+            char text[64];
+            net_address_to_text(servers[i], text, sizeof(text));
+            std::printf("beacon at %s\n", text);
+        }
+        net_access_set_beacon(access, servers, count);
+    }
+    NetBeaconStatus beacon_status = NetBeaconStatus::off;
     uint32_t answered = 0;
     for (;;)
     {
+        NetBeaconStatus status = net_access_beacon_status(access);
+        if (status != beacon_status)
+        {
+            beacon_status = status;
+            std::printf("beacon: %s", net_beacon_status_name(status));
+            for (uint32_t i = 0; i < access->beacon.server_count; i++)
+            {
+                if (access->beacon.servers[i].has_observed)
+                {
+                    char text[64];
+                    net_address_to_text(access->beacon.servers[i].observed, text, sizeof(text));
+                    std::printf(" (it sees us as %s)", text);
+                }
+            }
+            std::printf("\n");
+        }
         NetAccessEvent event;
         while (net_access_poll(access, &event))
         {
@@ -203,6 +237,12 @@ static const char* refusal_text(NetClientRefusal refusal)
         return "this host's key isn't one we paired with";
     case NetClientRefusal::connection:
         return "the connection failed";
+    case NetClientRefusal::beacon_unreachable:
+        return "no beacon server answered";
+    case NetClientRefusal::host_offline:
+        return "the beacon doesn't know this host (not running, or its internet setting is off)";
+    case NetClientRefusal::no_route:
+        return "couldn't connect: the beacon introduced us but no path got through the NATs";
     }
     return "?";
 }
@@ -785,17 +825,41 @@ static bool content_receive(NetClient* client, ContentProbe* probe, const uint8_
 }
 
 static int run_client(uint16_t port, double seconds, const char* at, const char* code, const std::string* dir,
-                      bool pad, bool retropad, ContentProbe* content, bool ping, bool speedtest, WatchProbe* watch)
+                      bool pad, bool retropad, ContentProbe* content, bool ping, bool speedtest, WatchProbe* watch,
+                      const char* beacon)
 {
     NetKeypair identity;
     NetAddress address;
-    if (!load_identity(dir, &identity) || !net_address_from_text(at, port, &address))
+    bool via_beacon = at[0] == '#';
+    if (!load_identity(dir, &identity) || (!via_beacon && !net_address_from_text(at, port, &address)))
     {
+        return 1;
+    }
+    if (via_beacon && beacon == nullptr)
+    {
+        std::printf("--connect #N needs --beacon SERVER\n");
         return 1;
     }
     NetClient* client = new NetClient();
     std::string devices = *dir + "/net_probe_devices.cfg";
-    if (!net_client_create(client, &identity, "NET PROBE", devices.c_str()) || !net_client_connect(client, address, code))
+    bool started = net_client_create(client, &identity, "NET PROBE", devices.c_str());
+    if (started && via_beacon)
+    {
+        NetAddress servers[NET_BEACON_MAX_SERVERS];
+        uint32_t count = net_address_resolve(beacon, NET_BEACON_DEFAULT_PORT, servers);
+        uint32_t device = static_cast<uint32_t>(std::atoi(at + 1));
+        if (device < client->trust.devices.size())
+        {
+            std::printf("meeting \"%s\" through the beacon (%u address(es))\n",
+                        client->trust.devices[device].name.c_str(), static_cast<unsigned>(count));
+        }
+        started = net_client_connect_beacon(client, servers, count, device);
+    }
+    else if (started)
+    {
+        started = net_client_connect(client, address, code);
+    }
+    if (!started)
     {
         net_client_destroy(client);
         delete client;
@@ -1116,6 +1180,7 @@ int main(int argc, char** argv)
     double seconds = 1.0;
     const char* at = nullptr;
     const char* listen = nullptr;
+    const char* beacon = nullptr;
     const char* connect = nullptr;
     const char* pair_code = nullptr;
     std::string dir = ".";
@@ -1282,6 +1347,10 @@ int main(int argc, char** argv)
         {
             listen = argv[++i];
         }
+        else if (std::strcmp(argv[i], "--beacon") == 0 && has_value)
+        {
+            beacon = argv[++i];
+        }
         else
         {
             usage();
@@ -1309,11 +1378,11 @@ int main(int argc, char** argv)
     int result = 0;
     if (listen != nullptr)
     {
-        result = run_listener(port, listen, &dir);
+        result = run_listener(port, listen, &dir, beacon);
     }
     else if (connect != nullptr)
     {
-        result = run_client(port, seconds < 3.0 ? 3.0 : seconds, connect, pair_code, &dir, pad, retropad, &content, ping, speedtest, &watch);
+        result = run_client(port, seconds < 3.0 ? 3.0 : seconds, connect, pair_code, &dir, pad, retropad, &content, ping, speedtest, &watch, beacon);
     }
     else
     {
