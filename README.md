@@ -8,6 +8,7 @@ bindings, remaps, combos, macros, turbo, the cursor). No host code.
 A library: it doesn't build on its own. A frontend adds it as a submodule,
 after hosts-common, defines `imgui`, `SDL3::SDL3` and `Vulkan::Vulkan`, and
 sets `MULTITAP_DEPS_DIR` to its `deps/` folder (libsamplerate, gamemode; for
-the resampler measurement tool also libretro-common).
+the resampler measurement tool also libretro-common; enet, optional, for the
+`frontend_net` network library).
 
 MIT License (see LICENSE).
