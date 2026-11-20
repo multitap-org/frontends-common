@@ -9,7 +9,8 @@
 //   - the peer leaving unplugs the pad; coming back reuses the same device;
 //   - a remote pad only plays: on port 1 with the UI up it drives nothing
 //     (a local pad on port 1 does); in a game its HOTKEY ENABLE + R fires
-//     SAVE STATE, but + START (QUICK MENU) and + Y (MENU) fire nothing.
+//     SAVE STATE only once its device may (STREAM: input_net_set_hotkeys),
+//     and + START (QUICK MENU) and + Y (MENU) fire nothing.
 //
 // Exit code 0 = all checks passed. Each failure is printed.
 
@@ -178,10 +179,28 @@ int main()
         input_update(system, 1116, &settle);
         NetPadState hotkey = enable;
         hotkey.buttons |= bit(InputButton::right_shoulder) | bit(InputButton::start) | bit(InputButton::west);
+        // A GAMEPAD device (hotkeys not allowed: the default) can't.
+        size = net_input_push(&again, 0, &hotkey, packet, sizeof(packet));
+        input_net_receive(net, system, 5, key, "ANA'S PHONE", packet, size);
+        InputFrame denied_frame;
+        input_update(system, 1132, &denied_frame);
+        check(!denied_frame.pressed[static_cast<uint32_t>(InputAction::hotkey_save_state)],
+              "a GAMEPAD device's pad can't SAVE STATE");
+        input_devices_end_frame(&system->devices);   // as the frontend does after each update: taps clear
+        // STREAM and up: it can (everything let go, then the same again).
+        input_net_set_hotkeys(net, system, 5, true);
+        size = net_input_push(&again, 0, &idle, packet, sizeof(packet));
+        input_net_receive(net, system, 5, key, "ANA'S PHONE", packet, size);
+        input_update(system, 1500, &settle);
+        input_devices_end_frame(&system->devices);
+        size = net_input_push(&again, 0, &enable, packet, sizeof(packet));
+        input_net_receive(net, system, 5, key, "ANA'S PHONE", packet, size);
+        input_update(system, 1900, &settle);
+        input_devices_end_frame(&system->devices);
         size = net_input_push(&again, 0, &hotkey, packet, sizeof(packet));
         input_net_receive(net, system, 5, key, "ANA'S PHONE", packet, size);
         InputFrame hotkey_frame;
-        input_update(system, 1132, &hotkey_frame);
+        input_update(system, 1916, &hotkey_frame);
         check(hotkey_frame.pressed[static_cast<uint32_t>(InputAction::hotkey_save_state)],
               "a remote pad on port 1 can SAVE STATE");
         check(!hotkey_frame.pressed[static_cast<uint32_t>(InputAction::hotkey_quick_menu)] &&

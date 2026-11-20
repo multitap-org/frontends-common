@@ -33,6 +33,7 @@ struct InputNetPad
 struct InputNet
 {
     InputNetPad pads[NET_MAX_PEERS][NET_INPUT_MAX_PADS];
+    bool        hotkeys[NET_MAX_PEERS] = {};   // the peer's pads may use the game's hotkeys
     uint32_t    dropped = 0;     // packets that weren't pad packets
 };
 
@@ -40,6 +41,12 @@ struct InputNet
 // `name` what it's called (the paired device's name).
 void input_net_receive(InputNet* net, InputSystem* system, uint32_t peer, const uint8_t* key, const char* name,
                        const uint8_t* data, size_t size);
+
+// Whether this peer's pads may use the game's hotkeys on port 1 (SAVE / LOAD
+// STATE, FAST FORWARD): the same actions need STREAM access as messages
+// (Andrés, 2026-11-20), so a GAMEPAD device can't reach them by its pad
+// either. Off until set; call it with each packet (levels change live).
+void input_net_set_hotkeys(InputNet* net, InputSystem* system, uint32_t peer, bool allowed);
 
 // The peer left (or networking stopped): its pads are unplugged.
 void input_net_peer_gone(InputNet* net, InputSystem* system, uint32_t peer);
