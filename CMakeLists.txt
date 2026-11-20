@@ -83,36 +83,26 @@ if(EXISTS "${MULTITAP_DEPS_DIR}/miniz/miniz_zip.c" AND EXISTS "${MULTITAP_DEPS_D
     endif()
 endif()
 
-# ENet (deps/enet, MIT): connections over UDP for frontend_net. Built from
-# its sources without our warning flags. Its configure checks are replaced by
-# what every POSIX system we target has (Linux, macOS, Android); Windows uses
-# win32.c and Winsock instead.
+# ENet (deps/enet, MIT): connections over UDP for frontend_net. zpl-c's ENet
+# (a maintained fork of lsalzman's with IPv6: one dual-stack socket, IPv4
+# addresses as ::ffff:a.b.c.d), a single header. Its code is compiled once, in
+# net_enet.c, with ENET_IMPLEMENTATION set here and without our warning flags.
 # Optional: only frontends whose deps/ has enet get frontend_net (others,
 # like libretro-test-frontend, build as before).
 set(MULTITAP_ENET "${MULTITAP_DEPS_DIR}/enet")
-if(EXISTS "${MULTITAP_ENET}/host.c")
+if(EXISTS "${MULTITAP_ENET}/include/enet.h")
     set(MULTITAP_HAVE_ENET ON)
+elseif(EXISTS "${MULTITAP_ENET}/host.c")
+    message(FATAL_ERROR "deps/enet is lsalzman's ENet: frontends-common needs zpl-c's (https://github.com/zpl-c/enet, v2.7.0)")
 else()
     set(MULTITAP_HAVE_ENET OFF)
 endif()
 if(MULTITAP_HAVE_ENET)
-    add_library(multitap_dep_enet STATIC
-        "${MULTITAP_ENET}/callbacks.c"
-        "${MULTITAP_ENET}/compress.c"
-        "${MULTITAP_ENET}/host.c"
-        "${MULTITAP_ENET}/list.c"
-        "${MULTITAP_ENET}/packet.c"
-        "${MULTITAP_ENET}/peer.c"
-        "${MULTITAP_ENET}/protocol.c")
+    add_library(multitap_dep_enet STATIC "${CMAKE_CURRENT_SOURCE_DIR}/net_enet.c")
     target_include_directories(multitap_dep_enet SYSTEM PUBLIC "${MULTITAP_ENET}/include")
+    target_compile_definitions(multitap_dep_enet PRIVATE ENET_IMPLEMENTATION)
     if(WIN32)
-        target_sources(multitap_dep_enet PRIVATE "${MULTITAP_ENET}/win32.c")
         target_link_libraries(multitap_dep_enet PUBLIC ws2_32 winmm)
-    else()
-        target_sources(multitap_dep_enet PRIVATE "${MULTITAP_ENET}/unix.c")
-        target_compile_definitions(multitap_dep_enet PRIVATE
-            HAS_FCNTL=1 HAS_POLL=1 HAS_GETADDRINFO=1 HAS_GETNAMEINFO=1 HAS_INET_PTON=1 HAS_INET_NTOP=1
-            HAS_MSGHDR_FLAGS=1 HAS_SOCKLEN_T=1)
     endif()
 endif()
 
