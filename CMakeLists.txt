@@ -122,8 +122,9 @@ if(MULTITAP_HAVE_ENET AND NOT EXISTS "${MULTITAP_BEACON}/wire/beacon_wire.cpp")
 endif()
 # libdatachannel (deps/libdatachannel, MPL-2.0; Andrés accepted it 2026-11-20):
 # WebRTC data channels natively, so desktop and Android meet browsers (the
-# browser has its own WebRTC: net_webrtc.js). Built static, without its
-# WebSocket and media parts; DTLS from the system's OpenSSL. Optional: a
+# browser has its own WebRTC: net_webrtc.js). Built static, with its
+# WebSocket client (the beacon's signaling, wss) and without media; TLS and
+# DTLS from the system's OpenSSL. Optional: a
 # frontend without deps/libdatachannel (or MULTITAP_NET_RTC=OFF) gets ENet only.
 set(MULTITAP_LIBDATACHANNEL "${MULTITAP_DEPS_DIR}/libdatachannel")
 set(MULTITAP_HAVE_RTC OFF)
@@ -131,7 +132,7 @@ if(MULTITAP_HAVE_ENET AND NOT EMSCRIPTEN AND EXISTS "${MULTITAP_LIBDATACHANNEL}/
     option(MULTITAP_NET_RTC "WebRTC data channels with libdatachannel" ON)
     if(MULTITAP_NET_RTC)
         set(MULTITAP_HAVE_RTC ON)
-        set(NO_WEBSOCKET ON CACHE BOOL "" FORCE)
+        set(NO_WEBSOCKET OFF CACHE BOOL "" FORCE)   # the beacon's signaling socket (wss)
         set(NO_MEDIA ON CACHE BOOL "" FORCE)
         set(NO_EXAMPLES ON CACHE BOOL "" FORCE)
         set(NO_TESTS ON CACHE BOOL "" FORCE)
@@ -139,10 +140,16 @@ if(MULTITAP_HAVE_ENET AND NOT EMSCRIPTEN AND EXISTS "${MULTITAP_LIBDATACHANNEL}/
     endif()
 endif()
 
+# As a subproject it builds only `beacon_wire`; with the tests on Linux also
+# the server itself (beacon_core, the `beacon` binary), which the network
+# tests run against. Both stay out of `all` unless something links them.
 if(MULTITAP_HAVE_ENET)
-    add_library(multitap_dep_beacon_wire STATIC "${MULTITAP_BEACON}/wire/beacon_wire.cpp")
-    target_include_directories(multitap_dep_beacon_wire PUBLIC "${MULTITAP_BEACON}/wire")
-    multitap_set_project_flags(multitap_dep_beacon_wire)
+    if(MULTITAP_BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(BEACON_SERVER ON CACHE BOOL "" FORCE)
+    endif()
+    set(BEACON_TESTS OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${MULTITAP_BEACON}" "${CMAKE_BINARY_DIR}/deps/beacon" EXCLUDE_FROM_ALL)
+    add_library(multitap_dep_beacon_wire ALIAS beacon_wire)
 endif()
 if(MULTITAP_HAVE_ENET)
     # optional/: SHA-512, for CPace (pairing).
@@ -281,10 +288,10 @@ if(MULTITAP_HAVE_ENET)
         input_net.cpp
     )
     if(MULTITAP_HAVE_RTC)
-        target_sources(frontend_net PRIVATE net_rtc_datachannel.cpp)
+        target_sources(frontend_net PRIVATE net_rtc_datachannel.cpp net_signal.cpp)
         target_link_libraries(frontend_net PRIVATE datachannel-static)
     else()
-        target_sources(frontend_net PRIVATE net_rtc_none.cpp)
+        target_sources(frontend_net PRIVATE net_rtc_none.cpp net_signal.cpp)
     endif()
     if(MULTITAP_ARCHIVES)
         target_sources(frontend_net PRIVATE net_content_folders.cpp)   # the host's game folders browse archives
@@ -511,16 +518,8 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
     # the real server (deps/beacon's server code, built here for the test;
     # Linux only, like the server).
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        add_library(frontend_test_beacon_server STATIC
-            "${MULTITAP_BEACON}/server/beacon_log.cpp"
-            "${MULTITAP_BEACON}/server/beacon_random.cpp"
-            "${MULTITAP_BEACON}/server/beacon_server.cpp"
-            "${MULTITAP_BEACON}/server/beacon_net.cpp")
-        target_include_directories(frontend_test_beacon_server PUBLIC "${MULTITAP_BEACON}/server")
-        target_link_libraries(frontend_test_beacon_server PUBLIC multitap_dep_beacon_wire PRIVATE multitap_dep_monocypher)
-        multitap_set_project_flags(frontend_test_beacon_server)
         add_executable(frontend_net_beacon_test tests/net_beacon_test.cpp)
-        target_link_libraries(frontend_net_beacon_test PRIVATE frontend_net frontend_test_beacon_server)
+        target_link_libraries(frontend_net_beacon_test PRIVATE frontend_net beacon_core)
         multitap_set_project_flags(frontend_net_beacon_test)
         add_test(NAME frontend_net_beacon
                  COMMAND frontend_net_beacon_test "${CMAKE_CURRENT_BINARY_DIR}/net_beacon_test")
@@ -537,6 +536,20 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
         add_test(NAME frontend_net_rtc COMMAND frontend_net_rtc_test)
         set_tests_properties(frontend_net_rtc PROPERTIES
                              PASS_REGULAR_EXPRESSION "net rtc: all checks passed"
+                             FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    endif()
+
+    # WebRTC through the beacon's signaling: the real `beacon` binary runs
+    # (spawned by the test), host and client meet in their room, the data
+    # channels connect, Noise runs on them; then host_offline and unreachable.
+    if(MULTITAP_HAVE_RTC AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(frontend_net_signal_test tests/net_signal_test.cpp)
+        target_link_libraries(frontend_net_signal_test PRIVATE frontend_net)
+        add_dependencies(frontend_net_signal_test beacon)
+        multitap_set_project_flags(frontend_net_signal_test)
+        add_test(NAME frontend_net_signal COMMAND frontend_net_signal_test $<TARGET_FILE:beacon>)
+        set_tests_properties(frontend_net_signal PROPERTIES
+                             PASS_REGULAR_EXPRESSION "net signal: all checks passed"
                              FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
     endif()
 
