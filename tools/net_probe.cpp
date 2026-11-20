@@ -34,6 +34,8 @@
 //               audio), decode it, print frames / Mbit/s / losses each second
 //               (needs STREAM access; a game must be running on the host)
 //   --save FILE with --watch: write the last frame shown as a PPM picture
+//   --tuning T  with --watch: ask for a frame delay while streaming: host, off,
+//               auto or a number of ms (stream_tuning; prints what's applied)
 //   --drop P    with --watch: throw away P% of the stream's packets (a bad
 //               network, to see keyframe requests and recovery)
 //   --unpair    with --connect: once in, unpair (the host forgets us too)
@@ -380,6 +382,8 @@ struct WatchProbe
     uint32_t          keyframe_requests = 0;
     double            last_request = 0.0;
     uint32_t          drop_percent = 0;
+    bool              tuning = false;
+    NetStreamTuning   tuning_asked;
     uint32_t          random = 1;
     uint32_t          dropped = 0;
     std::vector<int16_t> audio_storage;
@@ -805,6 +809,13 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
                     net_client_send(client, NetChannel::control, start,
                                     net_stream_write_start(start, sizeof(start),
                                                            NET_STREAM_WANT_VIDEO | NET_STREAM_WANT_AUDIO));
+                    if (watch->tuning)
+                    {
+                        uint8_t tuning[8];
+                        net_client_send(client, NetChannel::control, tuning,
+                                        net_stream_write_tuning(tuning, sizeof(tuning), NET_STREAM_TUNING,
+                                                                &watch->tuning_asked));
+                    }
                 }
                 pad_start = std::chrono::steady_clock::now();
                 next_state = pad_start;
@@ -836,6 +847,19 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
             else if (event.type == NetClientEventType::message && event.channel == NetChannel::stream)
             {
                 watch_packet(client, watch, event.data, event.size);
+            }
+            else if (event.type == NetClientEventType::message && event.channel == NetChannel::control &&
+                     event.size > 0 && event.data[0] == NET_STREAM_TUNING_RESULT)
+            {
+                NetStreamTuning tuning_result;
+                if (net_stream_read_tuning(event.data, event.size, NET_STREAM_TUNING_RESULT, &tuning_result))
+                {
+                    const char* modes[4] = {"host", "off", "auto", "manual"};
+                    std::printf("tuning: %s, frame delay %u ms%s, run-ahead %u\n",
+                                modes[static_cast<uint8_t>(tuning_result.delay)], static_cast<unsigned>(tuning_result.delay_ms),
+                                (tuning_result.flags & NET_STREAM_TUNING_WAITS_FOR_PRESENT) != 0 ? " (waits for present)" : "",
+                                static_cast<unsigned>(tuning_result.run_ahead));
+                }
             }
             else if (event.type == NetClientEventType::message && event.channel == NetChannel::control &&
                      net_stream_read_info(event.data, event.size, &watch->info))
@@ -1111,6 +1135,28 @@ int main(int argc, char** argv)
         else if (std::strcmp(argv[i], "--watch") == 0)
         {
             watch.on = true;
+        }
+        else if (std::strcmp(argv[i], "--tuning") == 0 && has_value)
+        {
+            const char* value = argv[++i];
+            watch.tuning = true;
+            if (std::strcmp(value, "host") == 0)
+            {
+                watch.tuning_asked.delay = NetStreamDelay::host;
+            }
+            else if (std::strcmp(value, "off") == 0)
+            {
+                watch.tuning_asked.delay = NetStreamDelay::off;
+            }
+            else if (std::strcmp(value, "auto") == 0)
+            {
+                watch.tuning_asked.delay = NetStreamDelay::automatic;
+            }
+            else
+            {
+                watch.tuning_asked.delay = NetStreamDelay::manual;
+                watch.tuning_asked.delay_ms = static_cast<uint8_t>(std::atoi(value));
+            }
         }
         else if (std::strcmp(argv[i], "--drop") == 0 && has_value)
         {

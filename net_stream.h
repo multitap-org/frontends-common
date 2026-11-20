@@ -28,6 +28,18 @@
 //
 // stream_info comes at the start and whenever the picture's size, aspect,
 // format or timing changes.
+//
+//   client -> host  stream_tuning         delay mode u8 | delay ms u8 | run-ahead frames u8
+//   host -> client  stream_tuning_result  delay mode u8 | delay ms u8 | run-ahead frames u8 | flags u8
+//
+// stream_tuning: how the host should run while this client streams, for
+// lower latency (Andrés: the client's pacing choice). Only in the host's
+// memory, for this stream: its settings aren't changed or saved (a crash
+// mustn't leave them changed), nor what AUTO learned for the game locally.
+// The result says what's applied now (with AUTO the delay comes down as the
+// host learns: sent again whenever it changes); flags bit 0 = the delay
+// waits for present (piccolo's frame delay works only that way: turned on in
+// memory for the stream if needed). Run-ahead: 0 until the host has it.
 
 #include <cstddef>
 #include <cstdint>
@@ -40,6 +52,10 @@ constexpr uint8_t NET_STREAM_START = 70;
 constexpr uint8_t NET_STREAM_STOP = 71;
 constexpr uint8_t NET_STREAM_KEYFRAME_REQUEST = 72;
 constexpr uint8_t NET_STREAM_INFO = 73;
+constexpr uint8_t NET_STREAM_TUNING = 74;
+constexpr uint8_t NET_STREAM_TUNING_RESULT = 75;
+constexpr uint8_t NET_STREAM_MAX_DELAY_MS = 50;
+constexpr uint8_t NET_STREAM_MAX_RUN_AHEAD = 4;
 
 constexpr uint8_t NET_STREAM_VIDEO = 1;
 constexpr uint8_t NET_STREAM_AUDIO = 2;
@@ -62,12 +78,33 @@ struct NetStreamInfo
     double           sample_rate = 0.0;
 };
 
+enum class NetStreamDelay : uint8_t
+{
+    host = 0,     // whatever the host's settings say
+    off = 1,
+    automatic = 2,   // the host's AUTO search, for this stream (not saved)
+    manual = 3,   // `delay_ms`
+};
+constexpr uint8_t NET_STREAM_DELAY_COUNT = 4;
+constexpr uint8_t NET_STREAM_TUNING_WAITS_FOR_PRESENT = 1;
+
+struct NetStreamTuning
+{
+    NetStreamDelay delay = NetStreamDelay::host;
+    uint8_t        delay_ms = 0;     // manual: asked; result: in use now
+    uint8_t        run_ahead = 0;    // frames
+    uint8_t        flags = 0;        // result only
+};
+
 // --- control messages ---------------------------------------------------------
 
 size_t net_stream_write_start(uint8_t* out, size_t capacity, uint8_t flags);
 bool   net_stream_read_start(const uint8_t* data, size_t size, uint8_t* flags);
 size_t net_stream_write_info(uint8_t* out, size_t capacity, const NetStreamInfo* info);
 bool   net_stream_read_info(const uint8_t* data, size_t size, NetStreamInfo* info);
+size_t net_stream_write_tuning(uint8_t* out, size_t capacity, uint8_t type, const NetStreamTuning* tuning);
+// `type`: NET_STREAM_TUNING or NET_STREAM_TUNING_RESULT. Values come back capped.
+bool   net_stream_read_tuning(const uint8_t* data, size_t size, uint8_t type, NetStreamTuning* tuning);
 // stream_stop and keyframe_request are their type byte alone.
 
 // --- sending ------------------------------------------------------------------
