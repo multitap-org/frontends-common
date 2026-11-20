@@ -105,6 +105,30 @@ bool app_shell_vsync_forced(const AppShell* shell);
 // if SDL doesn't know it.
 double app_shell_display_refresh_hz(const AppShell* shell);
 
+// 1 or 2 frames the CPU may prepare ahead of the GPU (renderer.h: 1 is lower
+// latency, 2 smoother). Changing it waits for the GPU; call between frames.
+void app_shell_set_frames_in_flight(AppShell* shell, uint32_t count);
+uint32_t app_shell_frames_in_flight(const AppShell* shell);
+
+// Low latency: after presenting, wait until the frame is on screen (or else
+// until the GPU finished it), so the next frame starts as late as possible.
+void app_shell_set_wait_for_present(AppShell* shell, bool wait);
+bool app_shell_wait_for_present(const AppShell* shell);
+
+// True when the shell can wait until a frame is on the screen (Vulkan's
+// present wait); false when the lowest-latency wait is for the GPU to finish.
+bool app_shell_waits_for_screen(const AppShell* shell);
+
+// What the shell runs on, for debug windows: one line each.
+struct AppShellGpuInfo
+{
+    char device[256];      // "AMD Radeon RX 6600"
+    char api[64];          // "Vulkan 1.3.280"
+    char swapchain[128];   // "1920x1080, 3 images, FIFO"
+    char validation[64];   // "Validation: on"
+};
+void app_shell_gpu_info(const AppShell* shell, AppShellGpuInfo* info);
+
 // Draws the ImGui UI and presents (acquiring first if the caller didn't).
 // Returns false only on a fatal Vulkan error.
 bool app_shell_present(AppShell* shell, ClearColor clear_color);

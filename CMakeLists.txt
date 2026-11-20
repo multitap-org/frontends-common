@@ -151,6 +151,8 @@ add_library(frontend_common STATIC
     viewport.cpp
     frame_delta.cpp
     picture.cpp
+    video_texture.cpp
+    video_output.cpp
     window_size.cpp
     localization.cpp
     rate_control.cpp

@@ -1,5 +1,7 @@
 #include "app_shell.h"
 
+#include <cstdio>
+
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
@@ -454,4 +456,42 @@ double app_shell_display_refresh_hz(const AppShell* shell)
 bool app_shell_vsync_forced(const AppShell* shell)
 {
     return !shell->swapchain.vsync && shell->swapchain.present_mode == VK_PRESENT_MODE_FIFO_KHR;
+}
+
+void app_shell_set_frames_in_flight(AppShell* shell, uint32_t count)
+{
+    renderer_set_frames_in_flight(&shell->renderer, &shell->vulkan, count);
+}
+
+uint32_t app_shell_frames_in_flight(const AppShell* shell)
+{
+    return shell->renderer.frames_in_flight;
+}
+
+void app_shell_set_wait_for_present(AppShell* shell, bool wait)
+{
+    shell->renderer.wait_for_present = wait;
+}
+
+bool app_shell_wait_for_present(const AppShell* shell)
+{
+    return shell->renderer.wait_for_present;
+}
+
+bool app_shell_waits_for_screen(const AppShell* shell)
+{
+    return shell->vulkan.present_wait_version > 0;
+}
+
+void app_shell_gpu_info(const AppShell* shell, AppShellGpuInfo* info)
+{
+    const VkPhysicalDeviceProperties* gpu = &shell->vulkan.physical_device_properties;
+    const VulkanSwapchain* swapchain = &shell->swapchain;
+    std::snprintf(info->device, sizeof(info->device), "%s", gpu->deviceName);
+    std::snprintf(info->api, sizeof(info->api), "Vulkan %u.%u.%u", VK_API_VERSION_MAJOR(gpu->apiVersion),
+                  VK_API_VERSION_MINOR(gpu->apiVersion), VK_API_VERSION_PATCH(gpu->apiVersion));
+    std::snprintf(info->swapchain, sizeof(info->swapchain), "%ux%u, %u images, %s", swapchain->extent.width,
+                  swapchain->extent.height, swapchain->image_count, vk_present_mode_to_string(swapchain->present_mode));
+    std::snprintf(info->validation, sizeof(info->validation), "Validation: %s",
+                  shell->vulkan.validation_enabled ? "on" : "off");
 }
