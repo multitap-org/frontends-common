@@ -3,6 +3,8 @@
 #include <chrono>
 #include <cstring>
 
+#include <SDL3/SDL_thread.h>
+
 #include "host_log.h"
 
 // --- remote play, on the thread (under `lock`) --------------------------------
@@ -196,6 +198,9 @@ static void run(NetClientService* service)
         service->lock.unlock();
         if (!running)
         {
+            // The audio uses SDL on this thread, which SDL didn't start: its
+            // per-thread data (the error buffer) is freed only when asked.
+            SDL_CleanupTLS();
             return;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(NET_CLIENT_SERVICE_POLL_MS));
