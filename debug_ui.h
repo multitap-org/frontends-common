@@ -14,6 +14,11 @@ struct VulkanSwapchain;
 bool debug_ui_init(SDL_Window* window, const VulkanContext* context, const VulkanSwapchain* swapchain);
 void debug_ui_shutdown();
 
+// Routes ImGui's text fields to `input` (text_input.h) instead of the SDL3
+// backend's own SDL_StartTextInput calls: one owner for the window's text input.
+struct TextInput;
+void debug_ui_route_text_input(TextInput* input);
+
 // Forward every SDL event here. Returns true if imgui used it.
 bool debug_ui_process_event(const SDL_Event* event);
 

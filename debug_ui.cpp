@@ -9,6 +9,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_vulkan.h"
 
+#include "text_input.h"
 #include "vk_context.h"
 #include "vk_swapchain.h"
 
@@ -119,6 +120,32 @@ void debug_ui_shutdown()
         ImGui_ImplSDL3_Shutdown();
     }
     ImGui::DestroyContext();
+}
+
+// ImGui calls this (during EndFrame) when its text input state changes: a
+// field got or lost focus, or its caret moved.
+static void imgui_set_ime_data(ImGuiContext*, ImGuiViewport*, ImGuiPlatformImeData* data)
+{
+    TextInput* input = static_cast<TextInput*>(ImGui::GetPlatformIO().Platform_ImeUserData);
+    if (input == nullptr)
+    {
+        return;
+    }
+    TextInputRect area = {};
+    area.x = static_cast<int32_t>(data->InputPos.x);
+    area.y = static_cast<int32_t>(data->InputPos.y);
+    area.w = 1;
+    area.h = static_cast<int32_t>(data->InputLineHeight);
+    text_input_set_ui_field(input, data->WantVisible || data->WantTextInput, &area);
+}
+
+void debug_ui_route_text_input(TextInput* input)
+{
+    // Replaces the SDL3 backend's handler (set by ImGui_ImplSDL3_Init); the
+    // backend's per-frame IME update then has nothing to do.
+    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+    platform_io.Platform_SetImeDataFn = imgui_set_ime_data;
+    platform_io.Platform_ImeUserData = input;
 }
 
 bool debug_ui_process_event(const SDL_Event* event)
