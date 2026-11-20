@@ -156,6 +156,7 @@ add_library(frontend_common STATIC
     gl_context.cpp
     gl_texture.cpp
     gl_picture.cpp
+    gl_shader_chain.cpp
     window_size.cpp
     localization.cpp
     rate_control.cpp
@@ -386,7 +387,7 @@ if(MULTITAP_BUILD_TESTS)
     add_executable(frontend_gl_video_test tests/gl_video_test.cpp)
     target_link_libraries(frontend_gl_video_test PRIVATE frontend_common)
     multitap_set_project_flags(frontend_gl_video_test)
-    add_test(NAME frontend_gl_video COMMAND frontend_gl_video_test)
+    add_test(NAME frontend_gl_video COMMAND frontend_gl_video_test "${CMAKE_CURRENT_BINARY_DIR}/gl_video_test")
     set_tests_properties(frontend_gl_video PROPERTIES
                          SKIP_RETURN_CODE 77
                          PASS_REGULAR_EXPRESSION "gl video: all checks passed"

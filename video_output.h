@@ -5,9 +5,10 @@
 // resolution, stage 1 = the chosen preset), else plain with the viewport's
 // filter. Drawn through ImGui, so it can sit behind the UI or inside a window.
 // Frontends use this instead of the API's own modules, so they don't depend on
-// which API the shell runs on. Vulkan: shader_chain.h (librashader) and,
-// without a chain, picture.h underneath. OpenGL ES: gl_picture.h; no
-// presets yet (loading one fails, the picture is drawn plain).
+// which API the shell runs on. Vulkan: shader_chain.h (librashader, .slangp)
+// and, without a chain, picture.h underneath. OpenGL ES: gl_shader_chain.h
+// (our own .glpreset) and gl_picture.h. Which presets a stage takes depends
+// on the API: the frontend picks the files.
 //
 // Each frame, in this order:
 //   video_output_prepare()   while building the UI (may recreate images,
@@ -23,6 +24,7 @@
 #include <string>
 
 #include "gl_picture.h"
+#include "gl_shader_chain.h"
 #include "picture.h"
 #include "shader_chain.h"
 #include "viewport.h"
@@ -38,8 +40,10 @@ struct VideoOutput
     // Vulkan, underneath (only video_output.cpp looks inside).
     ShaderChain chain   = {};
     Picture     picture = {};
-    // OpenGL ES: the picture only (presets on GL come next: docs/gl.md).
-    GlPicture   gl_picture = {};
+    // OpenGL ES: our own presets (gl_shader_chain.h), else the picture.
+    bool          on_gl      = false;   // set by load_stage / prepare from the shell
+    GlShaderChain gl_chain   = {};
+    GlPicture     gl_picture = {};
 };
 
 // Loads `preset_path` into stage `stage` (0 or 1), replacing what it had;
@@ -65,8 +69,8 @@ bool video_output_shaded_available(const VideoOutput* output);
 
 // Sets a preset parameter (#pragma parameter) of one stage. False if the
 // stage is empty or has no parameter by that name.
-bool video_output_set_param(VideoOutput* output, const ShaderLibrary* library, uint32_t stage, const char* name,
-                            float value);
+bool video_output_set_param(VideoOutput* output, const ShaderLibrary* library, AppShell* shell, uint32_t stage,
+                            const char* name, float value);
 
 // Decides what this frame draws: through the stages when there are any and
 // they can run, else plain. False: nothing to draw (no picture yet).
