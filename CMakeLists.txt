@@ -253,9 +253,9 @@ endif()
 # Downloads (frontend_download: signature checks, HTTP downloads, SHA-256 of
 # files) for the core downloader. Only for frontends that have deps/monocypher
 # and zip reading, and where net_http has a backend (net_http_backend.h):
-# WinHTTP on Windows (part of the system), libcurl where it's found (Linux:
-# the system's; the Flatpak runtime has it). Android (JNI) comes later; until
-# then frontend_download isn't built there.
+# WinHTTP on Windows (part of the system), HttpURLConnection through JNI on
+# Android (part of the system), libcurl where it's found (Linux: the system's;
+# the Flatpak runtime has it).
 # Monocypher (deps/monocypher, BSD-2-Clause or CC0): EdDSA signature checks.
 # The same target as frontend_net's (netcode), defined once.
 set(MULTITAP_DOWNLOADS OFF)
@@ -263,7 +263,9 @@ set(MULTITAP_HTTP_BACKEND "")
 if(MULTITAP_ARCHIVES AND EXISTS "${MULTITAP_DEPS_DIR}/monocypher/src/monocypher.c")
     if(WIN32)
         set(MULTITAP_HTTP_BACKEND winhttp)
-    elseif(NOT ANDROID)
+    elseif(ANDROID)
+        set(MULTITAP_HTTP_BACKEND android)
+    else()
         find_package(CURL QUIET)
         if(CURL_FOUND)
             set(MULTITAP_HTTP_BACKEND curl)
@@ -291,7 +293,7 @@ if(MULTITAP_HTTP_BACKEND)
                           PRIVATE multitap_dep_monocypher multitap_dep_7z)
     if(MULTITAP_HTTP_BACKEND STREQUAL "winhttp")
         target_link_libraries(frontend_download PRIVATE winhttp)
-    else()
+    elseif(MULTITAP_HTTP_BACKEND STREQUAL "curl")
         target_link_libraries(frontend_download PRIVATE CURL::libcurl)
     endif()
     message(STATUS "Downloads: net_http with ${MULTITAP_HTTP_BACKEND}")
