@@ -180,6 +180,48 @@ static void run(NetService* service)
     }
 }
 
+static void resolve_beacon(NetService* service, uint32_t generation, std::string text)
+{
+    NetAddress addresses[NET_BEACON_MAX_SERVERS];
+    uint32_t count = text.empty() ? 0 : net_address_resolve(text.c_str(), NET_BEACON_DEFAULT_PORT, addresses);
+    service->lock.lock();
+    if (generation == service->beacon_generation)
+    {
+        net_access_set_beacon(&service->access, addresses, count);
+        if (!text.empty())
+        {
+            host_log(count > 0 ? LogLevel::info : LogLevel::warning, "Network: beacon %s: %u address(es)",
+                     text.c_str(), static_cast<unsigned>(count));
+        }
+    }
+    service->lock.unlock();
+}
+
+void net_service_set_beacon(NetService* service, const char* server)
+{
+    if (service->resolver.joinable())
+    {
+        service->resolver.join();
+    }
+    service->lock.lock();
+    service->beacon_generation++;
+    uint32_t generation = service->beacon_generation;
+    service->beacon_text = server != nullptr ? server : "";
+    std::string text = service->beacon_text;
+    // Browsers through the same beacon (WebRTC signaling; needs no lookup
+    // here: the socket resolves its own name). Nothing in builds without WebRTC.
+    if (text.empty())
+    {
+        net_access_set_signal(&service->access, "", nullptr);
+    }
+    else
+    {
+        net_access_set_signal(&service->access, net_signal_url(text.c_str()).c_str(), net_signal_stun(text.c_str()).c_str());
+    }
+    service->lock.unlock();
+    service->resolver = std::thread(resolve_beacon, service, generation, text);
+}
+
 bool net_service_start(NetService* service, uint16_t port, const char* name, const NetKeypair* identity,
                        const char* trust_path)
 {
@@ -205,6 +247,10 @@ bool net_service_start(NetService* service, uint16_t port, const char* name, con
 
 void net_service_stop(NetService* service)
 {
+    if (service->resolver.joinable())
+    {
+        service->resolver.join();
+    }
     if (service->thread.joinable())
     {
         service->lock.lock();

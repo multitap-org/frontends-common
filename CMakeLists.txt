@@ -83,36 +83,26 @@ if(EXISTS "${MULTITAP_DEPS_DIR}/miniz/miniz_zip.c" AND EXISTS "${MULTITAP_DEPS_D
     endif()
 endif()
 
-# ENet (deps/enet, MIT): connections over UDP for frontend_net. Built from
-# its sources without our warning flags. Its configure checks are replaced by
-# what every POSIX system we target has (Linux, macOS, Android); Windows uses
-# win32.c and Winsock instead.
+# ENet (deps/enet, MIT): connections over UDP for frontend_net. zpl-c's ENet
+# (a maintained fork of lsalzman's with IPv6: one dual-stack socket, IPv4
+# addresses as ::ffff:a.b.c.d), a single header. Its code is compiled once, in
+# net_enet.c, with ENET_IMPLEMENTATION set here and without our warning flags.
 # Optional: only frontends whose deps/ has enet get frontend_net (others,
 # like libretro-test-frontend, build as before).
 set(MULTITAP_ENET "${MULTITAP_DEPS_DIR}/enet")
-if(EXISTS "${MULTITAP_ENET}/host.c")
+if(EXISTS "${MULTITAP_ENET}/include/enet.h")
     set(MULTITAP_HAVE_ENET ON)
+elseif(EXISTS "${MULTITAP_ENET}/host.c")
+    message(FATAL_ERROR "deps/enet is lsalzman's ENet: frontends-common needs zpl-c's (https://github.com/zpl-c/enet, v2.7.0)")
 else()
     set(MULTITAP_HAVE_ENET OFF)
 endif()
 if(MULTITAP_HAVE_ENET)
-    add_library(multitap_dep_enet STATIC
-        "${MULTITAP_ENET}/callbacks.c"
-        "${MULTITAP_ENET}/compress.c"
-        "${MULTITAP_ENET}/host.c"
-        "${MULTITAP_ENET}/list.c"
-        "${MULTITAP_ENET}/packet.c"
-        "${MULTITAP_ENET}/peer.c"
-        "${MULTITAP_ENET}/protocol.c")
+    add_library(multitap_dep_enet STATIC "${CMAKE_CURRENT_SOURCE_DIR}/net_enet.c")
     target_include_directories(multitap_dep_enet SYSTEM PUBLIC "${MULTITAP_ENET}/include")
+    target_compile_definitions(multitap_dep_enet PRIVATE ENET_IMPLEMENTATION)
     if(WIN32)
-        target_sources(multitap_dep_enet PRIVATE "${MULTITAP_ENET}/win32.c")
         target_link_libraries(multitap_dep_enet PUBLIC ws2_32 winmm)
-    else()
-        target_sources(multitap_dep_enet PRIVATE "${MULTITAP_ENET}/unix.c")
-        target_compile_definitions(multitap_dep_enet PRIVATE
-            HAS_FCNTL=1 HAS_POLL=1 HAS_GETADDRINFO=1 HAS_GETNAMEINFO=1 HAS_INET_PTON=1 HAS_INET_NTOP=1
-            HAS_MSGHDR_FLAGS=1 HAS_SOCKLEN_T=1)
     endif()
 endif()
 
@@ -122,6 +112,44 @@ endif()
 set(MULTITAP_MONOCYPHER "${MULTITAP_DEPS_DIR}/monocypher")
 if(MULTITAP_HAVE_ENET AND NOT EXISTS "${MULTITAP_MONOCYPHER}/src/monocypher.c")
     message(FATAL_ERROR "deps/enet is there but deps/monocypher isn't: frontend_net needs both")
+endif()
+# beacon (deps/beacon, multitap-org/multitap-beacon, MIT): our introduction
+# server for connections across the internet. Only its wire library (the
+# exact message layouts, no dependencies) is built here, with our flags.
+set(MULTITAP_BEACON "${MULTITAP_DEPS_DIR}/beacon")
+if(MULTITAP_HAVE_ENET AND NOT EXISTS "${MULTITAP_BEACON}/wire/beacon_wire.cpp")
+    message(FATAL_ERROR "deps/enet is there but deps/beacon isn't: frontend_net needs it (https://github.com/multitap-org/multitap-beacon)")
+endif()
+# libdatachannel (deps/libdatachannel, MPL-2.0; Andrés accepted it 2026-11-20):
+# WebRTC data channels natively, so desktop and Android meet browsers (the
+# browser has its own WebRTC: net_webrtc.js). Built static, with its
+# WebSocket client (the beacon's signaling, wss) and without media; TLS and
+# DTLS from the system's OpenSSL. Optional: a
+# frontend without deps/libdatachannel (or MULTITAP_NET_RTC=OFF) gets ENet only.
+set(MULTITAP_LIBDATACHANNEL "${MULTITAP_DEPS_DIR}/libdatachannel")
+set(MULTITAP_HAVE_RTC OFF)
+if(MULTITAP_HAVE_ENET AND NOT EMSCRIPTEN AND EXISTS "${MULTITAP_LIBDATACHANNEL}/CMakeLists.txt")
+    option(MULTITAP_NET_RTC "WebRTC data channels with libdatachannel" ON)
+    if(MULTITAP_NET_RTC)
+        set(MULTITAP_HAVE_RTC ON)
+        set(NO_WEBSOCKET OFF CACHE BOOL "" FORCE)   # the beacon's signaling socket (wss)
+        set(NO_MEDIA ON CACHE BOOL "" FORCE)
+        set(NO_EXAMPLES ON CACHE BOOL "" FORCE)
+        set(NO_TESTS ON CACHE BOOL "" FORCE)
+        add_subdirectory("${MULTITAP_LIBDATACHANNEL}" "${CMAKE_BINARY_DIR}/deps/libdatachannel" EXCLUDE_FROM_ALL)
+    endif()
+endif()
+
+# As a subproject it builds only `beacon_wire`; with the tests on Linux also
+# the server itself (beacon_core, the `beacon` binary), which the network
+# tests run against. Both stay out of `all` unless something links them.
+if(MULTITAP_HAVE_ENET)
+    if(MULTITAP_BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(BEACON_SERVER ON CACHE BOOL "" FORCE)
+    endif()
+    set(BEACON_TESTS OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${MULTITAP_BEACON}" "${CMAKE_BINARY_DIR}/deps/beacon" EXCLUDE_FROM_ALL)
+    add_library(multitap_dep_beacon_wire ALIAS beacon_wire)
 endif()
 if(MULTITAP_HAVE_ENET)
     # optional/: SHA-512, for CPace (pairing).
@@ -270,11 +298,18 @@ if(MULTITAP_HAVE_ENET)
         net_settings.cpp
         net_speed.cpp
         net_service.cpp
+        net_beacon.cpp
         net_client_service.cpp
         net_stream.cpp
         net_input.cpp
         input_net.cpp
     )
+    if(MULTITAP_HAVE_RTC)
+        target_sources(frontend_net PRIVATE net_rtc_datachannel.cpp net_signal.cpp)
+        target_link_libraries(frontend_net PRIVATE datachannel-static)
+    else()
+        target_sources(frontend_net PRIVATE net_rtc_none.cpp net_signal.cpp)
+    endif()
     if(MULTITAP_ARCHIVES)
         target_sources(frontend_net PRIVATE net_content_folders.cpp)   # the host's game folders browse archives
     endif()
@@ -287,7 +322,8 @@ if(MULTITAP_HAVE_ENET)
     target_include_directories(frontend_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     # frontend_common: settings_file (the trust and identity files).
     find_package(Threads REQUIRED)   # net_service's and net_client_service's threads
-    target_link_libraries(frontend_net PUBLIC host_common frontend_common Threads::Threads PRIVATE multitap_dep_enet multitap_dep_monocypher)
+    target_link_libraries(frontend_net PUBLIC host_common frontend_common Threads::Threads multitap_dep_beacon_wire
+                          PRIVATE multitap_dep_enet multitap_dep_monocypher)
     multitap_set_project_flags(frontend_net)
 
     # net_probe: LAN discovery on a real network, without a frontend.
@@ -494,6 +530,46 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
     set_tests_properties(frontend_net PROPERTIES
                          PASS_REGULAR_EXPRESSION "all net checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    # Across the internet through a beacon, end to end over loopback against
+    # the real server (deps/beacon's server code, built here for the test;
+    # Linux only, like the server).
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(frontend_net_beacon_test tests/net_beacon_test.cpp)
+        target_link_libraries(frontend_net_beacon_test PRIVATE frontend_net beacon_core)
+        multitap_set_project_flags(frontend_net_beacon_test)
+        add_test(NAME frontend_net_beacon
+                 COMMAND frontend_net_beacon_test "${CMAKE_CURRENT_BINARY_DIR}/net_beacon_test")
+        set_tests_properties(frontend_net_beacon PROPERTIES
+                             PASS_REGULAR_EXPRESSION "net beacon: all checks passed"
+                             FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    endif()
+
+    # WebRTC data channels under NetSession, in one process (libdatachannel).
+    if(MULTITAP_HAVE_RTC)
+        add_executable(frontend_net_rtc_test tests/net_rtc_test.cpp)
+        target_link_libraries(frontend_net_rtc_test PRIVATE frontend_net)
+        multitap_set_project_flags(frontend_net_rtc_test)
+        add_test(NAME frontend_net_rtc COMMAND frontend_net_rtc_test)
+        set_tests_properties(frontend_net_rtc PROPERTIES
+                             PASS_REGULAR_EXPRESSION "net rtc: all checks passed"
+                             FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    endif()
+
+    # WebRTC through the beacon's signaling: the real `beacon` binary runs
+    # (spawned by the test), host and client meet in their room, the data
+    # channels connect, Noise runs on them; then host_offline and unreachable.
+    if(MULTITAP_HAVE_RTC AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(frontend_net_signal_test tests/net_signal_test.cpp)
+        target_link_libraries(frontend_net_signal_test PRIVATE frontend_net)
+        add_dependencies(frontend_net_signal_test beacon)
+        multitap_set_project_flags(frontend_net_signal_test)
+        add_test(NAME frontend_net_signal
+                 COMMAND frontend_net_signal_test $<TARGET_FILE:beacon> "${CMAKE_CURRENT_BINARY_DIR}/net_signal_test")
+        set_tests_properties(frontend_net_signal PROPERTIES
+                             PASS_REGULAR_EXPRESSION "net signal: all checks passed"
+                             FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    endif()
 
     # Games from a client: messages, pages, and the game folders (with archives).
     add_executable(frontend_net_content_test tests/net_content_test.cpp)

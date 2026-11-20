@@ -45,6 +45,7 @@ static uint32_t pad_device(InputNet* net, InputSystem* system, uint32_t peer, ui
     if (device != nullptr)
     {
         device->game_only = true;   // plays (and the game's hotkeys); never the menus
+        device->game_hotkeys = net->hotkeys[peer];
         // Never "looks fake": a phone's stick may be held at an edge when its
         // first state arrives, which the router would take for a stuck receiver.
         device->ignore = InputIgnore::no;
@@ -117,6 +118,7 @@ void input_net_peer_gone(InputNet* net, InputSystem* system, uint32_t peer)
     {
         return;
     }
+    net->hotkeys[peer] = false;   // the slot may go to another device
     for (uint32_t pad = 0; pad < NET_INPUT_MAX_PADS; pad++)
     {
         InputNetPad* entry = &net->pads[peer][pad];
@@ -127,5 +129,25 @@ void input_net_peer_gone(InputNet* net, InputSystem* system, uint32_t peer)
             host_log(LogLevel::info, "Network: pad unplugged");
         }
         *entry = {};
+    }
+}
+
+void input_net_set_hotkeys(InputNet* net, InputSystem* system, uint32_t peer, bool allowed)
+{
+    if (peer >= NET_MAX_PEERS || net->hotkeys[peer] == allowed)
+    {
+        return;
+    }
+    net->hotkeys[peer] = allowed;
+    for (uint32_t pad = 0; pad < NET_INPUT_MAX_PADS; pad++)
+    {
+        if (net->pads[peer][pad].active)
+        {
+            InputDevice* device = input_devices_find(&system->devices, net->pads[peer][pad].device);
+            if (device != nullptr)
+            {
+                device->game_hotkeys = allowed;
+            }
+        }
     }
 }

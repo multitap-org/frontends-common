@@ -125,6 +125,9 @@ struct InputDevice
     // remote devices (input_net): someone on the network plays, the menus
     // stay with the people at this machine.
     bool    game_only = false;
+    // A game-only device may use those game hotkeys at all (input_net: only
+    // devices with STREAM access or above; Andrés, 2026-11-20).
+    bool    game_hotkeys = true;
 
     // A RetroPad from the network (input_net): the remote app already mapped
     // its controls to the core's RetroPad (Andrés: the phone does the

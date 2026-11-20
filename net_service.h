@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -81,6 +82,12 @@ struct NetService
     std::vector<uint8_t> current;        // the payload of the event net_service_next last gave
     std::mutex     frame_lock;           // the frame and audio handed over (stream), apart from `lock`
     NetServiceStream stream;
+    // The beacon (across the internet): its name is resolved on a thread of
+    // its own (DNS may take seconds; neither the frontend nor the network
+    // thread should wait for it).
+    std::thread    resolver;
+    std::string    beacon_text;          // guarded by `lock`
+    uint32_t       beacon_generation = 0;   // guarded by `lock`: a newer set_beacon wins
 };
 
 // Creates the NetAccess (as net_access_create) and starts the thread.
@@ -92,6 +99,14 @@ void net_service_stop(NetService* service);
 
 void net_service_lock(NetService* service);
 void net_service_unlock(NetService* service);
+
+// Not locked: across the internet through the beacon `server` ("name",
+// "name:port", "[v6]:port"), or off with nullptr / "". Resolved on its own
+// thread; the access gets the addresses when it's done (net_access_beacon_status
+// says how it goes). Waits for a lookup still running from an earlier call.
+// The same beacon's WebRTC signaling (browsers) starts at once, where the
+// build has WebRTC (net_access_signal_status).
+void net_service_set_beacon(NetService* service, const char* server);
 
 // Locked: the next queued event, oldest first; its `data` stays valid until
 // the next call. False when the queue is empty.

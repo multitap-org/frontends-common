@@ -40,6 +40,17 @@
 // host learns: sent again whenever it changes); flags bit 0 = the delay
 // waits for present (piccolo's frame delay works only that way: turned on in
 // memory for the stream if needed). Run-ahead: 0 until the host has it.
+//
+//   client -> host  go_headless     on u8 (1 = take the game, 0 = give it back)
+//   host -> client  headless_state  on u8 | yours u8 (1 = this device holds it)
+//
+// GO HEADLESS (Andrés, 2026-11-20): a streaming device takes the game; the
+// host's window goes away (tray icon) while the game keeps running for the
+// stream. Only one device holds it; only that one gives it back. The host
+// sends headless_state to the asker and whenever it changes on its side (the
+// tray, the device leaving or stopping its stream: then the game pauses).
+// A go_headless the host can't do (no game, not streaming, another device
+// holds it) is answered with the current state.
 
 #include <cstddef>
 #include <cstdint>
@@ -54,6 +65,8 @@ constexpr uint8_t NET_STREAM_KEYFRAME_REQUEST = 72;
 constexpr uint8_t NET_STREAM_INFO = 73;
 constexpr uint8_t NET_STREAM_TUNING = 74;
 constexpr uint8_t NET_STREAM_TUNING_RESULT = 75;
+constexpr uint8_t NET_STREAM_GO_HEADLESS = 76;
+constexpr uint8_t NET_STREAM_HEADLESS_STATE = 77;
 constexpr uint8_t NET_STREAM_MAX_DELAY_MS = 50;
 constexpr uint8_t NET_STREAM_MAX_RUN_AHEAD = 4;
 
@@ -106,6 +119,10 @@ size_t net_stream_write_tuning(uint8_t* out, size_t capacity, uint8_t type, cons
 // `type`: NET_STREAM_TUNING or NET_STREAM_TUNING_RESULT. Values come back capped.
 bool   net_stream_read_tuning(const uint8_t* data, size_t size, uint8_t type, NetStreamTuning* tuning);
 // stream_stop and keyframe_request are their type byte alone.
+size_t net_stream_write_go_headless(uint8_t* out, size_t capacity, bool on);
+bool   net_stream_read_go_headless(const uint8_t* data, size_t size, bool* on);
+size_t net_stream_write_headless_state(uint8_t* out, size_t capacity, bool on, bool yours);
+bool   net_stream_read_headless_state(const uint8_t* data, size_t size, bool* on, bool* yours);
 
 // --- sending ------------------------------------------------------------------
 
