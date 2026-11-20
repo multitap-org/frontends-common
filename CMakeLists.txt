@@ -120,6 +120,25 @@ set(MULTITAP_BEACON "${MULTITAP_DEPS_DIR}/beacon")
 if(MULTITAP_HAVE_ENET AND NOT EXISTS "${MULTITAP_BEACON}/wire/beacon_wire.cpp")
     message(FATAL_ERROR "deps/enet is there but deps/beacon isn't: frontend_net needs it (https://github.com/multitap-org/multitap-beacon)")
 endif()
+# libdatachannel (deps/libdatachannel, MPL-2.0; Andrés accepted it 2026-11-20):
+# WebRTC data channels natively, so desktop and Android meet browsers (the
+# browser has its own WebRTC: net_webrtc.js). Built static, without its
+# WebSocket and media parts; DTLS from the system's OpenSSL. Optional: a
+# frontend without deps/libdatachannel (or MULTITAP_NET_RTC=OFF) gets ENet only.
+set(MULTITAP_LIBDATACHANNEL "${MULTITAP_DEPS_DIR}/libdatachannel")
+set(MULTITAP_HAVE_RTC OFF)
+if(MULTITAP_HAVE_ENET AND NOT EMSCRIPTEN AND EXISTS "${MULTITAP_LIBDATACHANNEL}/CMakeLists.txt")
+    option(MULTITAP_NET_RTC "WebRTC data channels with libdatachannel" ON)
+    if(MULTITAP_NET_RTC)
+        set(MULTITAP_HAVE_RTC ON)
+        set(NO_WEBSOCKET ON CACHE BOOL "" FORCE)
+        set(NO_MEDIA ON CACHE BOOL "" FORCE)
+        set(NO_EXAMPLES ON CACHE BOOL "" FORCE)
+        set(NO_TESTS ON CACHE BOOL "" FORCE)
+        add_subdirectory("${MULTITAP_LIBDATACHANNEL}" "${CMAKE_BINARY_DIR}/deps/libdatachannel" EXCLUDE_FROM_ALL)
+    endif()
+endif()
+
 if(MULTITAP_HAVE_ENET)
     add_library(multitap_dep_beacon_wire STATIC "${MULTITAP_BEACON}/wire/beacon_wire.cpp")
     target_include_directories(multitap_dep_beacon_wire PUBLIC "${MULTITAP_BEACON}/wire")
@@ -261,6 +280,12 @@ if(MULTITAP_HAVE_ENET)
         net_input.cpp
         input_net.cpp
     )
+    if(MULTITAP_HAVE_RTC)
+        target_sources(frontend_net PRIVATE net_rtc_datachannel.cpp)
+        target_link_libraries(frontend_net PRIVATE datachannel-static)
+    else()
+        target_sources(frontend_net PRIVATE net_rtc_none.cpp)
+    endif()
     if(MULTITAP_ARCHIVES)
         target_sources(frontend_net PRIVATE net_content_folders.cpp)   # the host's game folders browse archives
     endif()
@@ -501,6 +526,17 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
                  COMMAND frontend_net_beacon_test "${CMAKE_CURRENT_BINARY_DIR}/net_beacon_test")
         set_tests_properties(frontend_net_beacon PROPERTIES
                              PASS_REGULAR_EXPRESSION "net beacon: all checks passed"
+                             FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    endif()
+
+    # WebRTC data channels under NetSession, in one process (libdatachannel).
+    if(MULTITAP_HAVE_RTC)
+        add_executable(frontend_net_rtc_test tests/net_rtc_test.cpp)
+        target_link_libraries(frontend_net_rtc_test PRIVATE frontend_net)
+        multitap_set_project_flags(frontend_net_rtc_test)
+        add_test(NAME frontend_net_rtc COMMAND frontend_net_rtc_test)
+        set_tests_properties(frontend_net_rtc PROPERTIES
+                             PASS_REGULAR_EXPRESSION "net rtc: all checks passed"
                              FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
     endif()
 
