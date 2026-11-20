@@ -22,6 +22,7 @@
 #include <vulkan/vulkan.h>
 
 #include "renderer.h"
+#include "text_input.h"
 #include "vk_context.h"
 #include "vk_swapchain.h"
 
@@ -64,6 +65,10 @@ struct AppShell
     Renderer        renderer       = {};
     bool            sdl_ready      = false;
     bool            debug_ui_ready = false;
+
+    // The window's SDL text input (UI fields, a core's keyboard request, the
+    // game's characters): applied at each begin_frame.
+    TextInput       text_input     = {};
 
     // Android/iOS: in the background the window's surface is destroyed. The
     // swapchain and VkSurfaceKHR are released then and created again when the

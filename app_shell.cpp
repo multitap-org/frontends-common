@@ -184,6 +184,7 @@ bool app_shell_create(AppShell* shell, const AppShellConfig* config)
         return false;
     }
     shell->debug_ui_ready = true;
+    debug_ui_route_text_input(&shell->text_input);
 
     SDL_SetWindowPosition(shell->window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
     SDL_ShowWindow(shell->window);
@@ -317,6 +318,16 @@ bool app_shell_process_event(AppShell* shell, const SDL_Event* event)
             restore_surface(shell);   // if it fails, begin_frame tries again
         }
     }
+    else if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+    {
+        text_input_pointer_down(&shell->text_input, shell->window, event->button.y);
+    }
+    else if (event->type == SDL_EVENT_FINGER_DOWN)
+    {
+        int32_t height = 0;
+        SDL_GetWindowSize(shell->window, nullptr, &height);   // finger positions are 0..1
+        text_input_pointer_down(&shell->text_input, shell->window, event->tfinger.y * static_cast<float>(height));
+    }
     return debug_ui_process_event(event);
 }
 
@@ -324,6 +335,9 @@ bool app_shell_begin_frame(AppShell* shell)
 {
     shell->frame_started = false;
     shell->acquire_tried = false;
+
+    // What last frame's UI and the core session asked for.
+    text_input_apply(&shell->text_input, shell->window);
 
     if (SDL_GetWindowFlags(shell->window) & SDL_WINDOW_MINIMIZED)
     {
