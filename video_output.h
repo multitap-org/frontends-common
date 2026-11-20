@@ -5,8 +5,9 @@
 // resolution, stage 1 = the chosen preset), else plain with the viewport's
 // filter. Drawn through ImGui, so it can sit behind the UI or inside a window.
 // Frontends use this instead of the API's own modules, so they don't depend on
-// which API the shell runs on. Today Vulkan: shader_chain.h (librashader) and,
-// without a chain, picture.h underneath. OpenGL next (piccolo's docs/gl.md).
+// which API the shell runs on. Vulkan: shader_chain.h (librashader) and,
+// without a chain, picture.h underneath. OpenGL ES: gl_picture.h; no
+// presets yet (loading one fails, the picture is drawn plain).
 //
 // Each frame, in this order:
 //   video_output_prepare()   while building the UI (may recreate images,
@@ -21,6 +22,7 @@
 #include <cstdint>
 #include <string>
 
+#include "gl_picture.h"
 #include "picture.h"
 #include "shader_chain.h"
 #include "viewport.h"
@@ -36,6 +38,8 @@ struct VideoOutput
     // Vulkan, underneath (only video_output.cpp looks inside).
     ShaderChain chain   = {};
     Picture     picture = {};
+    // OpenGL ES: the picture only (presets on GL come next: docs/gl.md).
+    GlPicture   gl_picture = {};
 };
 
 // Loads `preset_path` into stage `stage` (0 or 1), replacing what it had;

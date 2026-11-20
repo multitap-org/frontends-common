@@ -21,6 +21,7 @@
 
 #include <vulkan/vulkan.h>
 
+#include "gl_context.h"
 #include "renderer.h"
 #include "vk_context.h"
 #include "vk_swapchain.h"
@@ -54,10 +55,21 @@ struct AppShellConfig
     bool                force_vulkan_1_1 = false;
 };
 
+// The graphics API the shell runs on, chosen at startup: the highest that
+// works (Vulkan, else OpenGL ES; piccolo's docs/gl.md). MULTITAP_GPU=gl (or
+// =vulkan) forces one, to test a path.
+enum class GpuApi
+{
+    vulkan,
+    gl,
+};
+
 // Zero/null-initialized, so app_shell_destroy() is safe at any point during startup.
 struct AppShell
 {
+    GpuApi          api            = GpuApi::vulkan;
     SDL_Window*     window         = nullptr;
+    GlContext       gl             = {};      // api == gl
     VulkanContext   vulkan         = {};
     VkSurfaceKHR    surface        = VK_NULL_HANDLE;
     VulkanSwapchain swapchain      = {};
@@ -123,7 +135,7 @@ bool app_shell_waits_for_screen(const AppShell* shell);
 struct AppShellGpuInfo
 {
     char device[256];      // "AMD Radeon RX 6600"
-    char api[64];          // "Vulkan 1.3.280"
+    char api[160];         // "Vulkan 1.3.280", "OpenGL ES 3.1 Mesa 25.2"
     char swapchain[128];   // "1920x1080, 3 images, FIFO"
     char validation[64];   // "Validation: on"
 };

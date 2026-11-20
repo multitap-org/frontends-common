@@ -7,6 +7,7 @@
 
 #include "imgui.h"
 #include "imgui_impl_sdl3.h"
+#include "imgui_impl_opengl3.h"
 #include "imgui_impl_vulkan.h"
 
 #include "vk_context.h"
@@ -28,7 +29,17 @@ static void imgui_check_vk_result(VkResult result)
     }
 }
 
-bool debug_ui_init(SDL_Window* window, const VulkanContext* context, const VulkanSwapchain* swapchain)
+// Which renderer backend ImGui was set up with (ImGui itself is one global
+// context; this goes with it).
+enum class DebugUiRenderer
+{
+    none,
+    vulkan,
+    gl,
+};
+static DebugUiRenderer g_renderer = DebugUiRenderer::none;
+
+static void create_context(SDL_Window* window)
 {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -53,7 +64,11 @@ bool debug_ui_init(SDL_Window* window, const VulkanContext* context, const Vulka
     style.GrabRounding  = 3.0f;
     style.ScaleAllSizes(display_scale);
     style.FontScaleDpi = display_scale;
+}
 
+bool debug_ui_init(SDL_Window* window, const VulkanContext* context, const VulkanSwapchain* swapchain)
+{
+    create_context(window);
     if (!ImGui_ImplSDL3_InitForVulkan(window))
     {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "ImGui_ImplSDL3_InitForVulkan failed");
@@ -99,7 +114,24 @@ bool debug_ui_init(SDL_Window* window, const VulkanContext* context, const Vulka
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "ImGui_ImplVulkan_Init failed");
         return false;
     }
+    g_renderer = DebugUiRenderer::vulkan;
+    return true;
+}
 
+bool debug_ui_init_gl(SDL_Window* window, SDL_GLContext context, const char* glsl_version)
+{
+    create_context(window);
+    if (!ImGui_ImplSDL3_InitForOpenGL(window, context))
+    {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "ImGui_ImplSDL3_InitForOpenGL failed");
+        return false;
+    }
+    if (!ImGui_ImplOpenGL3_Init(glsl_version))
+    {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "ImGui_ImplOpenGL3_Init failed");
+        return false;
+    }
+    g_renderer = DebugUiRenderer::gl;
     return true;
 }
 
@@ -112,13 +144,21 @@ void debug_ui_shutdown()
     ImGuiIO& io = ImGui::GetIO();
     if (io.BackendRendererUserData != nullptr)
     {
-        ImGui_ImplVulkan_Shutdown();
+        if (g_renderer == DebugUiRenderer::gl)
+        {
+            ImGui_ImplOpenGL3_Shutdown();
+        }
+        else
+        {
+            ImGui_ImplVulkan_Shutdown();
+        }
     }
     if (io.BackendPlatformUserData != nullptr)
     {
         ImGui_ImplSDL3_Shutdown();
     }
     ImGui::DestroyContext();
+    g_renderer = DebugUiRenderer::none;
 }
 
 bool debug_ui_process_event(const SDL_Event* event)
@@ -128,7 +168,14 @@ bool debug_ui_process_event(const SDL_Event* event)
 
 void debug_ui_begin_frame()
 {
-    ImGui_ImplVulkan_NewFrame();
+    if (g_renderer == DebugUiRenderer::gl)
+    {
+        ImGui_ImplOpenGL3_NewFrame();
+    }
+    else
+    {
+        ImGui_ImplVulkan_NewFrame();
+    }
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
 }
@@ -142,14 +189,24 @@ void debug_ui_set_draw_data_hook(DebugUiDrawDataHook hook, void* user)
     g_draw_data_hook_user = user;
 }
 
-void debug_ui_render(VkCommandBuffer command_buffer)
+static ImDrawData* finish_frame()
 {
     ImGui::Render();
     if (g_draw_data_hook != nullptr)
     {
         g_draw_data_hook(ImGui::GetDrawData(), g_draw_data_hook_user);
     }
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), command_buffer);
+    return ImGui::GetDrawData();
+}
+
+void debug_ui_render(VkCommandBuffer command_buffer)
+{
+    ImGui_ImplVulkan_RenderDrawData(finish_frame(), command_buffer);
+}
+
+void debug_ui_render_gl()
+{
+    ImGui_ImplOpenGL3_RenderDrawData(finish_frame());
 }
 
 void debug_ui_end_frame_without_render()
@@ -180,7 +237,8 @@ uint64_t debug_ui_add_texture(VkImageView view)
 
 void debug_ui_remove_texture(uint64_t texture_id)
 {
-    if (texture_id == 0)
+    // On GL an ImGui id is the texture's own name: nothing was registered.
+    if (texture_id == 0 || g_renderer != DebugUiRenderer::vulkan)
     {
         return;
     }

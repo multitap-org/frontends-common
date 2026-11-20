@@ -3,8 +3,8 @@
 // A texture the CPU fills every frame and ImGui can draw: a core's picture,
 // a remote play stream, a savestate thumbnail. Frontends use this instead of
 // the graphics API's own texture, so they don't depend on which API the shell
-// runs on (today Vulkan: vk_texture.h's StreamingTexture underneath; OpenGL
-// next, see piccolo's docs/gl.md).
+// runs on: vk_texture.h's StreamingTexture on Vulkan, gl_texture.h's
+// GlStreamingTexture on OpenGL ES (piccolo's docs/gl.md).
 //
 // The texture has a fixed capacity; uploads may be smaller (the current
 // frame's size). Only the uploaded region is drawn: video_texture_uv_max().
@@ -15,6 +15,7 @@
 #include <cstdint>
 
 #include "frame_pixel_format.h"
+#include "gl_texture.h"
 #include "vk_texture.h"
 
 struct AppShell;
@@ -30,9 +31,10 @@ struct VideoTexture
     bool             has_content     = false;   // false until the first upload: don't draw it before that
     uint64_t         imgui_id        = 0;       // what ImGui draws (ImTextureID), 0 = not created
 
-    // The Vulkan texture underneath (only video_texture.cpp and the video
-    // modules look inside).
-    StreamingTexture vulkan = {};
+    // The API's texture underneath, the one the shell runs on (only
+    // video_texture.cpp and the video modules look inside).
+    StreamingTexture   vulkan = {};
+    GlStreamingTexture gl     = {};
 };
 
 // True if this GPU can take `format` as it comes (no conversion on the CPU).

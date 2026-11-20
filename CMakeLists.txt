@@ -153,6 +153,9 @@ add_library(frontend_common STATIC
     picture.cpp
     video_texture.cpp
     video_output.cpp
+    gl_context.cpp
+    gl_texture.cpp
+    gl_picture.cpp
     window_size.cpp
     localization.cpp
     rate_control.cpp
@@ -230,6 +233,10 @@ endif()
 
 # Vulkan validation layers + debug messenger are enabled in Debug builds only.
 target_compile_definitions(frontend_common PRIVATE $<$<CONFIG:Debug>:MULTITAP_VULKAN_VALIDATION=1>)
+if(MULTITAP_GL_ES2)
+    # ImGui's GL backend is built for GLES 2 (top-level option): ask SDL for a GLES 2.0 context.
+    target_compile_definitions(frontend_common PRIVATE MULTITAP_GL_ES2=1)
+endif()
 
 multitap_set_project_flags(frontend_common)
 
@@ -374,6 +381,16 @@ if(MULTITAP_BUILD_TESTS)
     multitap_set_project_flags(frontend_frame_delay_test)
     add_test(NAME frontend_frame_delay COMMAND frontend_frame_delay_test)
     set_tests_properties(frontend_frame_delay PROPERTIES PASS_REGULAR_EXPRESSION "frame delay: all checks passed")
+
+    # Needs a display and OpenGL ES; skipped (77) without them.
+    add_executable(frontend_gl_video_test tests/gl_video_test.cpp)
+    target_link_libraries(frontend_gl_video_test PRIVATE frontend_common)
+    multitap_set_project_flags(frontend_gl_video_test)
+    add_test(NAME frontend_gl_video COMMAND frontend_gl_video_test)
+    set_tests_properties(frontend_gl_video PROPERTIES
+                         SKIP_RETURN_CODE 77
+                         PASS_REGULAR_EXPRESSION "gl video: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
     add_executable(frontend_frame_delta_test tests/frame_delta_test.cpp)
     target_link_libraries(frontend_frame_delta_test PRIVATE frontend_common)

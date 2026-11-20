@@ -18,6 +18,10 @@ static VkFormat vulkan_format(FramePixelFormat format)
 
 bool video_texture_format_supported(const AppShell* shell, FramePixelFormat format)
 {
+    if (shell->api == GpuApi::gl)
+    {
+        return true;   // all three (gl_texture.h: 0RGB1555 is converted on upload)
+    }
     return streaming_texture_format_supported(&shell->vulkan, vulkan_format(format));
 }
 
@@ -25,23 +29,36 @@ bool video_texture_create(VideoTexture* texture, AppShell* shell, uint32_t width
                           FramePixelFormat format, bool opaque)
 {
     video_texture_destroy(texture, shell);
-    if (!streaming_texture_create_format(&texture->vulkan, &shell->vulkan, width, height, vulkan_format(format),
-                                         opaque))
+    if (shell->api == GpuApi::gl)
     {
-        *texture = VideoTexture{};
-        return false;
+        // Always opaque on GL: the shown texture is written with alpha 1.
+        if (!gl_streaming_texture_create(&texture->gl, &shell->gl, width, height, format))
+        {
+            *texture = VideoTexture{};
+            return false;
+        }
+        texture->imgui_id = texture->gl.shown;   // ImGui's GL backend: the texture name
+    }
+    else
+    {
+        if (!streaming_texture_create_format(&texture->vulkan, &shell->vulkan, width, height, vulkan_format(format),
+                                             opaque))
+        {
+            *texture = VideoTexture{};
+            return false;
+        }
+        texture->imgui_id = debug_ui_add_texture(texture->vulkan.view);
     }
     texture->format = format;
     texture->bytes_per_pixel = frame_pixel_bytes(format);
     texture->capacity_width = width;
     texture->capacity_height = height;
-    texture->imgui_id = debug_ui_add_texture(texture->vulkan.view);
     return true;
 }
 
 bool video_texture_created(const VideoTexture* texture)
 {
-    return texture->vulkan.image != VK_NULL_HANDLE;
+    return texture->vulkan.image != VK_NULL_HANDLE || texture->gl.upload != 0;
 }
 
 void video_texture_destroy(VideoTexture* texture, AppShell* shell)
@@ -50,18 +67,32 @@ void video_texture_destroy(VideoTexture* texture, AppShell* shell)
     {
         return;
     }
-    vkDeviceWaitIdle(shell->vulkan.device);   // earlier frames may still be drawing it
-    debug_ui_remove_texture(texture->imgui_id);
-    streaming_texture_destroy(&texture->vulkan, &shell->vulkan);
+    if (shell->api == GpuApi::gl)
+    {
+        // GL keeps a texture alive until the commands that use it are done.
+        gl_streaming_texture_destroy(&texture->gl, &shell->gl);
+    }
+    else
+    {
+        vkDeviceWaitIdle(shell->vulkan.device);   // earlier frames may still be drawing it
+        debug_ui_remove_texture(texture->imgui_id);
+        streaming_texture_destroy(&texture->vulkan, &shell->vulkan);
+    }
     *texture = VideoTexture{};
 }
 
 bool video_texture_upload(VideoTexture* texture, AppShell* shell, const void* pixels, uint32_t width,
                           uint32_t height)
 {
-    if (!video_texture_created(texture) ||
-        !streaming_texture_upload(&texture->vulkan, renderer_command_buffer(&shell->renderer),
-                                  renderer_frame_index(&shell->renderer), pixels, width, height))
+    if (!video_texture_created(texture))
+    {
+        return false;
+    }
+    bool uploaded = shell->api == GpuApi::gl
+                        ? gl_streaming_texture_upload(&texture->gl, &shell->gl, pixels, width, height)
+                        : streaming_texture_upload(&texture->vulkan, renderer_command_buffer(&shell->renderer),
+                                                   renderer_frame_index(&shell->renderer), pixels, width, height);
+    if (!uploaded)
     {
         return false;
     }
@@ -73,5 +104,10 @@ bool video_texture_upload(VideoTexture* texture, AppShell* shell, const void* pi
 
 void video_texture_uv_max(const VideoTexture* texture, float* u, float* v)
 {
-    streaming_texture_uv_max(&texture->vulkan, u, v);
+    *u = texture->capacity_width > 0
+             ? static_cast<float>(texture->content_width) / static_cast<float>(texture->capacity_width)
+             : 0.0f;
+    *v = texture->capacity_height > 0
+             ? static_cast<float>(texture->content_height) / static_cast<float>(texture->capacity_height)
+             : 0.0f;
 }
