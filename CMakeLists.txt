@@ -209,6 +209,12 @@ if(EXISTS "${MULTITAP_LIBRASHADER_INCLUDE}/librashader.h")
 endif()
 
 target_include_directories(frontend_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# The GL path (gl_context.h) takes GLES 2's types and constants from SDL's own
+# copy of the Khronos headers, not the system's: the functions are looked up
+# at run time, so no GL library or header is needed to build (MSYS2's UCRT64
+# has no GLES2 headers). The guards are Khronos's, so a file that also
+# includes the system's (ImGui's GLES 2 backend) still builds.
+target_compile_definitions(frontend_common PUBLIC SDL_USE_BUILTIN_OPENGL_DEFINITIONS)
 target_link_libraries(frontend_common PUBLIC imgui SDL3::SDL3 host_common multitap_dep_libsamplerate)
 if(MULTITAP_ARCHIVES)
     target_sources(frontend_common PRIVATE archive.cpp content_cache.cpp)
