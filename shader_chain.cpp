@@ -7,6 +7,7 @@
 #include "debug_ui.h"
 #include "host_fs.h"
 #include "renderer.h"
+#include "vk_barrier.h"
 #include "vk_context.h"
 
 // librashader.so / librashader.dll / librashader.dylib: set by CMake from the
@@ -321,7 +322,9 @@ bool shader_chain_load(ShaderChain* chain, const ShaderLibrary* library, const V
     // Its per-frame resources are reused this many frames later: at least
     // as many as we can have in flight.
     options.frames_in_flight = FRAMES_IN_FLIGHT;
-    options.use_dynamic_rendering = true;   // Vulkan 1.3: we always have it
+    // Dynamic rendering on the 1.3 path; on the 1.1 one (older phones: the
+    // SHIELD's Tegra X1) librashader makes its own render passes.
+    options.use_dynamic_rendering = context->path == VulkanPath::vulkan_1_3;
 
     // The call uses up the preset when it succeeds (sets it to null).
     libra_vk_filter_chain_t created = nullptr;
@@ -384,6 +387,8 @@ bool shader_chain_prepare(ShaderChain* chain, const VulkanContext* context, cons
                           const ViewportResult* viewport)
 {
     chain->ready = false;
+    chain->path = context->path;
+    chain->barrier2 = context->cmd_pipeline_barrier2;
     if (!shader_chain_active(chain) || !source->has_content || viewport->width == 0 || viewport->height == 0 ||
         viewport->source_width == 0 || viewport->source_height == 0)
     {
@@ -486,7 +491,7 @@ static VkImageMemoryBarrier2 to_render_target(ShaderChainImage* image)
 
 // A stage's written image back to sampled, for whoever reads it next: stage 1
 // (fragment shaders; librashader may also copy it: transfer) or ImGui.
-static void render_target_to_sampled(VkCommandBuffer command_buffer, ShaderChainImage* image)
+static void render_target_to_sampled(const ShaderChain* chain, VkCommandBuffer command_buffer, ShaderChainImage* image)
 {
     VkImageMemoryBarrier2 barrier = {
         .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
@@ -501,12 +506,7 @@ static void render_target_to_sampled(VkCommandBuffer command_buffer, ShaderChain
         .image         = image->image,
         .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
     };
-    VkDependencyInfo dependency = {
-        .sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .imageMemoryBarrierCount = 1,
-        .pImageMemoryBarriers    = &barrier,
-    };
-    vkCmdPipelineBarrier2(command_buffer, &dependency);
+    vk_cmd_image_barriers(command_buffer, chain->path, chain->barrier2, &barrier, 1);
     image->layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }
 
@@ -591,12 +591,7 @@ void shader_chain_record(ShaderChain* chain, const ShaderLibrary* library, VkCom
             .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
         },
     };
-    VkDependencyInfo before_copy_dependency = {
-        .sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .imageMemoryBarrierCount = 2,
-        .pImageMemoryBarriers    = before_copy,
-    };
-    vkCmdPipelineBarrier2(command_buffer, &before_copy_dependency);
+    vk_cmd_image_barriers(command_buffer, chain->path, chain->barrier2, before_copy, 2);
 
     // A blit, not a copy: same size (so nearest is exact), but it converts a
     // core's native format (R5G6B5...) into ours.
@@ -650,29 +645,19 @@ void shader_chain_record(ShaderChain* chain, const ShaderLibrary* library, VkCom
         },
         to_render_target(first_target),
     };
-    VkDependencyInfo before_first_dependency = {
-        .sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .imageMemoryBarrierCount = 3,
-        .pImageMemoryBarriers    = before_first,
-    };
-    vkCmdPipelineBarrier2(command_buffer, &before_first_dependency);
+    vk_cmd_image_barriers(command_buffer, chain->path, chain->barrier2, before_first, 3);
     source->layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     chain->input.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     // 3. The stages. librashader orders its own intermediate images; it
     // leaves its target in COLOR_ATTACHMENT_OPTIMAL with no barrier after.
     run_stage(first, library, command_buffer, &chain->input, first_target);
-    render_target_to_sampled(command_buffer, first_target);
+    render_target_to_sampled(chain, command_buffer, first_target);
     if (second != nullptr)
     {
         VkImageMemoryBarrier2 before_second = to_render_target(&chain->output);
-        VkDependencyInfo before_second_dependency = {
-            .sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-            .imageMemoryBarrierCount = 1,
-            .pImageMemoryBarriers    = &before_second,
-        };
-        vkCmdPipelineBarrier2(command_buffer, &before_second_dependency);
+        vk_cmd_image_barriers(command_buffer, chain->path, chain->barrier2, &before_second, 1);
         run_stage(second, library, command_buffer, &chain->middle, &chain->output);
-        render_target_to_sampled(command_buffer, &chain->output);
+        render_target_to_sampled(chain, command_buffer, &chain->output);
     }
 }

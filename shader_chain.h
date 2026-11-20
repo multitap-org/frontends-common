@@ -43,6 +43,7 @@
 
 #include "dynamic_library.h"
 #include "viewport.h"
+#include "vk_context.h"
 #include "vk_texture.h"
 
 struct ImDrawList;
@@ -111,6 +112,12 @@ struct ShaderChain
     // What this frame draws (set by shader_chain_prepare).
     ViewportResult viewport = {};
     bool           ready    = false;
+
+    // From the context (shader_chain_prepare): how shader_chain_record records
+    // its barriers (vk_barrier.h: synchronization2 on the 1.3 path, classic
+    // barriers on the 1.1 one, where vkCmdPipelineBarrier2 doesn't exist).
+    VulkanPath                path     = VulkanPath::vulkan_1_3;
+    PFN_vkCmdPipelineBarrier2 barrier2 = nullptr;
 };
 
 // Loads `preset_path` (a .slangp) into stage `stage` (0 or 1), replacing what
