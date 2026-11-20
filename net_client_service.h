@@ -1,0 +1,133 @@
+#pragma once
+
+// The client's network on its own thread (piccoletto, net_service.h's other
+// side): NetClient is polled there about every millisecond, not once per
+// frame of the app's loop, so the round trip doesn't carry up to a frame of
+// waiting, a keyframe's hundred packets are drained as they come, and input
+// the app sends leaves at the next millisecond.
+//
+// Remote play (net_stream.h) is handled on the thread: video packets go into
+// the NetStreamReceiver there (frame_delta's decoding is cheap), and the
+// newest whole picture waits for the app (net_client_service_take_frame: a
+// picture not taken yet is replaced, the app always shows the newest). A
+// lost frame asks for a keyframe, at most every
+// NET_CLIENT_SERVICE_KEYFRAME_SECONDS. Audio pieces are played as they
+// come (audio_output.h: a small queue kept at its target by rate control,
+// which also absorbs the drift between the host's clock and the device's);
+// a lost piece is a gap. Video is never held back for the audio.
+//
+// Everything else NetClient reports is copied into a queue the app drains
+// once per loop (net_client_service_next). Everything else in NetClient
+// (connecting, sending, the trust list, stats, unpairing) is used as before,
+// between net_client_service_lock and net_client_service_unlock: one mutex
+// guards the NetClient and the stream; the thread takes it only for its
+// short polls. It's recursive, so an app's functions that call each other
+// can each take it.
+//
+// Threading: std::thread with a plain function, a std::recursive_mutex for
+// the client, a std::mutex for the picture handed over.
+
+#include <cstddef>
+#include <cstdint>
+#include <mutex>
+#include <thread>
+#include <vector>
+
+#include "audio_output.h"
+#include "net_client.h"
+#include "net_stream.h"
+
+constexpr uint32_t NET_CLIENT_SERVICE_QUEUE = 256;              // events between two drains
+constexpr uint32_t NET_CLIENT_SERVICE_POLL_MS = 1;
+constexpr double   NET_CLIENT_SERVICE_KEYFRAME_SECONDS = 0.1;   // between two keyframe requests
+
+struct NetClientServiceSlot
+{
+    NetClientEvent       event;
+    std::vector<uint8_t> data;   // the event's payload, copied (reused: grows, never shrinks)
+};
+
+// What the stream did, for the app's status line (counts since it started).
+struct NetClientStreamStats
+{
+    uint32_t frames = 0;            // whole frames decoded
+    uint32_t lost = 0;              // frames lost (a missing chunk, or a delta without its frame)
+    uint32_t keyframe_requests = 0;
+    uint64_t bytes = 0;             // stream payload received
+    uint64_t audio_samples = 0;     // stereo pairs received
+    uint32_t audio_queued_ms = 0;   // audio waiting to play now
+    uint32_t audio_underruns = 0;
+};
+
+struct NetClientServiceStream
+{
+    // Under the service's `lock`.
+    uint8_t              flags = 0;            // NET_STREAM_WANT_*, 0 = not streaming
+    bool                 play_audio = true;    // false: audio is counted, not played (tests, tools)
+    NetStreamReceiver    receiver;
+    double               last_request = -1.0;  // when a keyframe was last asked for
+    NetStreamInfo        info;
+    bool                 has_info = false;
+    AudioOutput          audio;
+    bool                 audio_open = false;
+    bool                 audio_failed = false; // no device: don't try again this stream
+    std::vector<int16_t> audio_storage;
+    NetClientStreamStats stats;
+    // The newest picture, handed over under `frame_lock`.
+    std::vector<uint8_t> pixels;
+    uint32_t             width = 0;
+    uint32_t             height = 0;
+    FramePixelFormat     format = FramePixelFormat::rgb565;
+    uint32_t             frame = 0;            // the host's loop number
+    bool                 fresh = false;        // not taken yet
+    NetStreamInfo        frame_info;           // the stream_info in force when it was decoded
+};
+
+struct NetClientService
+{
+    NetClient            client;               // guarded by `lock` once started
+    std::recursive_mutex lock;
+    std::thread          thread;
+    bool                 running = false;      // read by the thread under `lock`
+    NetClientServiceSlot queue[NET_CLIENT_SERVICE_QUEUE];
+    uint32_t             head = 0;             // the oldest queued event
+    uint32_t             count = 0;
+    uint32_t             dropped = 0;          // events lost to a full queue (logged)
+    std::vector<uint8_t> current;              // the payload of the event net_client_service_next last gave
+    std::mutex           frame_lock;           // the picture handed over, apart from `lock`
+    NetClientServiceStream stream;
+};
+
+// Creates the NetClient (as net_client_create) and starts the thread.
+bool net_client_service_start(NetClientService* service, const NetKeypair* identity, const char* name,
+                              const char* trust_path);
+// Stops the thread, closes the audio and destroys the NetClient. Safe on a
+// service that didn't start.
+void net_client_service_stop(NetClientService* service);
+
+void net_client_service_lock(NetClientService* service);
+void net_client_service_unlock(NetClientService* service);
+
+// Locked: the next queued event, oldest first; its `data` stays valid until
+// the next call. False when the queue is empty. Stream packets and
+// stream_info never come here (the thread takes them).
+bool net_client_service_next(NetClientService* service, NetClientEvent* event);
+
+// --- remote play --------------------------------------------------------------
+
+// Locked: asks the host for the stream (flags NET_STREAM_WANT_*: stream_start)
+// or stops it (0: stream_stop); either way the picture, the counts and the
+// audio start over. False when the client isn't ready.
+bool net_client_service_set_stream(NetClientService* service, uint8_t flags);
+
+// Locked: the stream's info (false until the host sent it) and counts.
+bool net_client_service_stream_info(NetClientService* service, NetStreamInfo* info);
+void net_client_service_stream_stats(NetClientService* service, NetClientStreamStats* stats);
+
+// Not locked (takes `frame_lock` briefly): the newest picture if one came
+// since the last call. Its pixels are swapped into `pixels` (tightly packed,
+// width x height in `format`; the vector given back is reused for the next
+// one, so after the first few frames nothing allocates). `info`: the
+// stream_info it goes with. False when there's nothing new.
+bool net_client_service_take_frame(NetClientService* service, std::vector<uint8_t>* pixels, uint32_t* width,
+                                   uint32_t* height, FramePixelFormat* format, uint32_t* frame, NetStreamInfo* info);

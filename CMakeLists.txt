@@ -207,6 +207,7 @@ if(MULTITAP_HAVE_ENET)
         net_settings.cpp
         net_speed.cpp
         net_service.cpp
+        net_client_service.cpp
         net_stream.cpp
         net_input.cpp
         input_net.cpp
@@ -222,7 +223,7 @@ if(MULTITAP_HAVE_ENET)
     endif()
     target_include_directories(frontend_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     # frontend_common: settings_file (the trust and identity files).
-    find_package(Threads REQUIRED)   # net_service's thread
+    find_package(Threads REQUIRED)   # net_service's and net_client_service's threads
     target_link_libraries(frontend_net PUBLIC host_common frontend_common Threads::Threads PRIVATE multitap_dep_enet multitap_dep_monocypher)
     multitap_set_project_flags(frontend_net)
 
@@ -447,6 +448,16 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
              COMMAND frontend_net_service_test "${CMAKE_CURRENT_BINARY_DIR}/net_service_test")
     set_tests_properties(frontend_net_service PROPERTIES
                          PASS_REGULAR_EXPRESSION "net service: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    # The client's network on its own thread, with remote play against a net_service host.
+    add_executable(frontend_net_client_service_test tests/net_client_service_test.cpp)
+    target_link_libraries(frontend_net_client_service_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_net_client_service_test)
+    add_test(NAME frontend_net_client_service
+             COMMAND frontend_net_client_service_test "${CMAKE_CURRENT_BINARY_DIR}/net_client_service_test")
+    set_tests_properties(frontend_net_client_service PROPERTIES
+                         PASS_REGULAR_EXPRESSION "net client service: all checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
     # Remote play's stream: chunks, reassembly, loss and keyframes, audio.
