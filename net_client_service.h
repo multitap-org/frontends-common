@@ -7,9 +7,13 @@
 // the app sends leaves at the next millisecond.
 //
 // Remote play (net_stream.h) is handled on the thread: video packets go into
-// the NetStreamReceiver there (frame_delta's decoding is cheap), and the
-// newest whole picture waits for the app (net_client_service_take_frame: a
-// picture not taken yet is replaced, the app always shows the newest). A
+// the NetStreamReceiver there (frame_delta's decoding is cheap), and whole
+// pictures wait for the app in a short queue (net_client_service_take_frame),
+// as deep as the app's pacing says (net_client_service_set_frame_queue):
+// 1 = only the newest (the lowest latency: a picture not taken yet is
+// replaced); more = taken in order, one per frame of the app, so two arriving
+// within one vsync are both shown (smoother, up to that many frames later);
+// past that the oldest go. A
 // lost frame asks for a keyframe, at most every
 // NET_CLIENT_SERVICE_KEYFRAME_SECONDS. Audio pieces are played as they
 // come (audio_output.h: a small queue kept at its target by rate control,
@@ -40,6 +44,7 @@
 constexpr uint32_t NET_CLIENT_SERVICE_QUEUE = 256;              // events between two drains
 constexpr uint32_t NET_CLIENT_SERVICE_POLL_MS = 1;
 constexpr double   NET_CLIENT_SERVICE_KEYFRAME_SECONDS = 0.1;   // between two keyframe requests
+constexpr uint32_t NET_CLIENT_SERVICE_FRAMES = 4;               // pictures the queue holds at most
 
 struct NetClientServiceSlot
 {
@@ -57,6 +62,18 @@ struct NetClientStreamStats
     uint64_t audio_samples = 0;     // stereo pairs received
     uint32_t audio_queued_ms = 0;   // audio waiting to play now
     uint32_t audio_underruns = 0;
+    uint32_t skipped = 0;           // whole frames never shown (the queue was past its depth)
+};
+
+// A whole picture waiting for the app.
+struct NetClientServiceFrame
+{
+    std::vector<uint8_t> pixels;             // tightly packed (reused: grows, never shrinks)
+    uint32_t             width = 0;
+    uint32_t             height = 0;
+    FramePixelFormat     format = FramePixelFormat::rgb565;
+    uint32_t             frame = 0;          // the host's loop number
+    NetStreamInfo        info;               // the stream_info in force when it was decoded
 };
 
 struct NetClientServiceStream
@@ -73,14 +90,12 @@ struct NetClientServiceStream
     bool                 audio_failed = false; // no device: don't try again this stream
     std::vector<int16_t> audio_storage;
     NetClientStreamStats stats;
-    // The newest picture, handed over under `frame_lock`.
-    std::vector<uint8_t> pixels;
-    uint32_t             width = 0;
-    uint32_t             height = 0;
-    FramePixelFormat     format = FramePixelFormat::rgb565;
-    uint32_t             frame = 0;            // the host's loop number
-    bool                 fresh = false;        // not taken yet
-    NetStreamInfo        frame_info;           // the stream_info in force when it was decoded
+    // The pictures waiting for the app, oldest first, under `frame_lock`.
+    NetClientServiceFrame frames[NET_CLIENT_SERVICE_FRAMES];
+    uint32_t             first = 0;            // the oldest
+    uint32_t             count = 0;
+    uint32_t             depth = 1;            // how many the app takes in order (1 = only the newest)
+    uint32_t             skipped = 0;          // dropped from the queue (copied into stats)
 };
 
 struct NetClientService
@@ -124,10 +139,16 @@ bool net_client_service_set_stream(NetClientService* service, uint8_t flags);
 bool net_client_service_stream_info(NetClientService* service, NetStreamInfo* info);
 void net_client_service_stream_stats(NetClientService* service, NetClientStreamStats* stats);
 
-// Not locked (takes `frame_lock` briefly): the newest picture if one came
-// since the last call. Its pixels are swapped into `pixels` (tightly packed,
-// width x height in `format`; the vector given back is reused for the next
-// one, so after the first few frames nothing allocates). `info`: the
-// stream_info it goes with. False when there's nothing new.
+// Not locked (takes `frame_lock` briefly): how many pictures the app takes in
+// order (1..NET_CLIENT_SERVICE_FRAMES; 1 = only the newest, the default).
+void net_client_service_set_frame_queue(NetClientService* service, uint32_t depth);
+
+// Not locked (takes `frame_lock` briefly): the next picture if one came since
+// the last call: the oldest in the queue once it's down to its depth (the
+// ones past it are skipped), so with depth 1 the newest. Its pixels are
+// swapped into `pixels` (tightly packed, width x height in `format`; the
+// vector given back is reused, so after the first few frames nothing
+// allocates). `info`: the stream_info it goes with. False when there's
+// nothing new.
 bool net_client_service_take_frame(NetClientService* service, std::vector<uint8_t>* pixels, uint32_t* width,
                                    uint32_t* height, FramePixelFormat* format, uint32_t* frame, NetStreamInfo* info);

@@ -2,7 +2,8 @@
 // the client's thread connects and its events come through the queue;
 // remote play: stream_start reaches the host, stream_info arrives, frames
 // the host hands over arrive whole and exact (keyframe, then deltas), audio
-// pieces are counted (not played: no device here), stream_stop stops it,
+// pieces are counted (not played: no device here), the picture queue's
+// depth (in order, or only the newest), stream_stop stops it,
 // and stopping joins the thread cleanly.
 //
 // Usage: frontend_net_client_service_test <scratch folder>
@@ -213,6 +214,52 @@ int main(int argc, char** argv)
     check(stats.frames >= 55 && stats.lost == 0, "counted, none lost");
     check(stats.audio_samples >= 50ull * SAMPLES, "audio arrived");
     check(stats.bytes > 0, "bytes counted");
+
+    // Pacing: with a queue of 3, frames that come together are all taken, in
+    // order; with 1 only the newest.
+    net_client_service_set_frame_queue(client, 3);
+    for (uint32_t n = 61; n <= 63; n++)
+    {
+        make_frame(&sent, n);
+        net_service_submit_frame(host, sent.data(), WIDTH, HEIGHT, FramePixelFormat::rgb565, n, &info);
+        // Each one coded before the next is handed over (the host's loop runs a frame at a time).
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    uint32_t in_order[3] = {};
+    uint32_t taken = 0;
+    for (int32_t i = 0; i < 3; i++)
+    {
+        uint32_t width = 0;
+        uint32_t height = 0;
+        FramePixelFormat format = FramePixelFormat::rgb565;
+        uint32_t frame = 0;
+        NetStreamInfo frame_info;
+        if (net_client_service_take_frame(client, &got, &width, &height, &format, &frame, &frame_info))
+        {
+            in_order[taken++] = frame;
+        }
+    }
+    check(taken == 3 && in_order[0] == 61 && in_order[1] == 62 && in_order[2] == 63, "a queue of 3: all taken, in order");
+    net_client_service_set_frame_queue(client, 1);
+    for (uint32_t n = 64; n <= 66; n++)
+    {
+        make_frame(&sent, n);
+        net_service_submit_frame(host, sent.data(), WIDTH, HEIGHT, FramePixelFormat::rgb565, n, &info);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    {
+        uint32_t width = 0;
+        uint32_t height = 0;
+        FramePixelFormat format = FramePixelFormat::rgb565;
+        uint32_t frame = 0;
+        NetStreamInfo frame_info;
+        bool newest = net_client_service_take_frame(client, &got, &width, &height, &format, &frame, &frame_info) &&
+                      frame == 66;
+        bool more = net_client_service_take_frame(client, &got, &width, &height, &format, &frame, &frame_info);
+        check(newest && !more, "a queue of 1: only the newest");
+    }
 
     // Stop: the host stops streaming, the counts start over.
     net_client_service_lock(client);

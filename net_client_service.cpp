@@ -63,8 +63,18 @@ static void stream_reset(NetClientService* service)
     stream->stats = NetClientStreamStats{};
     stream_close_audio(stream);
     service->frame_lock.lock();
-    stream->fresh = false;
+    stream->first = 0;
+    stream->count = 0;
+    stream->skipped = 0;
     service->frame_lock.unlock();
+}
+
+// Drops the oldest queued picture (under `frame_lock`).
+static void drop_oldest(NetClientServiceStream* stream)
+{
+    stream->first = (stream->first + 1) % NET_CLIENT_SERVICE_FRAMES;
+    stream->count--;
+    stream->skipped++;
 }
 
 static void stream_packet(NetClientService* service, const uint8_t* data, size_t size)
@@ -90,14 +100,20 @@ static void stream_packet(NetClientService* service, const uint8_t* data, size_t
     stream->stats.frames++;
     const FrameDeltaDecoder* decoder = &stream->receiver.decoder;
     service->frame_lock.lock();
-    stream->pixels.resize(decoder->frame.size());   // grows to the largest picture once, then stays
-    std::memcpy(stream->pixels.data(), decoder->frame.data(), decoder->frame.size());
-    stream->width = decoder->width;
-    stream->height = decoder->height;
-    stream->format = decoder->format;
-    stream->frame = stream->receiver.frame;
-    stream->frame_info = stream->info;
-    stream->fresh = true;
+    if (stream->count == NET_CLIENT_SERVICE_FRAMES)
+    {
+        drop_oldest(stream);   // the app isn't taking them (a stall)
+    }
+    NetClientServiceFrame* slot = &stream->frames[(stream->first + stream->count) % NET_CLIENT_SERVICE_FRAMES];
+    slot->pixels.resize(decoder->frame.size());   // grows to the largest picture once, then stays
+    std::memcpy(slot->pixels.data(), decoder->frame.data(), decoder->frame.size());
+    slot->width = decoder->width;
+    slot->height = decoder->height;
+    slot->format = decoder->format;
+    slot->frame = stream->receiver.frame;
+    slot->info = stream->info;
+    stream->count++;
+    stream->stats.skipped = stream->skipped;
     service->frame_lock.unlock();
 }
 
@@ -312,17 +328,31 @@ bool net_client_service_take_frame(NetClientService* service, std::vector<uint8_
 {
     service->frame_lock.lock();
     NetClientServiceStream* stream = &service->stream;
-    bool fresh = stream->fresh;
+    while (stream->count > stream->depth)
+    {
+        drop_oldest(stream);
+    }
+    bool fresh = stream->count > 0;
     if (fresh)
     {
-        pixels->swap(stream->pixels);
-        *width = stream->width;
-        *height = stream->height;
-        *format = stream->format;
-        *frame = stream->frame;
-        *info = stream->frame_info;
-        stream->fresh = false;
+        NetClientServiceFrame* slot = &stream->frames[stream->first];
+        pixels->swap(slot->pixels);
+        *width = slot->width;
+        *height = slot->height;
+        *format = slot->format;
+        *frame = slot->frame;
+        *info = slot->info;
+        stream->first = (stream->first + 1) % NET_CLIENT_SERVICE_FRAMES;
+        stream->count--;
     }
     service->frame_lock.unlock();
     return fresh;
+}
+
+void net_client_service_set_frame_queue(NetClientService* service, uint32_t depth)
+{
+    depth = depth < 1 ? 1 : (depth > NET_CLIENT_SERVICE_FRAMES ? NET_CLIENT_SERVICE_FRAMES : depth);
+    service->frame_lock.lock();
+    service->stream.depth = depth;
+    service->frame_lock.unlock();
 }
