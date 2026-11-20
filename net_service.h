@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "net_access.h"
+#include "net_share_host.h"
 #include "net_stream.h"
 
 constexpr uint32_t NET_SERVICE_QUEUE = 1024;     // events between two drains (input packets included)
@@ -87,6 +88,9 @@ struct NetService
     // thread should wait for it).
     std::thread    resolver;
     std::string    beacon_text;          // guarded by `lock`
+    // piccolo-share: OWNER devices' listings and copies, handled on the
+    // thread (never queued for the frontend); guarded by `lock`.
+    NetShareHost   share;
     uint32_t       beacon_generation = 0;   // guarded by `lock`: a newer set_beacon wins
 };
 
@@ -109,6 +113,11 @@ void net_service_set_beacon(NetService* service, const char* server);
 // Locked: the next queued event, oldest first; its `data` stays valid until
 // the next call. False when the queue is empty.
 bool net_service_next(NetService* service, NetAccessEvent* event);
+
+// Locked: the shared folders for OWNER devices (piccolo-share): the game
+// folders, then SAVES and STATES ("" = not shared).
+void net_service_set_share_folders(NetService* service, const std::vector<std::string>* game_paths,
+                                   const char* saves_path, const char* states_path);
 
 // --- remote play --------------------------------------------------------------
 

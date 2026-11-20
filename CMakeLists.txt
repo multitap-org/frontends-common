@@ -254,6 +254,8 @@ if(MULTITAP_HAVE_ENET)
         net_share.cpp
         net_share_folders.cpp
         net_share_engine.cpp
+        net_share_host.cpp
+        net_share_client.cpp
         net_wire.cpp
         net_settings.cpp
         net_speed.cpp
@@ -536,6 +538,14 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
     set_tests_properties(frontend_net_share_engine PROPERTIES
                          PASS_REGULAR_EXPRESSION "net share engine: all checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:|ThreadSanitizer")
+    add_executable(frontend_net_share_service_test tests/net_share_service_test.cpp)
+    target_link_libraries(frontend_net_share_service_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_net_share_service_test)
+    add_test(NAME frontend_net_share_service
+             COMMAND frontend_net_share_service_test "${CMAKE_CURRENT_BINARY_DIR}/net_share_service_test")
+    set_tests_properties(frontend_net_share_service PROPERTIES
+                         PASS_REGULAR_EXPRESSION "net share service: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
     add_executable(frontend_net_share_folders_test tests/net_share_folders_test.cpp)
     target_link_libraries(frontend_net_share_folders_test PRIVATE frontend_net)
     multitap_set_project_flags(frontend_net_share_folders_test)
