@@ -1,9 +1,10 @@
 #pragma once
 
 // Dear ImGui setup for a frontend's development/debug UI.
-// Thin wrapper over the official imgui SDL3 + Vulkan backends (deps/imgui/backends).
+// Thin wrapper over the official imgui SDL3 + Vulkan / OpenGL backends (deps/imgui/backends).
 
 #include <cstdint>
+#include <SDL3/SDL_video.h>   // SDL_GLContext
 #include <vulkan/vulkan.h>
 
 struct SDL_Window;
@@ -12,6 +13,9 @@ struct VulkanContext;
 struct VulkanSwapchain;
 
 bool debug_ui_init(SDL_Window* window, const VulkanContext* context, const VulkanSwapchain* swapchain);
+// The same on an OpenGL (ES) context: ImGui's GL backend, `glsl_version` its
+// shaders' version line (gl_context_imgui_glsl_version).
+bool debug_ui_init_gl(SDL_Window* window, SDL_GLContext context, const char* glsl_version);
 void debug_ui_shutdown();
 
 // Routes ImGui's text fields to `input` (text_input.h) instead of the SDL3
@@ -28,6 +32,8 @@ void debug_ui_begin_frame();
 // Finishes the imgui frame and records its draw commands. Must be called inside
 // the active rendering pass (between renderer_begin_frame and renderer_end_frame).
 void debug_ui_render(VkCommandBuffer command_buffer);
+// GL: draws into the bound framebuffer (the window's), right away.
+void debug_ui_render_gl();
 
 // Called with ImGui's draw data between finishing the frame and drawing it,
 // to change what gets drawn (e.g. add text shadows). nullptr: none.

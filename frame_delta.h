@@ -35,18 +35,11 @@
 #include <cstdint>
 #include <vector>
 
-enum class FramePixelFormat : uint8_t
-{
-    rgb565 = 0,     // 2 bytes
-    xrgb1555 = 1,   // 2 bytes (libretro's 0RGB1555)
-    xrgb8888 = 2,   // 4 bytes
-};
-constexpr uint8_t  FRAME_PIXEL_FORMAT_COUNT = 3;
+#include "frame_pixel_format.h"
+
 constexpr uint32_t FRAME_DELTA_TILE = 8;
 constexpr size_t   FRAME_DELTA_HEADER_SIZE = 6;
 constexpr uint32_t FRAME_DELTA_MAX_SIDE = 4096;
-
-uint32_t frame_pixel_bytes(FramePixelFormat format);
 
 // The largest a frame can code to (every pixel RAW, plus header and map).
 size_t frame_delta_max_size(uint32_t width, uint32_t height, FramePixelFormat format);

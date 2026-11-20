@@ -782,3 +782,11 @@ bool vulkan_find_memory_type(const VulkanContext* context, uint32_t type_bits, V
     }
     return false;
 }
+
+void vulkan_context_wait_idle(const VulkanContext* context)
+{
+    if (context->device != VK_NULL_HANDLE)
+    {
+        vkDeviceWaitIdle(context->device);
+    }
+}

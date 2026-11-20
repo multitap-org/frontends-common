@@ -7,29 +7,21 @@
 
 #include "imgui.h"
 #include "imgui_impl_sdl3.h"
-#include "imgui_impl_vulkan.h"
+#include "imgui_impl_opengl3.h"
 
+#include "debug_ui_vulkan.h"
 #include "text_input.h"
-#include "vk_context.h"
-#include "vk_swapchain.h"
 
-// The imgui Vulkan backend calls this on every VkResult it gets.
-// Errors (negative values) are not recoverable inside imgui, so we stop.
-static void imgui_check_vk_result(VkResult result)
+// Which renderer backend ImGui was set up with (ImGui itself is one global
+// context; this goes with it).
+static DebugUiRenderer g_renderer = DebugUiRenderer::none;
+
+void debug_ui_set_renderer(DebugUiRenderer renderer)
 {
-    if (result == VK_SUCCESS)
-    {
-        return;
-    }
-    SDL_LogError(SDL_LOG_CATEGORY_GPU, "imgui Vulkan backend: %s (%d)",
-                 vk_result_to_string(result), static_cast<int>(result));
-    if (result < 0)
-    {
-        std::abort();
-    }
+    g_renderer = renderer;
 }
 
-bool debug_ui_init(SDL_Window* window, const VulkanContext* context, const VulkanSwapchain* swapchain)
+void debug_ui_create_context(SDL_Window* window)
 {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -54,53 +46,22 @@ bool debug_ui_init(SDL_Window* window, const VulkanContext* context, const Vulka
     style.GrabRounding  = 3.0f;
     style.ScaleAllSizes(display_scale);
     style.FontScaleDpi = display_scale;
+}
 
-    if (!ImGui_ImplSDL3_InitForVulkan(window))
+bool debug_ui_init_gl(SDL_Window* window, SDL_GLContext context, const char* glsl_version)
+{
+    debug_ui_create_context(window);
+    if (!ImGui_ImplSDL3_InitForOpenGL(window, context))
     {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "ImGui_ImplSDL3_InitForVulkan failed");
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "ImGui_ImplSDL3_InitForOpenGL failed");
         return false;
     }
-
-    ImGui_ImplVulkan_InitInfo init_info = {};
-    init_info.ApiVersion     = context->api_version;
-    init_info.Instance       = context->instance;
-    init_info.PhysicalDevice = context->physical_device;
-    init_info.Device         = context->device;
-    init_info.QueueFamily    = context->queue_family;
-    init_info.Queue          = context->queue;
-    init_info.DescriptorPool = context->imgui_descriptor_pool;
-    init_info.MinImageCount  = swapchain->min_image_count;
-    init_info.ImageCount     = swapchain->image_count;
-    init_info.CheckVkResultFn = imgui_check_vk_result;
-
-    // 1.3 path, dynamic rendering: imgui builds its pipeline for our swapchain
-    // format. (The backend copies the format array, so a stack variable is fine.)
-    // 1.1 path: for the swapchain's render pass (subpass 0), which lives as
-    // long as the swapchain object, so the handle stays valid for imgui.
-    VkFormat color_format = swapchain->surface_format.format;
-    if (context->path == VulkanPath::vulkan_1_3)
+    if (!ImGui_ImplOpenGL3_Init(glsl_version))
     {
-        init_info.UseDynamicRendering = true;
-        init_info.PipelineInfoMain.PipelineRenderingCreateInfo = {
-            .sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-            .colorAttachmentCount    = 1,
-            .pColorAttachmentFormats = &color_format,
-        };
-    }
-    else
-    {
-        init_info.UseDynamicRendering = false;
-        init_info.PipelineInfoMain.RenderPass = swapchain->render_pass;
-        init_info.PipelineInfoMain.Subpass = 0;
-    }
-    init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-
-    if (!ImGui_ImplVulkan_Init(&init_info))
-    {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "ImGui_ImplVulkan_Init failed");
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "ImGui_ImplOpenGL3_Init failed");
         return false;
     }
-
+    g_renderer = DebugUiRenderer::gl;
     return true;
 }
 
@@ -113,13 +74,21 @@ void debug_ui_shutdown()
     ImGuiIO& io = ImGui::GetIO();
     if (io.BackendRendererUserData != nullptr)
     {
-        ImGui_ImplVulkan_Shutdown();
+        if (g_renderer == DebugUiRenderer::gl)
+        {
+            ImGui_ImplOpenGL3_Shutdown();
+        }
+        else
+        {
+            debug_ui_vulkan_shutdown();
+        }
     }
     if (io.BackendPlatformUserData != nullptr)
     {
         ImGui_ImplSDL3_Shutdown();
     }
     ImGui::DestroyContext();
+    g_renderer = DebugUiRenderer::none;
 }
 
 // ImGui calls this (during EndFrame) when its text input state changes: a
@@ -155,7 +124,14 @@ bool debug_ui_process_event(const SDL_Event* event)
 
 void debug_ui_begin_frame()
 {
-    ImGui_ImplVulkan_NewFrame();
+    if (g_renderer == DebugUiRenderer::gl)
+    {
+        ImGui_ImplOpenGL3_NewFrame();
+    }
+    else
+    {
+        debug_ui_vulkan_new_frame();
+    }
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
 }
@@ -169,14 +145,19 @@ void debug_ui_set_draw_data_hook(DebugUiDrawDataHook hook, void* user)
     g_draw_data_hook_user = user;
 }
 
-void debug_ui_render(VkCommandBuffer command_buffer)
+ImDrawData* debug_ui_finish_frame()
 {
     ImGui::Render();
     if (g_draw_data_hook != nullptr)
     {
         g_draw_data_hook(ImGui::GetDrawData(), g_draw_data_hook_user);
     }
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), command_buffer);
+    return ImGui::GetDrawData();
+}
+
+void debug_ui_render_gl()
+{
+    ImGui_ImplOpenGL3_RenderDrawData(debug_ui_finish_frame());
 }
 
 void debug_ui_end_frame_without_render()
@@ -184,36 +165,17 @@ void debug_ui_end_frame_without_render()
     ImGui::EndFrame();
 }
 
-void debug_ui_on_swapchain_recreated(const VulkanSwapchain* swapchain)
-{
-    ImGui_ImplVulkan_SetMinImageCount(swapchain->min_image_count);
-}
-
 // ---------------------------------------------------------------------------
 // Textures
 // ---------------------------------------------------------------------------
 
-// VkDescriptorSet is a pointer on 64-bit platforms and a uint64_t on 32-bit ones;
-// ImTextureID is always 64 bits. Copying the bytes works for both without casts.
-static_assert(sizeof(VkDescriptorSet) <= sizeof(ImTextureID), "ImTextureID must hold a VkDescriptorSet");
-
-uint64_t debug_ui_add_texture(VkImageView view)
-{
-    VkDescriptorSet descriptor_set = ImGui_ImplVulkan_AddTexture(view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    ImTextureID texture_id = 0;
-    std::memcpy(&texture_id, &descriptor_set, sizeof(descriptor_set));
-    return texture_id;
-}
-
 void debug_ui_remove_texture(uint64_t texture_id)
 {
-    if (texture_id == 0)
+    // On GL an ImGui id is the texture's own name: nothing was registered.
+    if (g_renderer == DebugUiRenderer::vulkan)
     {
-        return;
+        debug_ui_vulkan_remove_texture(texture_id);
     }
-    VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
-    std::memcpy(&descriptor_set, &texture_id, sizeof(descriptor_set));
-    ImGui_ImplVulkan_RemoveTexture(descriptor_set);
 }
 
 void debug_ui_image_nearest(uint64_t texture_id, float width, float height, float uv_max_x, float uv_max_y)

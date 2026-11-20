@@ -5,11 +5,23 @@
 # file helpers (host_fs: atomic writes); the other direction (hosts using
 # frontend or SDL code) is what's not allowed.
 # A library: it doesn't build alone. The frontend adds hosts-common first,
-# defines imgui, SDL3::SDL3 and Vulkan::Vulkan, and sets MULTITAP_DEPS_DIR to
+# defines imgui, SDL3::SDL3 and Vulkan::Vulkan (unless MULTITAP_GPU_VULKAN is OFF), and sets MULTITAP_DEPS_DIR to
 # its deps folder (libsamplerate, gamemode, miniz, 7zip, enet, monocypher; for the
 # resampler tool also libretro-common), built here from their sources.
 
-multitap_require(frontends-common host_common imgui SDL3::SDL3 Vulkan::Vulkan VAR:MULTITAP_DEPS_DIR)
+# Vulkan in the build (default): the window tries it first, OpenGL ES after.
+# OFF: OpenGL ES only, nothing links libvulkan (the Android 5 APK: Android 5
+# has no libvulkan.so). The Vulkan modules' entry points are then stubs
+# (vulkan_none.cpp, app_shell_vulkan_none.cpp, debug_ui_vulkan_none.cpp);
+# their headers stay (vulkan.h comes with the NDK and the system).
+if(NOT DEFINED MULTITAP_GPU_VULKAN)
+    set(MULTITAP_GPU_VULKAN ON)
+endif()
+if(MULTITAP_GPU_VULKAN)
+    multitap_require(frontends-common host_common imgui SDL3::SDL3 Vulkan::Vulkan VAR:MULTITAP_DEPS_DIR)
+else()
+    multitap_require(frontends-common host_common imgui SDL3::SDL3 VAR:MULTITAP_DEPS_DIR)
+endif()
 
 # libsamplerate (deps/, BSD-2-Clause): audio_output's resampler, chosen by
 # measurement (tools/resampler_measure.cpp). Built from its sources without
@@ -164,13 +176,8 @@ if(MULTITAP_HAVE_ENET)
 endif()
 
 add_library(frontend_common STATIC
-    vk_context.cpp
-    vk_barrier.cpp
-    vk_swapchain.cpp
-    renderer.cpp
     debug_ui.cpp
     text_input.cpp
-    vk_texture.cpp
     app_shell.cpp
     audio_output.cpp
     frame_timing.cpp
@@ -179,7 +186,12 @@ add_library(frontend_common STATIC
     app_paths.cpp
     viewport.cpp
     frame_delta.cpp
-    picture.cpp
+    video_texture.cpp
+    video_output.cpp
+    gl_context.cpp
+    gl_texture.cpp
+    gl_picture.cpp
+    gl_shader_chain.cpp
     window_size.cpp
     localization.cpp
     rate_control.cpp
@@ -191,6 +203,13 @@ add_library(frontend_common STATIC
     input_sdl_mapping.cpp
     input_layouts.cpp
 )
+if(MULTITAP_GPU_VULKAN)
+    target_sources(frontend_common PRIVATE vk_context.cpp vk_barrier.cpp vk_swapchain.cpp renderer.cpp vk_texture.cpp
+                   picture.cpp app_shell_vulkan.cpp debug_ui_vulkan.cpp)
+    target_link_libraries(frontend_common PUBLIC Vulkan::Vulkan)
+else()
+    target_sources(frontend_common PRIVATE vulkan_none.cpp app_shell_vulkan_none.cpp debug_ui_vulkan_none.cpp)
+endif()
 
 # GameMode (deps/gamemode, BSD-3-Clause): only its client header, which
 # loads libgamemode at run time (nothing linked). Linux only; elsewhere a
@@ -209,7 +228,9 @@ endif()
 # at run time). Built only for frontends that have that submodule.
 set(MULTITAP_LIBRASHADER_INCLUDE "${MULTITAP_DEPS_DIR}/librashader/include")
 if(EXISTS "${MULTITAP_LIBRASHADER_INCLUDE}/librashader.h")
-    target_sources(frontend_common PRIVATE shader_chain.cpp)
+    if(MULTITAP_GPU_VULKAN)
+        target_sources(frontend_common PRIVATE shader_chain.cpp)
+    endif()
     target_include_directories(frontend_common SYSTEM PUBLIC "${MULTITAP_LIBRASHADER_INCLUDE}")
     target_compile_definitions(frontend_common PUBLIC LIBRA_RUNTIME_VULKAN
         PRIVATE "MULTITAP_LIBRASHADER_FILE=\"librashader${CMAKE_SHARED_LIBRARY_SUFFIX}\"")
@@ -217,7 +238,13 @@ if(EXISTS "${MULTITAP_LIBRASHADER_INCLUDE}/librashader.h")
 endif()
 
 target_include_directories(frontend_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(frontend_common PUBLIC imgui SDL3::SDL3 Vulkan::Vulkan host_common multitap_dep_libsamplerate)
+# The GL path (gl_context.h) takes GLES 2's types and constants from SDL's own
+# copy of the Khronos headers, not the system's: the functions are looked up
+# at run time, so no GL library or header is needed to build (MSYS2's UCRT64
+# has no GLES2 headers). The guards are Khronos's, so a file that also
+# includes the system's (ImGui's GLES 2 backend) still builds.
+target_compile_definitions(frontend_common PUBLIC SDL_USE_BUILTIN_OPENGL_DEFINITIONS)
+target_link_libraries(frontend_common PUBLIC imgui SDL3::SDL3 host_common multitap_dep_libsamplerate)
 if(MULTITAP_ARCHIVES)
     target_sources(frontend_common PRIVATE archive.cpp content_cache.cpp)
     target_link_libraries(frontend_common PRIVATE multitap_dep_miniz multitap_dep_7z)
@@ -273,6 +300,10 @@ endif()
 
 # Vulkan validation layers + debug messenger are enabled in Debug builds only.
 target_compile_definitions(frontend_common PRIVATE $<$<CONFIG:Debug>:MULTITAP_VULKAN_VALIDATION=1>)
+if(MULTITAP_GL_ES2)
+    # ImGui's GL backend is built for GLES 2 (top-level option): ask SDL for a GLES 2.0 context.
+    target_compile_definitions(frontend_common PRIVATE MULTITAP_GL_ES2=1)
+endif()
 
 multitap_set_project_flags(frontend_common)
 
@@ -340,11 +371,12 @@ endif()
 
 # Build-time tool: a frontend's strings.txt -> its string IDs, English table
 # and .pot (see tools/strings_generator.cpp).
-# Cross builds (Android) can't run what they build: there it's an imported
-# program, built for the build machine first (piccolo's android/build-apk.sh).
+# Cross builds (Android, Emscripten) can't run what they build: there it's an
+# imported program, built for the build machine first (piccolo's
+# android/build-apk.sh, web/build.sh).
 # A frontend without translated strings (piccoletto, for now) doesn't pass
 # it: then there's no generator target.
-if(ANDROID)
+if(ANDROID OR EMSCRIPTEN)
     if(MULTITAP_STRINGS_GENERATOR)
         if(NOT EXISTS "${MULTITAP_STRINGS_GENERATOR}")
             message(FATAL_ERROR "MULTITAP_STRINGS_GENERATOR: ${MULTITAP_STRINGS_GENERATOR} doesn't exist")
@@ -431,6 +463,16 @@ if(MULTITAP_BUILD_TESTS)
     multitap_set_project_flags(frontend_frame_delay_test)
     add_test(NAME frontend_frame_delay COMMAND frontend_frame_delay_test)
     set_tests_properties(frontend_frame_delay PROPERTIES PASS_REGULAR_EXPRESSION "frame delay: all checks passed")
+
+    # Needs a display and OpenGL ES; skipped (77) without them.
+    add_executable(frontend_gl_video_test tests/gl_video_test.cpp)
+    target_link_libraries(frontend_gl_video_test PRIVATE frontend_common)
+    multitap_set_project_flags(frontend_gl_video_test)
+    add_test(NAME frontend_gl_video COMMAND frontend_gl_video_test "${CMAKE_CURRENT_BINARY_DIR}/gl_video_test")
+    set_tests_properties(frontend_gl_video PROPERTIES
+                         SKIP_RETURN_CODE 77
+                         PASS_REGULAR_EXPRESSION "gl video: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
     add_executable(frontend_frame_delta_test tests/frame_delta_test.cpp)
     target_link_libraries(frontend_frame_delta_test PRIVATE frontend_common)
