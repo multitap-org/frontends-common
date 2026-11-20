@@ -58,6 +58,22 @@
 //   --dir DIR   where net_probe keeps its device key and paired devices
 //               (net_probe_identity.cfg, net_probe_devices.cfg; default ".")
 //
+// piccolo-share (net_share.h; needs OWNER access), with --connect / --pair,
+// through net_share_link as piccolo's SHARE does; --seconds is the time
+// limit (at least 30):
+//   --share-list PATH   list a folder of the host's shared folders ("" = the
+//                       shared folders themselves: game folders, SAVES, STATES)
+//   --share-get PATH    copy the host's file PATH into --share-dir
+//   --share-put NAME PATH  copy the file NAME of --share-dir to the host's PATH
+//                       ("ROMS/gba/Game.gba"; missing folders are made there)
+//   --share-replace     a get or put may replace another file with that name
+//   --share-dir DIR     our side's one shared folder (default --dir)
+//   --share-host NAME   be a piccolo-share host instead (net_service, as
+//                       piccolo runs it): --share-dir as its game folder,
+//                       --share-saves DIR / --share-states DIR, pairing open,
+//                       every device that connects raised to OWNER (a test
+//                       tool: never on a network you don't trust). Ctrl+C stops
+//
 // A piccolo with networking on is a host like --listen: CONFIG > NETWORK >
 // PAIR A DEVICE shows the code for --pair.
 
@@ -70,12 +86,15 @@
 #include <thread>
 #include <vector>
 
+#include "host_fs.h"
 #include "host_log.h"
 #include "net_access.h"
 #include "net_client.h"
 #include "net_content.h"
 #include "net_link.h"
+#include "net_service.h"
 #include "net_settings.h"
+#include "net_share_link.h"
 #include "net_speed.h"
 #include "net_stream.h"
 #include "net_session.h"
@@ -1203,6 +1222,308 @@ static int run_probe(uint16_t port, double seconds, const char* at)
     return found > 0 ? 0 : 2;
 }
 
+// ---------------------------------------------------------------------------
+// piccolo-share
+// ---------------------------------------------------------------------------
+
+struct ShareProbe
+{
+    bool        active = false;
+    bool        list = false;
+    std::string list_path;
+    std::string get;          // the host's file
+    std::string put_name;     // ours, in `dir`
+    std::string put_path;     // where on the host
+    bool        replace = false;
+    std::string dir;          // "" = --dir
+    std::string saves;        // --share-host: its SAVES / STATES ("" = none)
+    std::string states;
+};
+
+static const char* share_status_text(NetShareStatus status)
+{
+    switch (status)
+    {
+    case NetShareStatus::ok:
+        return "ok";
+    case NetShareStatus::not_found:
+        return "not found";
+    case NetShareStatus::refused:
+        return "refused";
+    case NetShareStatus::exists:
+        return "exists (another file there: --share-replace)";
+    case NetShareStatus::no_space:
+        return "no space";
+    case NetShareStatus::busy:
+        return "busy";
+    case NetShareStatus::mismatch:
+        return "hash mismatch (thrown away)";
+    case NetShareStatus::same:
+        return "same file there already (size and date)";
+    default:
+        return "failed";
+    }
+}
+
+static double share_seconds_since(std::chrono::steady_clock::time_point start)
+{
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+}
+
+// Waits for the listing asked for; false when time runs out.
+static bool share_wait_listing(NetShareLink* link, std::chrono::steady_clock::time_point end, NetShareStatus* status,
+                               std::vector<NetShareEntry>* entries)
+{
+    std::string path;
+    while (std::chrono::steady_clock::now() < end)
+    {
+        if (net_share_link_listing(link, &path, status, entries))
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return false;
+}
+
+// Runs the copy queued, printing its progress each second, until it ends.
+static bool share_wait_copy(NetShareLink* link, std::chrono::steady_clock::time_point end, NetShareStatus* status)
+{
+    std::vector<NetShareClientDone> done;
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point next_print = start + std::chrono::seconds(1);
+    uint64_t last_done = 0;
+    while (std::chrono::steady_clock::now() < end)
+    {
+        net_share_link_take_done(link, &done);
+        if (!done.empty())
+        {
+            *status = done[0].status;
+            std::printf("  ended after %.1f s\n", share_seconds_since(start));
+            return true;
+        }
+        if (std::chrono::steady_clock::now() >= next_print)
+        {
+            next_print += std::chrono::seconds(1);
+            NetShareProgress progress;
+            NetShareClientCopy copy;
+            uint32_t queued = 0;
+            net_share_link_progress(link, &progress, &copy, &queued);
+            uint64_t bytes = progress.done >= last_done ? progress.done - last_done : 0;
+            last_done = progress.done;
+            std::printf("  %.2f / %.2f MiB  %.1f Mbit/s\n", static_cast<double>(progress.done) / 1048576.0,
+                        static_cast<double>(progress.size) / 1048576.0, static_cast<double>(bytes) * 8.0 / 1e6);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    net_share_link_cancel(link);
+    std::printf("  out of time: cancelled (the part file stays for a later try)\n");
+    return false;
+}
+
+static int run_share(uint16_t port, double seconds, const char* at, const char* code, const std::string* dir,
+                     const ShareProbe* share)
+{
+    NetKeypair identity;
+    NetAddress address;
+    if (!load_identity(dir, &identity) || !net_address_from_text(at, port, &address))
+    {
+        return 1;
+    }
+    std::string share_dir = share->dir.empty() ? *dir : share->dir;
+    char canonical[4096] = {};
+    if (!host_fs_canonical(share_dir.c_str(), canonical, sizeof(canonical)))
+    {
+        std::printf("no folder %s\n", share_dir.c_str());
+        return 1;
+    }
+    std::vector<std::string> games;
+    games.push_back(canonical);
+    std::string ours = net_content_folder_name(&games[0]);   // our side's root's name
+    NetShareLink* link = new NetShareLink();
+    std::string devices = *dir + "/net_probe_devices.cfg";
+    if (!net_share_link_start(link, &identity, "NET PROBE", devices.c_str()))
+    {
+        delete link;
+        return 1;
+    }
+    net_share_link_set_folders(link, &games, "", "");
+    net_share_link_connect(link, address, code == nullptr ? "" : code);
+
+    int result = 2;
+    std::chrono::steady_clock::time_point end =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int64_t>(seconds * 1000.0));
+    NetShareLinkStatus status;
+    for (;;)
+    {
+        net_share_link_status(link, &status);
+        if (status.state == NetShareLinkState::ready || std::chrono::steady_clock::now() >= end ||
+            (status.state == NetShareLinkState::idle && status.refusal != NetClientRefusal::none))
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    // A level raised as we come in (a host that gives OWNER to whoever
+    // pairs) is told a moment after the welcome.
+    for (int i = 0; i < 400 && status.state == NetShareLinkState::ready && status.access != NetAccessLevel::owner; i++)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        net_share_link_status(link, &status);
+    }
+    if (status.state != NetShareLinkState::ready)
+    {
+        std::printf("not connected: %s\n", status.refusal == NetClientRefusal::none ? "out of time"
+                                                                                     : refusal_text(status.refusal));
+    }
+    else if (status.access != NetAccessLevel::owner)
+    {
+        std::printf("connected to \"%s\" with %s access: piccolo-share needs OWNER (give it on the host: "
+                    "SETTINGS > NETWORK)\n", status.host_name.c_str(), net_access_level_name(status.access));
+        result = 3;
+    }
+    else
+    {
+        std::printf("connected to \"%s\" (OWNER)\n", status.host_name.c_str());
+        result = 0;
+        NetShareStatus list_status = NetShareStatus::failed;
+        std::vector<NetShareEntry> entries;
+        if (share->list)
+        {
+            std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+            net_share_link_list(link, share->list_path.c_str());
+            if (!share_wait_listing(link, end, &list_status, &entries))
+            {
+                std::printf("list: out of time\n");
+                result = 2;
+            }
+            else
+            {
+                std::printf("list \"%s\": %s, %u entries in %.0f ms\n", share->list_path.c_str(),
+                            share_status_text(list_status), static_cast<unsigned>(entries.size()),
+                            share_seconds_since(start) * 1000.0);
+                static const char* KIND_NAMES[] = {"folder", "file", "games", "saves", "states"};
+                for (size_t i = 0; i < entries.size(); i++)
+                {
+                    uint32_t kind = static_cast<uint32_t>(entries[i].kind);
+                    std::printf("  %-6s %12llu  %10llu  %s\n", kind < 5 ? KIND_NAMES[kind] : "?",
+                                static_cast<unsigned long long>(entries[i].size),
+                                static_cast<unsigned long long>(entries[i].mtime), entries[i].name.c_str());
+                }
+                result = list_status == NetShareStatus::ok ? 0 : 4;
+            }
+        }
+        uint8_t flags = share->replace ? NET_SHARE_PUT_REPLACE : 0;
+        if (result == 0 && !share->get.empty())
+        {
+            // The size and date come from the folder's listing (as SHARE has them).
+            size_t slash = share->get.rfind('/');
+            std::string folder = slash == std::string::npos ? std::string() : share->get.substr(0, slash);
+            std::string name = slash == std::string::npos ? share->get : share->get.substr(slash + 1);
+            net_share_link_list(link, folder.c_str());
+            const NetShareEntry* found = nullptr;
+            if (share_wait_listing(link, end, &list_status, &entries))
+            {
+                for (size_t i = 0; i < entries.size() && found == nullptr; i++)
+                {
+                    if (entries[i].kind == NetShareKind::file && entries[i].name == name)
+                    {
+                        found = &entries[i];
+                    }
+                }
+            }
+            if (found == nullptr)
+            {
+                std::printf("get %s: not in its folder's listing\n", share->get.c_str());
+                result = 4;
+            }
+            else
+            {
+                std::printf("get %s (%llu bytes) -> %s/%s\n", share->get.c_str(),
+                            static_cast<unsigned long long>(found->size), canonical, name.c_str());
+                std::string local = ours + "/" + name;
+                net_share_link_copy(link, false, local.c_str(), share->get.c_str(), found->size, found->mtime, flags);
+                NetShareStatus copy_status = NetShareStatus::failed;
+                bool ended = share_wait_copy(link, end, &copy_status);
+                std::printf("get: %s\n", ended ? share_status_text(copy_status) : "out of time");
+                result = ended && (copy_status == NetShareStatus::ok || copy_status == NetShareStatus::same) ? 0 : 4;
+            }
+        }
+        if (result == 0 && !share->put_name.empty())
+        {
+            std::string local = ours + "/" + share->put_name;
+            std::printf("put %s/%s -> %s\n", canonical, share->put_name.c_str(), share->put_path.c_str());
+            net_share_link_copy(link, true, local.c_str(), share->put_path.c_str(), 0, 0, flags);
+            NetShareStatus copy_status = NetShareStatus::failed;
+            bool ended = share_wait_copy(link, end, &copy_status);
+            std::printf("put: %s\n", ended ? share_status_text(copy_status) : "out of time");
+            result = ended && (copy_status == NetShareStatus::ok || copy_status == NetShareStatus::same) ? 0 : 4;
+        }
+    }
+    net_share_link_disconnect(link);
+    net_share_link_stop(link);
+    delete link;
+    return result;
+}
+
+// A share host like a piccolo with networking on, minus the frontend: what
+// SHARE (or --share-*) connects to on one machine.
+static int run_share_host(uint16_t port, const char* name, const std::string* dir, const ShareProbe* share)
+{
+    NetKeypair identity;
+    if (!load_identity(dir, &identity))
+    {
+        return 1;
+    }
+    std::string share_dir = share->dir.empty() ? *dir : share->dir;
+    std::vector<std::string> games;
+    games.push_back(share_dir);
+    NetService* service = new NetService();
+    std::string devices = *dir + "/net_probe_devices.cfg";
+    if (!net_service_start(service, port, name, &identity, devices.c_str()))
+    {
+        delete service;
+        return 1;
+    }
+    net_service_lock(service);
+    net_service_set_share_folders(service, &games, share->saves.c_str(), share->states.c_str());
+    net_access_open_pairing(&service->access);
+    std::printf("share host \"%s\" on port %u, sharing %s%s%s%s%s; pairing code %s (Ctrl+C to stop)\n", name,
+                static_cast<unsigned>(net_host_port(&service->access.session.host)), share_dir.c_str(),
+                share->saves.empty() ? "" : ", saves ", share->saves.c_str(), share->states.empty() ? "" : ", states ",
+                share->states.c_str(), service->access.code);
+    net_service_unlock(service);
+    std::fflush(stdout);   // read from a log while it runs
+    for (;;)
+    {
+        net_service_lock(service);
+        NetAccessEvent event;
+        while (net_service_next(service, &event))
+        {
+            if ((event.type == NetAccessEventType::authorized || event.type == NetAccessEventType::paired) &&
+                event.device >= 0)
+            {
+                uint32_t device = static_cast<uint32_t>(event.device);
+                net_access_set_level(&service->access, device, NetAccessLevel::owner);
+                std::printf("%s \"%s\": OWNER\n", event.type == NetAccessEventType::paired ? "paired" : "connected",
+                            service->access.trust.devices[device].name.c_str());
+            }
+            else if (event.type == NetAccessEventType::closed)
+            {
+                std::printf("peer %u left\n", static_cast<unsigned>(event.peer));
+            }
+            else if (event.type == NetAccessEventType::pairing_failed || event.type == NetAccessEventType::pairing_closed)
+            {
+                net_access_open_pairing(&service->access);
+                std::printf("pairing attempt failed or closed; new code %s\n", service->access.code);
+            }
+        }
+        net_service_unlock(service);
+        std::fflush(stdout);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+}
+
 int main(int argc, char** argv)
 {
     uint16_t port = NET_DEFAULT_PORT;
@@ -1220,6 +1541,8 @@ int main(int argc, char** argv)
     WatchProbe watch;   // a few vectors: fine here
     int forget = -1;
     ContentProbe content;
+    ShareProbe share;
+    const char* share_host = nullptr;
     for (int i = 1; i < argc; i++)
     {
         bool has_value = i + 1 < argc;
@@ -1384,6 +1707,43 @@ int main(int argc, char** argv)
         {
             beacon = argv[++i];
         }
+        else if (std::strcmp(argv[i], "--share-list") == 0 && has_value)
+        {
+            share.active = true;
+            share.list = true;
+            share.list_path = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "--share-get") == 0 && has_value)
+        {
+            share.active = true;
+            share.get = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "--share-put") == 0 && i + 2 < argc)
+        {
+            share.active = true;
+            share.put_name = argv[++i];
+            share.put_path = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "--share-replace") == 0)
+        {
+            share.replace = true;
+        }
+        else if (std::strcmp(argv[i], "--share-dir") == 0 && has_value)
+        {
+            share.dir = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "--share-saves") == 0 && has_value)
+        {
+            share.saves = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "--share-states") == 0 && has_value)
+        {
+            share.states = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "--share-host") == 0 && has_value)
+        {
+            share_host = argv[++i];
+        }
         else
         {
             usage();
@@ -1409,9 +1769,17 @@ int main(int argc, char** argv)
         return ok ? 0 : 1;
     }
     int result = 0;
-    if (listen != nullptr)
+    if (share_host != nullptr)
+    {
+        result = run_share_host(port, share_host, &dir, &share);
+    }
+    else if (listen != nullptr)
     {
         result = run_listener(port, listen, &dir, beacon);
+    }
+    else if (connect != nullptr && share.active)
+    {
+        result = run_share(port, seconds < 30.0 ? 30.0 : seconds, connect, pair_code, &dir, &share);
     }
     else if (connect != nullptr)
     {
