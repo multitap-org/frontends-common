@@ -104,6 +104,8 @@ void net_service_unlock(NetService* service);
 // "name:port", "[v6]:port"), or off with nullptr / "". Resolved on its own
 // thread; the access gets the addresses when it's done (net_access_beacon_status
 // says how it goes). Waits for a lookup still running from an earlier call.
+// The same beacon's WebRTC signaling (browsers) starts at once, where the
+// build has WebRTC (net_access_signal_status).
 void net_service_set_beacon(NetService* service, const char* server);
 
 // Locked: the next queued event, oldest first; its `data` stays valid until

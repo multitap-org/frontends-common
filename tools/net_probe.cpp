@@ -51,7 +51,9 @@
 //   --beacon SERVER  across the internet (net_beacon.h): with --listen, register
 //               the paired devices with that beacon and show its status; with
 //               --connect #N, meet paired host N (in our list) through it
-//               ("beacon.get-piccolo.app", "host:port", "[v6]:port")
+//               ("beacon.get-piccolo.app", "host:port", "[v6]:port"); UDP first,
+//               then WebRTC through its signaling (wss://<name>/signal, or a
+//               full ws:// / wss:// URL given as SERVER is used for signaling)
 //   --forget N  forget paired host N (0 = the first) here only, without connecting
 //   --dir DIR   where net_probe keeps its device key and paired devices
 //               (net_probe_identity.cfg, net_probe_devices.cfg; default ".")
@@ -159,6 +161,10 @@ static int run_listener(uint16_t port, const char* name, const std::string* dir,
             std::printf("beacon at %s\n", text);
         }
         net_access_set_beacon(access, servers, count);
+        if (net_access_set_signal(access, net_signal_url(beacon).c_str(), net_signal_stun(beacon).c_str()))
+        {
+            std::printf("signaling at %s (browsers, WebRTC)\n", net_signal_url(beacon).c_str());
+        }
     }
     NetBeaconStatus beacon_status = NetBeaconStatus::off;
     uint32_t answered = 0;
@@ -853,6 +859,7 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
         NetAddress servers[NET_BEACON_MAX_SERVERS];
         uint32_t count = net_address_resolve(beacon, NET_BEACON_DEFAULT_PORT, servers);
         uint32_t device = static_cast<uint32_t>(std::atoi(at + 1));
+        net_client_set_signal(client, net_signal_url(beacon).c_str(), net_signal_stun(beacon).c_str());
         if (device < client->trust.devices.size())
         {
             std::printf("meeting \"%s\" through the beacon (%u address(es))\n",

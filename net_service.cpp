@@ -208,6 +208,16 @@ void net_service_set_beacon(NetService* service, const char* server)
     uint32_t generation = service->beacon_generation;
     service->beacon_text = server != nullptr ? server : "";
     std::string text = service->beacon_text;
+    // Browsers through the same beacon (WebRTC signaling; needs no lookup
+    // here: the socket resolves its own name). Nothing in builds without WebRTC.
+    if (text.empty())
+    {
+        net_access_set_signal(&service->access, "", nullptr);
+    }
+    else
+    {
+        net_access_set_signal(&service->access, net_signal_url(text.c_str()).c_str(), net_signal_stun(text.c_str()).c_str());
+    }
     service->lock.unlock();
     service->resolver = std::thread(resolve_beacon, service, generation, text);
 }

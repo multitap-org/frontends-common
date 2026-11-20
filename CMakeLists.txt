@@ -547,7 +547,8 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
         target_link_libraries(frontend_net_signal_test PRIVATE frontend_net)
         add_dependencies(frontend_net_signal_test beacon)
         multitap_set_project_flags(frontend_net_signal_test)
-        add_test(NAME frontend_net_signal COMMAND frontend_net_signal_test $<TARGET_FILE:beacon>)
+        add_test(NAME frontend_net_signal
+                 COMMAND frontend_net_signal_test $<TARGET_FILE:beacon> "${CMAKE_CURRENT_BINARY_DIR}/net_signal_test")
         set_tests_properties(frontend_net_signal PROPERTIES
                              PASS_REGULAR_EXPRESSION "net signal: all checks passed"
                              FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
