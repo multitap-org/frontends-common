@@ -252,6 +252,7 @@ if(MULTITAP_HAVE_ENET)
         net_client.cpp
         net_content.cpp
         net_share.cpp
+        net_share_folders.cpp
         net_wire.cpp
         net_settings.cpp
         net_speed.cpp
@@ -525,6 +526,14 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
     add_test(NAME frontend_net_share COMMAND frontend_net_share_test)
     set_tests_properties(frontend_net_share PROPERTIES
                          PASS_REGULAR_EXPRESSION "net share: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    add_executable(frontend_net_share_folders_test tests/net_share_folders_test.cpp)
+    target_link_libraries(frontend_net_share_folders_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_net_share_folders_test)
+    add_test(NAME frontend_net_share_folders
+             COMMAND frontend_net_share_folders_test "${CMAKE_CURRENT_BINARY_DIR}/net_share_folders_test")
+    set_tests_properties(frontend_net_share_folders PROPERTIES
+                         PASS_REGULAR_EXPRESSION "net share folders: all checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
     # Settings and actions from a client: messages, pages, the host's side.
