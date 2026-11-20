@@ -326,10 +326,15 @@ bool shader_chain_load(ShaderChain* chain, const ShaderLibrary* library, const V
     // SHIELD's Tegra X1) librashader makes its own render passes.
     options.use_dynamic_rendering = context->path == VulkanPath::vulkan_1_3;
 
-    // The call uses up the preset when it succeeds (sets it to null).
+    // The call uses up the preset when it succeeds (sets it to null). Free it
+    // only when it's still there: libra_preset_free on a used-up preset
+    // panics inside librashader (0.12.1, presets.rs: unwrap on None).
     libra_vk_filter_chain_t created = nullptr;
     error = library->vk_filter_chain_create(&preset, device, &options, &created);
-    library->preset_free(&preset);   // does nothing on null
+    if (preset != nullptr)
+    {
+        library->preset_free(&preset);
+    }
     if (error != nullptr)
     {
         log_error(library, error, preset_path);
