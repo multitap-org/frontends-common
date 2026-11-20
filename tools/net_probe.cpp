@@ -40,6 +40,10 @@
 //               (applies when --tuning isn't "host")
 //   --drop P    with --watch: throw away P% of the stream's packets (a bad
 //               network, to see keyframe requests and recovery)
+//   --devices   with --connect: who plays on the host's ports, and each change
+//               (FULL access)
+//   --device-port C D P  with --connect: a second in, move controller C (device
+//               D, from --devices) to port P (1-4, 0 = on none)
 //   --unpair    with --connect: once in, unpair (the host forgets us too)
 //   --forget N  forget paired host N (0 = the first) here only, without connecting
 //   --dir DIR   where net_probe keeps its device key and paired devices
@@ -483,6 +487,8 @@ enum class ContentAsk
     controllers,
     port_device,
     unpair,
+    devices,
+    device_port,
 };
 
 struct ContentProbe
@@ -496,6 +502,8 @@ struct ContentProbe
     const char* language = "en";
     uint32_t    pad_index = 0;
     uint32_t    device = 0;
+    uint32_t    controller = 0;
+    int32_t     port = 0;
     uint32_t    received = 0;
 };
 
@@ -554,6 +562,10 @@ static void content_send(NetClient* client, ContentProbe* probe)
     else if (probe->ask == ContentAsk::controllers)
     {
         size = net_settings_write_controllers_request(out.data(), out.size(), 1);
+    }
+    else if (probe->ask == ContentAsk::devices)
+    {
+        size = net_settings_write_devices_request(out.data(), out.size(), 1);
     }
 
     if (size > 0)
@@ -645,6 +657,28 @@ static bool content_receive_settings(NetClient* client, ContentProbe* probe, con
         }
         return false;
     }
+    std::vector<NetDevice> devices;
+    if (net_settings_read_devices(data, size, &id, &devices))
+    {
+        const char* kinds[4] = {"gamepad", "keyboard", "mouse", "network pad"};
+        const char* owners[3] = {"host", "other device", "yours"};
+        std::printf("devices%s: %zu on ports\n", id == 0 ? " (sent unasked)" : "", devices.size());
+        for (size_t i = 0; i < devices.size(); i++)
+        {
+            std::printf("  controller %u device %u: \"%s\" %s (%s, pad %u), ports", devices[i].controller,
+                        devices[i].device, devices[i].name.c_str(), kinds[static_cast<uint8_t>(devices[i].kind)],
+                        owners[static_cast<uint8_t>(devices[i].owner)], static_cast<unsigned>(devices[i].pad));
+            for (uint32_t p = 0; p < 8; p++)
+            {
+                if ((devices[i].ports & (1u << p)) != 0)
+                {
+                    std::printf(" %u", p + 1);
+                }
+            }
+            std::printf("\n");
+        }
+        return false;
+    }
     NetControllers controllers;
     if (net_settings_read_controllers(data, size, &id, &controllers))
     {
@@ -722,7 +756,8 @@ static bool content_receive(NetClient* client, ContentProbe* probe, const uint8_
     }
     else if (probe->ask == ContentAsk::settings || probe->ask == ContentAsk::set || probe->ask == ContentAsk::actions ||
              probe->ask == ContentAsk::action || probe->ask == ContentAsk::controllers ||
-             probe->ask == ContentAsk::port_device)
+             probe->ask == ContentAsk::port_device || probe->ask == ContentAsk::devices ||
+             probe->ask == ContentAsk::device_port)
     {
         bool done = content_receive_settings(client, probe, data, size);
         if (probe->ask == ContentAsk::settings)
@@ -943,6 +978,17 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
         {
             std::printf("unpairing from \"%s\"\n", client->host_name);
             net_client_unpair(client, static_cast<uint32_t>(client->device));
+            action_released = true;
+        }
+        // --device-port: a second in, after the list.
+        if (content->ask == ContentAsk::device_port && ready && !action_released &&
+            std::chrono::steady_clock::now() - pad_start > std::chrono::seconds(1))
+        {
+            uint8_t request[16];
+            size_t size = net_settings_write_device_port(request, sizeof(request), content->controller, content->device,
+                                                         static_cast<int8_t>(content->port - 1));
+            net_client_send(client, NetChannel::control, request, size);
+            std::printf("asked to move controller %u to port %d\n", content->controller, content->port);
             action_released = true;
         }
         // --port-device: a second in, so a --retropad pad has joined a port.
@@ -1180,6 +1226,17 @@ int main(int argc, char** argv)
         else if (std::strcmp(argv[i], "--speedtest") == 0)
         {
             speedtest = true;
+        }
+        else if (std::strcmp(argv[i], "--devices") == 0)
+        {
+            content.ask = ContentAsk::devices;
+        }
+        else if (std::strcmp(argv[i], "--device-port") == 0 && i + 3 < argc)
+        {
+            content.ask = ContentAsk::device_port;
+            content.controller = static_cast<uint32_t>(std::atoi(argv[++i]));
+            content.device = static_cast<uint32_t>(std::atoi(argv[++i]));
+            content.port = std::atoi(argv[++i]);
         }
         else if (std::strcmp(argv[i], "--unpair") == 0)
         {

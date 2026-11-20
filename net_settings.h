@@ -23,6 +23,9 @@
 //   host -> client  controllers       id u32 | pad_ports 4 x i8 | port_count u8 | port_count x port
 //                                     (id 0 = sent unasked: something in it changed)
 //   client -> host  port_device       pad u8 | device u32
+//   client -> host  devices_request   id u32
+//   host -> client  devices           id u32 | count u16 | count x device   (id 0 = sent unasked: it changed)
+//   client -> host  device_port       controller u32 | device u32 | port i8
 //
 //   setting = type u8 | flags u8 | page | subpage | section | label | help |
 //             min i32 | max i32 | step i32 | min_real | max_real | step_real |
@@ -50,6 +53,15 @@
 // defines the value (bit 0 global, 1 core, 2 game); `source` is the layer the
 // effective value comes from (0 = the default).
 //
+// Devices (types 141-143, FULL access): what plays on piccolo's ports now,
+// only controllers that joined a port (START joins; nothing is kept between
+// runs): device = controller u32 | device u32 | kind u8 | ports u8 (bit per
+// port) | owner u8 | pad u8 | name. `controller` + `device` name the entry
+// until the next `devices` (positions in the host's list, checked when a
+// device_port arrives: a stale pair is ignored and `devices` comes again).
+// device_port puts that controller on `port` only (-1 = on none: it joins
+// again with START), as the quick menu's CONTROLS does; nothing is saved.
+//
 // Settings need FULL access (types 136-140). Actions are asked for and
 // triggered at GAMEPAD level (types 17-19); the host lists only the actions
 // the device's level allows, and checks again when one arrives.
@@ -71,6 +83,9 @@ enum class NetSettingsMessage : uint8_t
     controllers_request = 20,
     controllers = 21,
     port_device = 22,
+    devices_request = 141,
+    devices = 142,
+    device_port = 143,
     settings_request = 136,
     settings_result = 137,
     setting_set = 138,
@@ -164,6 +179,34 @@ struct NetControllers
     std::vector<NetPort> ports;
 };
 
+enum class NetDeviceKind : uint8_t
+{
+    gamepad = 0,     // a local controller
+    keyboard = 1,
+    mouse = 2,
+    network = 3,     // a paired device's pad (a phone, another piccolo)
+};
+constexpr uint8_t NET_DEVICE_KIND_COUNT = 4;
+
+enum class NetDeviceOwner : uint8_t
+{
+    host = 0,        // plugged into piccolo's machine
+    other = 1,       // another paired device's pad
+    yours = 2,       // a pad of the device asking
+};
+constexpr uint8_t NET_DEVICE_OWNER_COUNT = 3;
+
+struct NetDevice
+{
+    uint32_t       controller = 0;
+    uint32_t       device = 0;
+    NetDeviceKind  kind = NetDeviceKind::gamepad;
+    uint8_t        ports = 0;     // bit 0 = port 1
+    NetDeviceOwner owner = NetDeviceOwner::host;
+    uint8_t        pad = 0;       // network pads: which of the device's pads (0..3)
+    std::string    name;          // as piccolo names it ("8BITDO SN30 1", "ANA'S PHONE 2")
+};
+
 // --- messages ---------------------------------------------------------------
 // Writers return the size (0 if it doesn't fit); readers are false unless
 // the payload is exactly that message.
@@ -208,6 +251,14 @@ bool   net_settings_read_controllers(const uint8_t* data, size_t size, uint32_t*
 
 size_t net_settings_write_port_device(uint8_t* out, size_t capacity, uint8_t pad, uint32_t device);
 bool   net_settings_read_port_device(const uint8_t* data, size_t size, uint8_t* pad, uint32_t* device);
+
+size_t net_settings_write_devices_request(uint8_t* out, size_t capacity, uint32_t id);
+bool   net_settings_read_devices_request(const uint8_t* data, size_t size, uint32_t* id);
+size_t net_settings_write_devices(uint8_t* out, size_t capacity, uint32_t id, const std::vector<NetDevice>* devices);
+bool   net_settings_read_devices(const uint8_t* data, size_t size, uint32_t* id, std::vector<NetDevice>* devices);
+size_t net_settings_write_device_port(uint8_t* out, size_t capacity, uint32_t controller, uint32_t device, int8_t port);
+bool   net_settings_read_device_port(const uint8_t* data, size_t size, uint32_t* controller, uint32_t* device,
+                                     int8_t* port);
 
 // --- the host's side ----------------------------------------------------------
 
