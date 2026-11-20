@@ -1,23 +1,12 @@
 #include "net_http.h"
 
 #include <cstdio>
-#include <curl/curl.h>
+#include <cstring>
 
 #include "host_log.h"
+#include "net_http_backend.h"
 
-static bool        g_initialized = false;
-static std::string g_user_agent;
-
-// What one transfer needs inside curl's callbacks.
-struct Transfer
-{
-    SDL_IOStream* file      = nullptr;
-    int64_t       written   = 0;
-    int64_t       max_bytes = 0;
-    bool          too_large = false;
-    bool          write_failed = false;
-    NetHttpJob*   job       = nullptr;   // progress and cancel; nullptr for net_http_download
-};
+static bool g_initialized = false;
 
 static int32_t clamp_to_int32(int64_t value)
 {
@@ -32,42 +21,37 @@ static int32_t clamp_to_int32(int64_t value)
     return static_cast<int32_t>(value);
 }
 
-static size_t on_write(char* data, size_t size, size_t count, void* user)
+bool net_http_transfer_write(NetHttpTransfer* transfer, const void* data, size_t size)
 {
-    Transfer* transfer = static_cast<Transfer*>(user);
-    size_t bytes = size * count;
-    if (transfer->max_bytes > 0 && transfer->written + static_cast<int64_t>(bytes) > transfer->max_bytes)
+    if (transfer->max_bytes > 0 && transfer->written + static_cast<int64_t>(size) > transfer->max_bytes)
     {
         transfer->too_large = true;
-        return 0;   // anything but `bytes` makes curl stop with CURLE_WRITE_ERROR
+        return false;
     }
-    if (SDL_WriteIO(transfer->file, data, bytes) != bytes)
+    if (SDL_WriteIO(transfer->file, data, size) != size)
     {
         transfer->write_failed = true;
-        return 0;
+        return false;
     }
-    transfer->written += static_cast<int64_t>(bytes);
+    transfer->written += static_cast<int64_t>(size);
     if (transfer->job != nullptr)
     {
         SDL_SetAtomicInt(&transfer->job->received, clamp_to_int32(transfer->written));
     }
-    return bytes;
+    return true;
 }
 
-// Called by curl about once a second and on every read: the total size (when
-// the server says) and the chance to cancel (non-zero = stop).
-static int on_progress(void* user, curl_off_t download_total, curl_off_t, curl_off_t, curl_off_t)
+void net_http_transfer_set_total(NetHttpTransfer* transfer, int64_t total)
 {
-    Transfer* transfer = static_cast<Transfer*>(user);
-    if (transfer->job == nullptr)
+    if (transfer->job != nullptr && total > 0)
     {
-        return 0;
+        SDL_SetAtomicInt(&transfer->job->total, clamp_to_int32(total));
     }
-    if (download_total > 0)
-    {
-        SDL_SetAtomicInt(&transfer->job->total, clamp_to_int32(static_cast<int64_t>(download_total)));
-    }
-    return SDL_GetAtomicInt(&transfer->job->cancel) != 0 ? 1 : 0;
+}
+
+bool net_http_transfer_cancelled(const NetHttpTransfer* transfer)
+{
+    return transfer->job != nullptr && SDL_GetAtomicInt(&transfer->job->cancel) != 0;
 }
 
 bool net_http_init(const char* user_agent)
@@ -76,17 +60,16 @@ bool net_http_init(const char* user_agent)
     {
         return true;
     }
-    CURLcode result = curl_global_init(CURL_GLOBAL_DEFAULT);
-    if (result != CURLE_OK)
+    char description[256] = {};
+    char error[256] = {};
+    if (!net_http_backend_init(user_agent != nullptr ? user_agent : "multitap", description, sizeof(description),
+                               error, sizeof(error)))
     {
-        host_log(LogLevel::error, "net_http: curl won't start: %s", curl_easy_strerror(result));
+        host_log(LogLevel::error, "net_http: %s", error);
         return false;
     }
-    g_user_agent  = user_agent != nullptr ? user_agent : "multitap";
     g_initialized = true;
-    curl_version_info_data* version = curl_version_info(CURLVERSION_NOW);
-    host_log(LogLevel::info, "net_http: curl %s, %s", version->version,
-             version->ssl_version != nullptr ? version->ssl_version : "no TLS");
+    host_log(LogLevel::info, "net_http: %s", description);
     return true;
 }
 
@@ -94,9 +77,60 @@ void net_http_shutdown()
 {
     if (g_initialized)
     {
-        curl_global_cleanup();
+        net_http_backend_shutdown();
         g_initialized = false;
     }
+}
+
+// file:// URLs, the same on every platform (tests and local mirrors):
+// "file:///home/x" is /home/x; on Windows "file:///C:/x" and "file://C:/x"
+// are C:/x. No host part, no %-decoding.
+static NetHttpFetch fetch_file(const char* url, NetHttpTransfer* transfer, char* error, size_t error_size)
+{
+    const char* path = url + 7;   // after "file://"
+#ifdef _WIN32
+    if (path[0] == '/' && path[1] != '\0' && path[2] == ':')
+    {
+        path++;
+    }
+#endif
+    SDL_IOStream* source = SDL_IOFromFile(path, "rb");
+    if (source == nullptr)
+    {
+        std::snprintf(error, error_size, "can't open %s: %s", path, SDL_GetError());
+        return NetHttpFetch::failed;
+    }
+    net_http_transfer_set_total(transfer, SDL_GetIOSize(source));
+    NetHttpFetch result = NetHttpFetch::ok;
+    uint8_t buffer[16384];
+    while (true)
+    {
+        if (net_http_transfer_cancelled(transfer))
+        {
+            result = NetHttpFetch::cancelled;
+            break;
+        }
+        size_t got = SDL_ReadIO(source, buffer, sizeof(buffer));
+        if (got > 0 && !net_http_transfer_write(transfer, buffer, got))
+        {
+            result = NetHttpFetch::failed;
+            break;
+        }
+        if (got < sizeof(buffer))
+        {
+            if (SDL_GetIOStatus(source) == SDL_IO_STATUS_ERROR)
+            {
+                std::snprintf(error, error_size, "can't read %s: %s", path, SDL_GetError());
+                result = NetHttpFetch::failed;
+            }
+            if (got == 0 || SDL_GetIOStatus(source) != SDL_IO_STATUS_READY)
+            {
+                break;
+            }
+        }
+    }
+    SDL_CloseIO(source);
+    return result;
 }
 
 // The download itself, shared by both entry points. `job` may be nullptr.
@@ -110,8 +144,14 @@ static bool download(const char* url, const char* path, int64_t max_bytes, NetHt
         std::snprintf(error, error_size, "net_http_init wasn't called");
         return false;
     }
+    bool is_file = std::strncmp(url, "file://", 7) == 0;
+    if (!is_file && std::strncmp(url, "http://", 7) != 0 && std::strncmp(url, "https://", 8) != 0)
+    {
+        std::snprintf(error, error_size, "unsupported URL (http, https and file only)");
+        return false;
+    }
     std::string part = std::string(path) + ".part";
-    Transfer transfer;
+    NetHttpTransfer transfer;
     transfer.max_bytes = max_bytes;
     transfer.job       = job;
     transfer.file      = SDL_IOFromFile(part.c_str(), "wb");
@@ -121,50 +161,17 @@ static bool download(const char* url, const char* path, int64_t max_bytes, NetHt
         return false;
     }
 
-    CURL* curl = curl_easy_init();
-    if (curl == nullptr)
-    {
-        SDL_CloseIO(transfer.file);
-        SDL_RemovePath(part.c_str());
-        std::snprintf(error, error_size, "curl_easy_init failed");
-        return false;
-    }
-    char curl_error[CURL_ERROR_SIZE] = {};
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, g_user_agent.c_str());
-    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https,file");
-    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
-    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);           // 404 etc. are errors, not files
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 20L);
-    // A stalled connection fails instead of hanging forever: under 1 byte/s
-    // for 30 seconds.
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 30L);
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);              // we're on our own thread
-    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, on_write);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &transfer);
-    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, on_progress);
-    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &transfer);
-    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-    if (max_bytes > 0)
-    {
-        curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE, static_cast<curl_off_t>(max_bytes));
-    }
-
-    CURLcode result = curl_easy_perform(curl);
-    curl_easy_cleanup(curl);
+    NetHttpFetch result = is_file ? fetch_file(url, &transfer, error, error_size)
+                                  : net_http_backend_fetch(url, &transfer, error, error_size);
     bool closed = SDL_CloseIO(transfer.file);
 
     bool ok = false;
-    if (result == CURLE_ABORTED_BY_CALLBACK)
+    if (result == NetHttpFetch::cancelled)
     {
         *cancelled = true;
         std::snprintf(error, error_size, "cancelled");
     }
-    else if (transfer.too_large || result == CURLE_FILESIZE_EXCEEDED)
+    else if (transfer.too_large)
     {
         std::snprintf(error, error_size, "larger than %lld bytes", static_cast<long long>(max_bytes));
     }
@@ -172,9 +179,12 @@ static bool download(const char* url, const char* path, int64_t max_bytes, NetHt
     {
         std::snprintf(error, error_size, "can't write %s", part.c_str());
     }
-    else if (result != CURLE_OK)
+    else if (result != NetHttpFetch::ok)
     {
-        std::snprintf(error, error_size, "%s", curl_error[0] != '\0' ? curl_error : curl_easy_strerror(result));
+        if (error[0] == '\0')
+        {
+            std::snprintf(error, error_size, "download failed");
+        }
     }
     else if (!SDL_RenamePath(part.c_str(), path))
     {
