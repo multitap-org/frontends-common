@@ -345,6 +345,14 @@ static void speed_report(NetClient* client, SpeedProbe* speed, const NetSpeedRep
                 report->direction == NetSpeedDirection::down ? "down" : "up  ",
                 SPEED_RATES_KBPS[speed->step] / 1000.0, mbps, loss * 100.0, static_cast<unsigned>(received),
                 static_cast<unsigned>(sent));
+    // The host shows it too (SETTINGS > NETWORK).
+    NetSpeedResult result;
+    result.direction = report->direction;
+    result.asked_kbps = SPEED_RATES_KBPS[speed->step];
+    result.got_kbps = static_cast<uint32_t>(mbps * 1000.0);
+    result.loss_per_mille = static_cast<uint16_t>(loss * 1000.0 + 0.5);
+    uint8_t out[32];
+    net_client_send(client, NetChannel::control, out, net_speed_write_result(out, sizeof(out), &result));
     speed->waiting = false;
     speed->step = loss > SPEED_MAX_LOSS ? SPEED_RATE_COUNT : speed->step + 1;
     speed_next(client, speed);
