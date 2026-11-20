@@ -11,6 +11,14 @@ static void poll_once(NetService* service)
     NetAccessEvent event;
     while (net_access_poll(&service->access, &event))
     {
+        if (net_share_host_handle(&service->share, &service->access, &event))
+        {
+            continue;   // piccolo-share's, handled here
+        }
+        if (event.type == NetAccessEventType::closed)
+        {
+            net_share_host_peer_closed(&service->share, event.peer);
+        }
         if (service->count == NET_SERVICE_QUEUE)
         {
             // The frontend hasn't drained for a long while (a stall): the
@@ -171,6 +179,10 @@ static void run(NetService* service)
         if (running)
         {
             stream_once(service);
+            // Copies after the stream: they wait while anyone plays remotely.
+            service->lock.lock();
+            net_share_host_pump(&service->share, &service->access, net_service_streaming(service));
+            service->lock.unlock();
         }
         if (!running)
         {
@@ -240,6 +252,7 @@ bool net_service_start(NetService* service, uint16_t port, const char* name, con
         net_access_destroy(&service->access);
         return false;
     }
+    net_share_host_start(&service->share);
     service->running = true;
     service->thread = std::thread(run, service);
     return true;
@@ -258,8 +271,15 @@ void net_service_stop(NetService* service)
         service->lock.unlock();
         service->thread.join();
     }
+    net_share_host_stop(&service->share);
     net_access_destroy(&service->access);
     service->count = 0;
+}
+
+void net_service_set_share_folders(NetService* service, const std::vector<std::string>* game_paths,
+                                   const char* saves_path, const char* states_path)
+{
+    net_share_host_set_folders(&service->share, game_paths, saves_path, states_path);
 }
 
 void net_service_lock(NetService* service)

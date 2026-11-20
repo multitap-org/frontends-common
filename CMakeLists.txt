@@ -294,6 +294,12 @@ if(MULTITAP_HAVE_ENET)
         net_access.cpp
         net_client.cpp
         net_content.cpp
+        net_share.cpp
+        net_share_folders.cpp
+        net_share_engine.cpp
+        net_share_host.cpp
+        net_share_client.cpp
+        net_share_link.cpp
         net_wire.cpp
         net_settings.cpp
         net_speed.cpp
@@ -582,6 +588,47 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
              COMMAND frontend_net_content_test "${CMAKE_CURRENT_SOURCE_DIR}/tests/data" "${CMAKE_CURRENT_BINARY_DIR}/net_content_test")
     set_tests_properties(frontend_net_content PROPERTIES
                          PASS_REGULAR_EXPRESSION "net content: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    # Files between piccolos (OWNER): messages, chunks, pages.
+    add_executable(frontend_net_share_test tests/net_share_test.cpp)
+    target_link_libraries(frontend_net_share_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_net_share_test)
+    add_test(NAME frontend_net_share COMMAND frontend_net_share_test)
+    set_tests_properties(frontend_net_share PROPERTIES
+                         PASS_REGULAR_EXPRESSION "net share: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    add_executable(frontend_net_share_engine_test tests/net_share_engine_test.cpp)
+    target_link_libraries(frontend_net_share_engine_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_net_share_engine_test)
+    add_test(NAME frontend_net_share_engine
+             COMMAND frontend_net_share_engine_test "${CMAKE_CURRENT_BINARY_DIR}/net_share_engine_test")
+    set_tests_properties(frontend_net_share_engine PROPERTIES
+                         PASS_REGULAR_EXPRESSION "net share engine: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:|ThreadSanitizer")
+    add_executable(frontend_net_share_service_test tests/net_share_service_test.cpp)
+    target_link_libraries(frontend_net_share_service_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_net_share_service_test)
+    add_test(NAME frontend_net_share_service
+             COMMAND frontend_net_share_service_test "${CMAKE_CURRENT_BINARY_DIR}/net_share_service_test")
+    set_tests_properties(frontend_net_share_service PROPERTIES
+                         PASS_REGULAR_EXPRESSION "net share service: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    add_executable(frontend_net_share_link_test tests/net_share_link_test.cpp)
+    target_link_libraries(frontend_net_share_link_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_net_share_link_test)
+    add_test(NAME frontend_net_share_link
+             COMMAND frontend_net_share_link_test "${CMAKE_CURRENT_BINARY_DIR}/net_share_link_test")
+    set_tests_properties(frontend_net_share_link PROPERTIES
+                         PASS_REGULAR_EXPRESSION "net share link: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    add_executable(frontend_net_share_folders_test tests/net_share_folders_test.cpp)
+    target_link_libraries(frontend_net_share_folders_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_net_share_folders_test)
+    add_test(NAME frontend_net_share_folders
+             COMMAND frontend_net_share_folders_test "${CMAKE_CURRENT_BINARY_DIR}/net_share_folders_test")
+    set_tests_properties(frontend_net_share_folders PROPERTIES
+                         PASS_REGULAR_EXPRESSION "net share folders: all checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
     # Settings and actions from a client: messages, pages, the host's side.
