@@ -81,6 +81,34 @@ bool net_stream_read_info(const uint8_t* data, size_t size, NetStreamInfo* info)
     return true;
 }
 
+size_t net_stream_write_tuning(uint8_t* out, size_t capacity, uint8_t type, const NetStreamTuning* tuning)
+{
+    if (capacity < 5)
+    {
+        return 0;
+    }
+    out[0] = type;
+    out[1] = static_cast<uint8_t>(tuning->delay);
+    out[2] = tuning->delay_ms;
+    out[3] = tuning->run_ahead;
+    out[4] = tuning->flags;
+    return type == NET_STREAM_TUNING ? 4 : 5;
+}
+
+bool net_stream_read_tuning(const uint8_t* data, size_t size, uint8_t type, NetStreamTuning* tuning)
+{
+    size_t expected = type == NET_STREAM_TUNING ? 4 : 5;
+    if (size != expected || data[0] != type || data[1] >= NET_STREAM_DELAY_COUNT)
+    {
+        return false;
+    }
+    tuning->delay = static_cast<NetStreamDelay>(data[1]);
+    tuning->delay_ms = data[2] < NET_STREAM_MAX_DELAY_MS ? data[2] : NET_STREAM_MAX_DELAY_MS;
+    tuning->run_ahead = data[3] < NET_STREAM_MAX_RUN_AHEAD ? data[3] : NET_STREAM_MAX_RUN_AHEAD;
+    tuning->flags = type == NET_STREAM_TUNING ? 0 : data[4];
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Sending
 // ---------------------------------------------------------------------------

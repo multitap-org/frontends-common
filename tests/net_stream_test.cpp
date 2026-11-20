@@ -165,6 +165,26 @@ int main()
     size_t start_size = net_stream_write_start(out, sizeof(out), NET_STREAM_WANT_VIDEO | NET_STREAM_WANT_AUDIO);
     check(net_stream_read_start(out, start_size, &flags) && flags == 3, "stream_start read");
 
+    NetStreamTuning tuning;
+    tuning.delay = NetStreamDelay::manual;
+    tuning.delay_ms = 200;   // capped to NET_STREAM_MAX_DELAY_MS
+    tuning.run_ahead = 1;
+    NetStreamTuning tuning_read;
+    size_t tuning_size = net_stream_write_tuning(out, sizeof(out), NET_STREAM_TUNING, &tuning);
+    check(net_stream_read_tuning(out, tuning_size, NET_STREAM_TUNING, &tuning_read) &&
+              tuning_read.delay == NetStreamDelay::manual && tuning_read.delay_ms == NET_STREAM_MAX_DELAY_MS &&
+              tuning_read.run_ahead == 1,
+          "stream_tuning read, capped");
+    check(!net_stream_read_tuning(out, tuning_size, NET_STREAM_TUNING_RESULT, &tuning_read),
+          "a tuning isn't a result");
+    tuning.delay = NetStreamDelay::automatic;
+    tuning.delay_ms = 9;
+    tuning.flags = NET_STREAM_TUNING_WAITS_FOR_PRESENT;
+    tuning_size = net_stream_write_tuning(out, sizeof(out), NET_STREAM_TUNING_RESULT, &tuning);
+    check(net_stream_read_tuning(out, tuning_size, NET_STREAM_TUNING_RESULT, &tuning_read) && tuning_read.delay_ms == 9 &&
+              tuning_read.flags == NET_STREAM_TUNING_WAITS_FOR_PRESENT,
+          "stream_tuning_result read");
+
     if (g_failures == 0)
     {
         std::printf("net stream: all checks passed\n");
