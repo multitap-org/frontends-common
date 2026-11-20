@@ -1697,7 +1697,7 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             bool fired = false;
             for (uint32_t a = modifier + 1; a < INPUT_ACTION_COUNT; a++)
             {
-                if (!local && !game_only_hotkey(static_cast<InputAction>(a)))
+                if (!local && (!device->game_hotkeys || !game_only_hotkey(static_cast<InputAction>(a))))
                 {
                     continue;
                 }
