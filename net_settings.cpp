@@ -457,6 +457,89 @@ bool net_settings_read_port_device(const uint8_t* data, size_t size, uint8_t* pa
     return net_wire_done(&reader) && *pad < NET_CONTROLLERS_PADS;
 }
 
+size_t net_settings_write_devices_request(uint8_t* out, size_t capacity, uint32_t id)
+{
+    NetWriter writer = writer_begin(out, capacity, NetSettingsMessage::devices_request);
+    net_wire_put_u32(&writer, id);
+    return writer_end(&writer);
+}
+
+bool net_settings_read_devices_request(const uint8_t* data, size_t size, uint32_t* id)
+{
+    NetReader reader = reader_begin(data, size, NetSettingsMessage::devices_request);
+    *id = net_wire_get_u32(&reader);
+    return net_wire_done(&reader);
+}
+
+size_t net_settings_write_devices(uint8_t* out, size_t capacity, uint32_t id, const std::vector<NetDevice>* devices)
+{
+    if (devices->size() > UINT16_MAX)
+    {
+        return 0;
+    }
+    NetWriter writer = writer_begin(out, capacity, NetSettingsMessage::devices);
+    net_wire_put_u32(&writer, id);
+    net_wire_put_u16(&writer, static_cast<uint16_t>(devices->size()));
+    for (size_t i = 0; i < devices->size(); i++)
+    {
+        const NetDevice* device = &(*devices)[i];
+        net_wire_put_u32(&writer, device->controller);
+        net_wire_put_u32(&writer, device->device);
+        net_wire_put_u8(&writer, static_cast<uint8_t>(device->kind));
+        net_wire_put_u8(&writer, device->ports);
+        net_wire_put_u8(&writer, static_cast<uint8_t>(device->owner));
+        net_wire_put_u8(&writer, device->pad);
+        net_wire_put_string(&writer, &device->name);
+    }
+    return writer_end(&writer);
+}
+
+bool net_settings_read_devices(const uint8_t* data, size_t size, uint32_t* id, std::vector<NetDevice>* devices)
+{
+    devices->clear();
+    NetReader reader = reader_begin(data, size, NetSettingsMessage::devices);
+    *id = net_wire_get_u32(&reader);
+    uint16_t count = net_wire_get_u16(&reader);
+    for (uint16_t i = 0; i < count && reader.ok; i++)
+    {
+        NetDevice device;
+        device.controller = net_wire_get_u32(&reader);
+        device.device = net_wire_get_u32(&reader);
+        uint8_t kind = net_wire_get_u8(&reader);
+        device.ports = net_wire_get_u8(&reader);
+        uint8_t owner = net_wire_get_u8(&reader);
+        device.pad = net_wire_get_u8(&reader);
+        net_wire_get_text(&reader, &device.name);
+        if (kind >= NET_DEVICE_KIND_COUNT || owner >= NET_DEVICE_OWNER_COUNT)
+        {
+            return false;
+        }
+        device.kind = static_cast<NetDeviceKind>(kind);
+        device.owner = static_cast<NetDeviceOwner>(owner);
+        devices->push_back(device);
+    }
+    return net_wire_done(&reader);
+}
+
+size_t net_settings_write_device_port(uint8_t* out, size_t capacity, uint32_t controller, uint32_t device, int8_t port)
+{
+    NetWriter writer = writer_begin(out, capacity, NetSettingsMessage::device_port);
+    net_wire_put_u32(&writer, controller);
+    net_wire_put_u32(&writer, device);
+    net_wire_put_u8(&writer, static_cast<uint8_t>(port));
+    return writer_end(&writer);
+}
+
+bool net_settings_read_device_port(const uint8_t* data, size_t size, uint32_t* controller, uint32_t* device,
+                                   int8_t* port)
+{
+    NetReader reader = reader_begin(data, size, NetSettingsMessage::device_port);
+    *controller = net_wire_get_u32(&reader);
+    *device = net_wire_get_u32(&reader);
+    *port = static_cast<int8_t>(net_wire_get_u8(&reader));
+    return net_wire_done(&reader);
+}
+
 // ---------------------------------------------------------------------------
 // The host's side
 // ---------------------------------------------------------------------------

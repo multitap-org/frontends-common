@@ -140,6 +140,38 @@ static void test_messages()
     size = net_settings_write_controllers_request(out, sizeof(out), 3);
     check(net_settings_read_controllers_request(out, size, &id) && id == 3, "controllers_request read");
 
+    std::vector<NetDevice> device_list;
+    NetDevice local_pad;
+    local_pad.controller = 2;
+    local_pad.device = 7;
+    local_pad.ports = 1;
+    local_pad.name = "8BITDO SN30 1";
+    device_list.push_back(local_pad);
+    NetDevice phone_pad;
+    phone_pad.controller = 5;
+    phone_pad.device = 9;
+    phone_pad.kind = NetDeviceKind::network;
+    phone_pad.ports = 2;
+    phone_pad.owner = NetDeviceOwner::yours;
+    phone_pad.pad = 1;
+    phone_pad.name = "ANA'S PHONE 2";
+    device_list.push_back(phone_pad);
+    std::vector<NetDevice> devices_read;
+    size = net_settings_write_devices(out, sizeof(out), 0, &device_list);
+    check(net_settings_read_devices(out, size, &id, &devices_read) && id == 0 && devices_read.size() == 2 &&
+              devices_read[0].name == "8BITDO SN30 1" && devices_read[1].kind == NetDeviceKind::network &&
+              devices_read[1].owner == NetDeviceOwner::yours && devices_read[1].pad == 1 && devices_read[1].ports == 2,
+          "devices read");
+    uint32_t moved_controller = 0;
+    uint32_t moved_device = 0;
+    int8_t moved_port = 0;
+    size = net_settings_write_device_port(out, sizeof(out), 5, 9, -1);
+    check(net_settings_read_device_port(out, size, &moved_controller, &moved_device, &moved_port) &&
+              moved_controller == 5 && moved_device == 9 && moved_port == -1,
+          "device_port read");
+    size = net_settings_write_devices_request(out, sizeof(out), 4);
+    check(net_settings_read_devices_request(out, size, &id) && id == 4, "devices_request read");
+
     bool pressed = false;
     size = net_settings_write_action(out, sizeof(out), "fast_forward", true);
     check(net_settings_read_action(out, size, &key, &pressed) && key == "fast_forward" && pressed, "action read");
