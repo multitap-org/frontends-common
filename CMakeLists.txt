@@ -204,6 +204,7 @@ if(MULTITAP_HAVE_ENET)
         net_wire.cpp
         net_settings.cpp
         net_speed.cpp
+        net_service.cpp
         net_input.cpp
         input_net.cpp
     )
@@ -218,7 +219,8 @@ if(MULTITAP_HAVE_ENET)
     endif()
     target_include_directories(frontend_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     # frontend_common: settings_file (the trust and identity files).
-    target_link_libraries(frontend_net PUBLIC host_common frontend_common PRIVATE multitap_dep_enet multitap_dep_monocypher)
+    find_package(Threads REQUIRED)   # net_service's thread
+    target_link_libraries(frontend_net PUBLIC host_common frontend_common Threads::Threads PRIVATE multitap_dep_enet multitap_dep_monocypher)
     multitap_set_project_flags(frontend_net)
 
     # net_probe: LAN discovery on a real network, without a frontend.
@@ -418,6 +420,16 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
     add_test(NAME frontend_net_speed COMMAND frontend_net_speed_test)
     set_tests_properties(frontend_net_speed PROPERTIES
                          PASS_REGULAR_EXPRESSION "net speed: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    # The network on its own thread: events through the queue, sending under the lock.
+    add_executable(frontend_net_service_test tests/net_service_test.cpp)
+    target_link_libraries(frontend_net_service_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_net_service_test)
+    add_test(NAME frontend_net_service
+             COMMAND frontend_net_service_test "${CMAKE_CURRENT_BINARY_DIR}/net_service_test")
+    set_tests_properties(frontend_net_service PROPERTIES
+                         PASS_REGULAR_EXPRESSION "net service: all checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
     # Remote pads: packets, then into the router.
