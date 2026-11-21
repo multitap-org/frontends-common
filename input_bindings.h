@@ -121,6 +121,7 @@ enum class InputAction
     hotkey_load_state,
     hotkey_fast_forward,
     hotkey_grab_mouse,   // lets go of a grabbed mouse (or grabs it again)
+    hotkey_ports,        // the frontend's ports board: who plays on which port, pads moved between them
     count,
 };
 
@@ -159,7 +160,7 @@ bool input_is_bound(const InputBindingSet* set, InputAction action, InputSource 
 // Escape goes back in the UI (Backspace is kept for rewind), F1 opens the
 // menu bar's first menu; the hotkey
 // modifier is Left Shift:
-// Shift + F1 quick menu, F2 save, F4 load, Escape menu, Space fast forward).
+// Shift + F1 quick menu, F2 save, F3 ports, F4 load, Escape menu, Space fast forward).
 void input_default_keyboard_bindings(InputBindingSet* set);
 
 // The defaults for a gamepad, by position (the RetroPad's SNES layout: B
@@ -167,7 +168,7 @@ void input_default_keyboard_bindings(InputBindingSet* set);
 // sticks analog). Interface: d-pad and left stick, accept = bottom, back =
 // right, shoulders page, START opens the menu bar's first menu. Hotkeys with
 // HOTKEY ENABLE = Select: Start quick menu, right button menu, R save, L
-// load, R2 fast forward.
+// load, R2 fast forward, the top button the ports board.
 void input_default_gamepad_bindings(InputBindingSet* set);
 
 // A mouse's: its buttons on the cursor's (left = click / trigger, right =

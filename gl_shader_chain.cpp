@@ -27,9 +27,18 @@ static const char* PASS_VERTEX_SHADER =
     "    gl_Position = vec4(a_position * 2.0 - 1.0, 0.0, 1.0);\n"
     "}\n";
 
-// What every pass gets before its own text (gl_shader_chain.h).
+// What every pass gets before its own text (gl_shader_chain.h). highp where
+// the GPU has it in fragment shaders: the presets work out where they are
+// within a source pixel (fract(v_coord * u_source_size)), and mediump is
+// really 16-bit on some GPUs (Mali with panfrost, phones): at 224 lines
+// that's off by a tenth of a line, so scanlines come out uneven. The Tegra 4
+// has no highp there (fp20 for both), so it keeps mediump.
 static const char* PASS_FRAGMENT_HEADER =
+    "#ifdef GL_FRAGMENT_PRECISION_HIGH\n"
+    "precision highp float;\n"
+    "#else\n"
     "precision mediump float;\n"
+    "#endif\n"
     "uniform sampler2D u_source;\n"
     "uniform vec4 u_source_size;\n"
     "uniform vec4 u_output_size;\n"
