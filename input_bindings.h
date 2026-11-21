@@ -124,6 +124,10 @@ enum class InputAction
     hotkey_ports,        // the frontend's ports board: who plays on which port, pads moved between them
     hotkey_pause,        // pause / resume the game (the frontend's USER pause)
     hotkey_dvr,          // the rewind DVR (Backspace; no gamepad button by default)
+    // Listed with the hotkeys (INPUT > HOTKEYS) but never fired by the router:
+    // the frontend watches it held, on each controller, in the GAME layer too
+    // (piccolo's HOLD START TO REMAP card; the game sees the button as well).
+    hotkey_remap,        // START on gamepads, nothing on the keyboard
     count,
 };
 
@@ -139,6 +143,9 @@ bool        input_action_parse(const char* name, InputAction* action);
 
 bool input_action_is_pad(InputAction action);
 bool input_action_is_hotkey(InputAction action);
+// A hotkey the router fires from the HOTKEY layer (all but hotkey_enable,
+// the modifier itself, and hotkey_remap, which the frontend watches).
+bool input_action_is_fired_hotkey(InputAction action);
 
 struct InputBindingSet
 {

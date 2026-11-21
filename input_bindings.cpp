@@ -24,6 +24,7 @@ static const char* const ACTION_NAMES[INPUT_ACTION_COUNT] = {
     "ui.up", "ui.down", "ui.left", "ui.right", "ui.accept", "ui.back", "ui.page_left", "ui.page_right", "ui.open_menu",
     "hotkey.enable", "hotkey.menu", "hotkey.quick_menu", "hotkey.save_state", "hotkey.load_state",
     "hotkey.fast_forward", "hotkey.grab_mouse", "hotkey.ports", "hotkey.pause", "hotkey.dvr",
+    "hotkey.remap",
 };
 
 static uint32_t index_of(InputAction action)
@@ -83,6 +84,11 @@ bool input_action_is_pad(InputAction action)
 bool input_action_is_hotkey(InputAction action)
 {
     return index_of(action) >= index_of(InputAction::hotkey_enable) && index_of(action) < INPUT_ACTION_COUNT;
+}
+
+bool input_action_is_fired_hotkey(InputAction action)
+{
+    return input_action_is_hotkey(action) && action != InputAction::hotkey_enable && action != InputAction::hotkey_remap;
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +344,9 @@ void input_default_gamepad_bindings(InputBindingSet* set)
     input_bind(set, InputAction::hotkey_enable, pad_button(InputButton::back));
     input_bind(set, InputAction::hotkey_quick_menu, pad_button(InputButton::start));
     input_bind(set, InputAction::hotkey_menu, pad_button(InputButton::west));
+    // REMAP: held on a controller whose remap for the core isn't decided
+    // (piccolo's card). START, as the old HOLD START TO REMAP.
+    input_bind(set, InputAction::hotkey_remap, pad_button(InputButton::start));
     input_bind(set, InputAction::hotkey_save_state, pad_button(InputButton::right_shoulder));
     input_bind(set, InputAction::hotkey_load_state, pad_button(InputButton::left_shoulder));
     input_bind(set, InputAction::hotkey_fast_forward, pad_axis(InputAxis::right_trigger, true));
@@ -1297,7 +1306,7 @@ static bool modifier_active(InputController* controller, const bool* held, const
         bool hotkey_pressed = false;
         for (uint32_t a = index_of(InputAction::hotkey_enable) + 1; a < INPUT_ACTION_COUNT; a++)
         {
-            hotkey_pressed = hotkey_pressed || pressed[a];
+            hotkey_pressed = hotkey_pressed || (pressed[a] && input_action_is_fired_hotkey(static_cast<InputAction>(a)));
         }
         return hotkey_pressed || controller->layer == InputLayer::hotkey ||
                now_ms - controller->modifier_down_ms >= HOTKEY_BLOCK_DELAY_MS;
@@ -1730,6 +1739,10 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             bool fired = false;
             for (uint32_t a = modifier + 1; a < INPUT_ACTION_COUNT; a++)
             {
+                if (!input_action_is_fired_hotkey(static_cast<InputAction>(a)))
+                {
+                    continue;   // REMAP: the frontend watches it
+                }
                 if (!local && (!device->game_hotkeys || !game_only_hotkey(static_cast<InputAction>(a))))
                 {
                     continue;
