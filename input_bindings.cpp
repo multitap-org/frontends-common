@@ -91,6 +91,90 @@ bool input_action_is_fired_hotkey(InputAction action)
     return input_action_is_hotkey(action) && action != InputAction::hotkey_enable && action != InputAction::hotkey_remap;
 }
 
+static bool is_interface(InputAction action)
+{
+    return index_of(action) >= index_of(InputAction::ui_up) && index_of(action) <= index_of(InputAction::ui_open_menu);
+}
+
+// Would `a` and `b` fire together if bound to one control? (input_binding_conflicts)
+static bool fire_together(InputAction a, InputAction b)
+{
+    if (input_action_is_fired_hotkey(a) && input_action_is_fired_hotkey(b))
+    {
+        return true;
+    }
+    if (a == InputAction::hotkey_enable || b == InputAction::hotkey_enable)
+    {
+        InputAction other = a == InputAction::hotkey_enable ? b : a;
+        return input_action_is_hotkey(other) && other != InputAction::hotkey_enable;
+    }
+    return is_interface(a) && is_interface(b);
+}
+
+// The control `a` and `b` share, if they may not share one.
+static bool conflict_between(const InputBindingSet* set, InputAction a, InputAction b, InputSource* shared)
+{
+    if (a == b || !fire_together(a, b))
+    {
+        return false;
+    }
+    const InputSource* sources_a = set->sources[index_of(a)];
+    const InputSource* sources_b = set->sources[index_of(b)];
+    for (uint32_t s = 0; s < INPUT_SOURCES_PER_ACTION; s++)
+    {
+        if (sources_a[s].type == InputSourceType::none)
+        {
+            continue;
+        }
+        for (uint32_t t = 0; t < INPUT_SOURCES_PER_ACTION; t++)
+        {
+            if (sources_b[t].type != InputSourceType::none && input_source_equal(sources_a[s], sources_b[t]))
+            {
+                *shared = sources_a[s];
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+uint32_t input_binding_conflicts(const InputBindingSet* set, InputConflict* out, uint32_t max)
+{
+    uint32_t found = 0;
+    for (uint32_t a = index_of(InputAction::ui_up); a < INPUT_ACTION_COUNT; a++)
+    {
+        for (uint32_t b = a + 1; b < INPUT_ACTION_COUNT; b++)
+        {
+            InputSource shared = {};
+            if (!conflict_between(set, static_cast<InputAction>(a), static_cast<InputAction>(b), &shared))
+            {
+                continue;
+            }
+            if (found < max)
+            {
+                out[found].first = static_cast<InputAction>(a);
+                out[found].second = static_cast<InputAction>(b);
+                out[found].source = shared;
+            }
+            found++;
+        }
+    }
+    return found;
+}
+
+InputAction input_binding_conflict_with(const InputBindingSet* set, InputAction action)
+{
+    for (uint32_t b = index_of(InputAction::ui_up); b < INPUT_ACTION_COUNT; b++)
+    {
+        InputSource shared = {};
+        if (conflict_between(set, action, static_cast<InputAction>(b), &shared))
+        {
+            return static_cast<InputAction>(b);
+        }
+    }
+    return InputAction::count;
+}
+
 // ---------------------------------------------------------------------------
 // Binding sets
 // ---------------------------------------------------------------------------

@@ -156,6 +156,31 @@ struct InputBindingSet
 bool input_bind(InputBindingSet* set, InputAction action, InputSource source);
 void input_unbind_all(InputBindingSet* set, InputAction action);
 
+// Two actions bound to one control that would fire together (Andrés,
+// 2026-11-21: "a system to detect conflicts"). Only in the same layer:
+//   - two hotkeys (pressing the control fires both);
+//   - HOTKEY ENABLE and a hotkey, REMAP included (the control would be the
+//     modifier and the hotkey at once; REMAP held would also shift the pad
+//     into the HOTKEY layer, and the game wouldn't see it);
+//   - two interface actions (ACCEPT and BACK on one button).
+// Not conflicts: RetroPad buttons sharing a control (a combo, on purpose), a
+// hotkey and a RetroPad button (the modifier keeps them apart), and REMAP on
+// a RetroPad button (it's watched in the game, START by default).
+struct InputConflict
+{
+    InputAction first = InputAction::count;    // the earlier one in InputAction order
+    InputAction second = InputAction::count;
+    InputSource source = {};                    // the control both use
+};
+
+// Every conflicting pair in a binding set, up to `max` (the count found,
+// which may be more than `max`). Nothing is allocated.
+uint32_t input_binding_conflicts(const InputBindingSet* set, InputConflict* out, uint32_t max);
+
+// The first action that conflicts with `action` in the set
+// (InputAction::count: none).
+InputAction input_binding_conflict_with(const InputBindingSet* set, InputAction action);
+
 // One action's sources (INPUT_SOURCES_PER_ACTION of them) as rows, the way
 // the binding tables show them: one row per source, in order.
 uint32_t input_sources_count(const InputSource* sources);
