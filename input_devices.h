@@ -87,6 +87,9 @@ enum class InputAxis
     count,
 };
 
+// An axis this close to an extreme (-1 / 1) counts as pinned there.
+constexpr float INPUT_PINNED_AXIS = 0.99f;
+
 enum class InputIgnore
 {
     automatic,
@@ -112,6 +115,9 @@ struct InputDevice
     // a device that isn't really a gamepad (a keyboard's thumbstick receiver).
     bool    axes_moved = false;
     bool    axes_pinned_at_start = false;
+    // SDL calls it a gamepad but it has no face buttons (A / B): a TV
+    // remote's keys, a receiver. Looks fake too (input_devices_looks_fake).
+    bool    has_face_buttons = true;
 
     // A gamepad whose d-pad SDL reports as d-pad buttons (false: some pads
     // report it as the left stick, so the defaults use that instead).

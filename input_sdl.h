@@ -52,6 +52,14 @@ void input_sdl_shutdown(InputSdl* sdl);
 // (everything released: the key-ups go to another window).
 void input_sdl_handle_event(InputSdl* sdl, InputSystem* system, const SDL_Event* event);
 
+// Whether an opened SDL gamepad has face buttons (A and B). SDL also lists
+// devices that aren't gamepads (a TV remote's keys, keyboard receivers): the
+// router ignores those unless the user says otherwise (CONFIG > INPUT).
+bool input_sdl_has_face_buttons(SDL_Gamepad* gamepad);
+// Whether a stick axis rests at an extreme right now (INPUT_PINNED_AXIS): a
+// keyboard's thumbstick receiver reads all the way up-left from the start.
+bool input_sdl_axes_pinned(SDL_Gamepad* gamepad);
+
 // A joystick's name and GUID (for one in `unmapped`), "" if it's gone.
 std::string input_sdl_joystick_name(uint32_t joystick_id);
 std::string input_sdl_joystick_guid(uint32_t joystick_id);

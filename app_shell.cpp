@@ -139,6 +139,12 @@ bool app_shell_create(AppShell* shell, const AppShellConfig* config)
     // would also hide Vulkan validation warnings (logged as SDL_LOG_CATEGORY_GPU).
     SDL_SetLogPriorities(SDL_LOG_PRIORITY_INFO);
 
+    // Devices SDL would take for gamepads that aren't, left out before SDL
+    // opens anything: Android TV's "virtual-search" (the remote's search
+    // key; Google 18d1:0100), on the SHIELD. (Other fakes are caught later:
+    // input_devices_looks_fake.)
+    SDL_SetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES, "0x18D1/0x0100");
+
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))
     {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL_Init failed: %s", SDL_GetError());

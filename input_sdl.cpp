@@ -20,6 +20,26 @@ static InputSdlGamepad* find_gamepad(InputSdl* sdl, SDL_JoystickID id)
     return nullptr;
 }
 
+bool input_sdl_has_face_buttons(SDL_Gamepad* gamepad)
+{
+    return SDL_GamepadHasButton(gamepad, SDL_GAMEPAD_BUTTON_SOUTH) && SDL_GamepadHasButton(gamepad, SDL_GAMEPAD_BUTTON_EAST);
+}
+
+bool input_sdl_axes_pinned(SDL_Gamepad* gamepad)
+{
+    const SDL_GamepadAxis sticks[4] = {SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY, SDL_GAMEPAD_AXIS_RIGHTX,
+                                       SDL_GAMEPAD_AXIS_RIGHTY};
+    for (int32_t i = 0; i < 4; i++)
+    {
+        float value = static_cast<float>(SDL_GetGamepadAxis(gamepad, sticks[i])) / 32767.0f;
+        if (value >= INPUT_PINNED_AXIS || value <= -INPUT_PINNED_AXIS)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void add_gamepad(InputSdl* sdl, InputSystem* system, SDL_JoystickID id)
 {
     if (find_gamepad(sdl, id) != nullptr)
@@ -46,6 +66,7 @@ static void add_gamepad(InputSdl* sdl, InputSystem* system, SDL_JoystickID id)
     {
         // Some pads report their d-pad as the left stick (no d-pad buttons).
         added->has_dpad = SDL_GamepadHasButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_UP);
+        added->has_face_buttons = input_sdl_has_face_buttons(gamepad);
     }
     input_add_controllers_for_device(system, entry.device);
     // The axes as they are now: a device pinned at an extreme from the
@@ -60,6 +81,7 @@ static void add_gamepad(InputSdl* sdl, InputSystem* system, SDL_JoystickID id)
     SDL_Log("Gamepad: %s (%s)%s", name, guid,
             device == nullptr || !input_devices_ignored(device) ? ""
             : device->ignore == InputIgnore::yes ? ", ignored (CONFIG > INPUT)"
+            : !device->has_face_buttons           ? ", ignored: no face buttons (not a real gamepad)"
                                                   : ", ignored: its axes are pinned (not a real gamepad)");
 }
 

@@ -622,6 +622,14 @@ static void test_fake_gamepad()
     input_devices_set_axis(&system->devices, real, InputAxis::left_x, 0.02f);
     input_devices_set_axis(&system->devices, real, InputAxis::left_x, 1.0f);
     check(!input_devices_looks_fake(input_devices_find(&system->devices, real)), "fake: a real stick isn't");
+
+    // No face buttons (a TV remote's keys): fake, unless the user says otherwise.
+    uint32_t remote = input_devices_add(&system->devices, InputDeviceKind::gamepad, "remote", "Remote");
+    InputDevice* remote_device = input_devices_find(&system->devices, remote);
+    remote_device->has_face_buttons = false;
+    check(input_devices_looks_fake(remote_device) && input_devices_ignored(remote_device), "fake: no face buttons");
+    remote_device->ignore = InputIgnore::no;
+    check(!input_devices_ignored(remote_device), "fake: the user's word wins");
     delete system;
 }
 

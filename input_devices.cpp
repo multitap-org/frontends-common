@@ -4,8 +4,6 @@
 #include <cstdlib>
 #include <cstring>
 
-// An axis this close to an extreme counts as pinned there.
-constexpr float PINNED_AXIS = 0.99f;
 
 static void release(InputDevice* device)
 {
@@ -101,7 +99,7 @@ void input_devices_set_axis(InputDevices* devices, uint32_t id, InputAxis axis, 
         return;
     }
     value = value < -1.0f ? -1.0f : (value > 1.0f ? 1.0f : value);
-    bool pinned = value >= PINNED_AXIS || value <= -PINNED_AXIS;
+    bool pinned = value >= INPUT_PINNED_AXIS || value <= -INPUT_PINNED_AXIS;
     if (!device->axes_moved)
     {
         // The first values decide whether it starts pinned; any value away
@@ -182,7 +180,11 @@ void input_devices_wheel(InputDevices* devices, uint32_t id, bool up)
 
 bool input_devices_looks_fake(const InputDevice* device)
 {
-    return device->kind == InputDeviceKind::gamepad && device->axes_pinned_at_start && !device->axes_moved;
+    if (device->kind != InputDeviceKind::gamepad)
+    {
+        return false;
+    }
+    return !device->has_face_buttons || (device->axes_pinned_at_start && !device->axes_moved);
 }
 
 bool input_devices_ignored(const InputDevice* device)
