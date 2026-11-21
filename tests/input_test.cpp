@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "input_bindings.h"
+#include "input_hold.h"
 #include "input_config.h"
 #include "input_devices.h"
 #include "input_layouts.h"
@@ -631,6 +632,18 @@ static void test_fake_gamepad()
     remote_device->ignore = InputIgnore::no;
     check(!input_devices_ignored(remote_device), "fake: the user's word wins");
     delete system;
+}
+
+static void test_hold()
+{
+    InputHold hold;
+    check(!input_hold_update(&hold, true, 1000, 1000), "hold: not yet at the press");
+    check(!input_hold_update(&hold, true, 1999, 1000), "hold: not yet before the time");
+    check(input_hold_update(&hold, true, 2000, 1000), "hold: fires at the time");
+    check(!input_hold_update(&hold, true, 5000, 1000) && input_hold_fired(&hold), "hold: once, until let go");
+    check(!input_hold_update(&hold, false, 5016, 1000) && !input_hold_fired(&hold), "hold: let go");
+    check(!input_hold_update(&hold, true, 0, 1000) && !input_hold_update(&hold, true, 999, 1000), "hold: from 0 too");
+    check(input_hold_update(&hold, true, 1001, 1000), "hold: from 0 fires");
 }
 
 static void test_menus_and_defaults()
@@ -1398,6 +1411,7 @@ int main()
     test_combo_and_stick();
     test_shared_ports();
     test_fake_gamepad();
+    test_hold();
     test_menus_and_defaults();
     test_config();
     test_capture_and_remove();

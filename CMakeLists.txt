@@ -194,6 +194,7 @@ add_library(frontend_common STATIC
     settings.cpp
     app_paths.cpp
     app_assets.cpp
+    input_hold.cpp
     viewport.cpp
     frame_delta.cpp
     state_delta.cpp
