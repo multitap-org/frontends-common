@@ -1,5 +1,7 @@
 #include "shader_chain.h"
 
+#include <string_view>
+
 #include <SDL3/SDL_log.h>
 
 #include "imgui.h"
@@ -151,6 +153,321 @@ static void log_error(const ShaderLibrary* library, libra_error_t error, const c
 }
 
 // ---------------------------------------------------------------------------
+// librashader's leaks (a workaround)
+// ---------------------------------------------------------------------------
+//
+// librashader 0.12.1 never destroys each pass's pipeline layout, descriptor
+// set layout and descriptor pool (the pool's sets go with it), nor the render
+// passes the 1.1 path makes: every filter chain leaks them, and the
+// validation layer lists them at vkDestroyDevice. Fixed upstream in commit
+// 9d0116f8 (2026-11-19, "destroy render passes and pipeline layout objects
+// with the pipeline"), in no release yet; the library a user has may be
+// either.
+//
+// So librashader gets our own vkGetInstanceProcAddr. Through it, it gets our
+// vkGetDeviceProcAddr, which hands out wrappers for those objects' create and
+// destroy functions: a create records the handle in the stage librashader is
+// working for, a destroy removes it. After libra_vk_filter_chain_free, what
+// is still recorded was leaked and we destroy it. With a fixed librashader
+// nothing is left by then. Every other function is librashader's own.
+//
+// Hidden global state, forced: Vulkan's loader functions carry no userdata.
+// It is all in `g_tracking`, and `current` is set only around librashader's
+// calls (create, frame, free), all on the main thread.
+
+struct ShaderObjectTracking
+{
+    // The real functions, filled when librashader asks for them.
+    PFN_vkGetDeviceProcAddr          get_device_proc_addr          = nullptr;
+    PFN_vkCreatePipelineLayout       create_pipeline_layout        = nullptr;
+    PFN_vkDestroyPipelineLayout      destroy_pipeline_layout       = nullptr;
+    PFN_vkCreateDescriptorSetLayout  create_descriptor_set_layout  = nullptr;
+    PFN_vkDestroyDescriptorSetLayout destroy_descriptor_set_layout = nullptr;
+    PFN_vkCreateDescriptorPool       create_descriptor_pool        = nullptr;
+    PFN_vkDestroyDescriptorPool      destroy_descriptor_pool       = nullptr;
+    PFN_vkCreateRenderPass           create_render_pass            = nullptr;
+    PFN_vkDestroyRenderPass          destroy_render_pass           = nullptr;
+
+    ShaderStageObjects* current = nullptr;   // the stage librashader is working for (null between calls)
+    bool leak_logged = false;                // the note that librashader leaked: once per run
+};
+
+static ShaderObjectTracking g_tracking;
+
+static void begin_tracking(ShaderStageObjects* objects)
+{
+    g_tracking.current = objects;
+}
+
+static void end_tracking()
+{
+    g_tracking.current = nullptr;
+}
+
+// Each removes `handle` from the list when it's there (order doesn't matter).
+static void forget_pipeline_layout(std::vector<VkPipelineLayout>* handles, VkPipelineLayout handle)
+{
+    for (size_t i = 0; i < handles->size(); i++)
+    {
+        if ((*handles)[i] == handle)
+        {
+            (*handles)[i] = handles->back();
+            handles->pop_back();
+            return;
+        }
+    }
+}
+
+static void forget_set_layout(std::vector<VkDescriptorSetLayout>* handles, VkDescriptorSetLayout handle)
+{
+    for (size_t i = 0; i < handles->size(); i++)
+    {
+        if ((*handles)[i] == handle)
+        {
+            (*handles)[i] = handles->back();
+            handles->pop_back();
+            return;
+        }
+    }
+}
+
+static void forget_descriptor_pool(std::vector<VkDescriptorPool>* handles, VkDescriptorPool handle)
+{
+    for (size_t i = 0; i < handles->size(); i++)
+    {
+        if ((*handles)[i] == handle)
+        {
+            (*handles)[i] = handles->back();
+            handles->pop_back();
+            return;
+        }
+    }
+}
+
+static void forget_render_pass(std::vector<VkRenderPass>* handles, VkRenderPass handle)
+{
+    for (size_t i = 0; i < handles->size(); i++)
+    {
+        if ((*handles)[i] == handle)
+        {
+            (*handles)[i] = handles->back();
+            handles->pop_back();
+            return;
+        }
+    }
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL tracked_create_pipeline_layout(VkDevice device,
+                                                                     const VkPipelineLayoutCreateInfo* info,
+                                                                     const VkAllocationCallbacks* allocator,
+                                                                     VkPipelineLayout* layout)
+{
+    VkResult result = g_tracking.create_pipeline_layout(device, info, allocator, layout);
+    if (result == VK_SUCCESS && g_tracking.current != nullptr)
+    {
+        g_tracking.current->pipeline_layouts.push_back(*layout);
+    }
+    return result;
+}
+
+static VKAPI_ATTR void VKAPI_CALL tracked_destroy_pipeline_layout(VkDevice device, VkPipelineLayout layout,
+                                                                  const VkAllocationCallbacks* allocator)
+{
+    if (g_tracking.current != nullptr)
+    {
+        forget_pipeline_layout(&g_tracking.current->pipeline_layouts, layout);
+    }
+    g_tracking.destroy_pipeline_layout(device, layout, allocator);
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL tracked_create_descriptor_set_layout(VkDevice device,
+                                                                           const VkDescriptorSetLayoutCreateInfo* info,
+                                                                           const VkAllocationCallbacks* allocator,
+                                                                           VkDescriptorSetLayout* layout)
+{
+    VkResult result = g_tracking.create_descriptor_set_layout(device, info, allocator, layout);
+    if (result == VK_SUCCESS && g_tracking.current != nullptr)
+    {
+        g_tracking.current->set_layouts.push_back(*layout);
+    }
+    return result;
+}
+
+static VKAPI_ATTR void VKAPI_CALL tracked_destroy_descriptor_set_layout(VkDevice device, VkDescriptorSetLayout layout,
+                                                                        const VkAllocationCallbacks* allocator)
+{
+    if (g_tracking.current != nullptr)
+    {
+        forget_set_layout(&g_tracking.current->set_layouts, layout);
+    }
+    g_tracking.destroy_descriptor_set_layout(device, layout, allocator);
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL tracked_create_descriptor_pool(VkDevice device,
+                                                                     const VkDescriptorPoolCreateInfo* info,
+                                                                     const VkAllocationCallbacks* allocator,
+                                                                     VkDescriptorPool* pool)
+{
+    VkResult result = g_tracking.create_descriptor_pool(device, info, allocator, pool);
+    if (result == VK_SUCCESS && g_tracking.current != nullptr)
+    {
+        g_tracking.current->descriptor_pools.push_back(*pool);
+    }
+    return result;
+}
+
+static VKAPI_ATTR void VKAPI_CALL tracked_destroy_descriptor_pool(VkDevice device, VkDescriptorPool pool,
+                                                                  const VkAllocationCallbacks* allocator)
+{
+    if (g_tracking.current != nullptr)
+    {
+        forget_descriptor_pool(&g_tracking.current->descriptor_pools, pool);
+    }
+    g_tracking.destroy_descriptor_pool(device, pool, allocator);
+}
+
+// Also called during a frame (the 1.1 path makes a render pass for a new
+// output format on first use): shader_chain_load reserved room, so this
+// doesn't allocate in the frame loop.
+static VKAPI_ATTR VkResult VKAPI_CALL tracked_create_render_pass(VkDevice device, const VkRenderPassCreateInfo* info,
+                                                                 const VkAllocationCallbacks* allocator,
+                                                                 VkRenderPass* render_pass)
+{
+    VkResult result = g_tracking.create_render_pass(device, info, allocator, render_pass);
+    if (result == VK_SUCCESS && g_tracking.current != nullptr)
+    {
+        g_tracking.current->render_passes.push_back(*render_pass);
+    }
+    return result;
+}
+
+static VKAPI_ATTR void VKAPI_CALL tracked_destroy_render_pass(VkDevice device, VkRenderPass render_pass,
+                                                              const VkAllocationCallbacks* allocator)
+{
+    if (g_tracking.current != nullptr)
+    {
+        forget_render_pass(&g_tracking.current->render_passes, render_pass);
+    }
+    g_tracking.destroy_render_pass(device, render_pass, allocator);
+}
+
+// librashader's vkGetDeviceProcAddr: the real function, except our wrappers
+// for the tracked objects (the real one is stored for the wrapper to call).
+static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL tracking_get_device_proc_addr(VkDevice device, const char* name)
+{
+    PFN_vkVoidFunction real = g_tracking.get_device_proc_addr(device, name);
+    if (real == nullptr)
+    {
+        return nullptr;
+    }
+    std::string_view wanted = name;
+    if (wanted == "vkCreatePipelineLayout")
+    {
+        g_tracking.create_pipeline_layout = reinterpret_cast<PFN_vkCreatePipelineLayout>(real);
+        return reinterpret_cast<PFN_vkVoidFunction>(tracked_create_pipeline_layout);
+    }
+    if (wanted == "vkDestroyPipelineLayout")
+    {
+        g_tracking.destroy_pipeline_layout = reinterpret_cast<PFN_vkDestroyPipelineLayout>(real);
+        return reinterpret_cast<PFN_vkVoidFunction>(tracked_destroy_pipeline_layout);
+    }
+    if (wanted == "vkCreateDescriptorSetLayout")
+    {
+        g_tracking.create_descriptor_set_layout = reinterpret_cast<PFN_vkCreateDescriptorSetLayout>(real);
+        return reinterpret_cast<PFN_vkVoidFunction>(tracked_create_descriptor_set_layout);
+    }
+    if (wanted == "vkDestroyDescriptorSetLayout")
+    {
+        g_tracking.destroy_descriptor_set_layout = reinterpret_cast<PFN_vkDestroyDescriptorSetLayout>(real);
+        return reinterpret_cast<PFN_vkVoidFunction>(tracked_destroy_descriptor_set_layout);
+    }
+    if (wanted == "vkCreateDescriptorPool")
+    {
+        g_tracking.create_descriptor_pool = reinterpret_cast<PFN_vkCreateDescriptorPool>(real);
+        return reinterpret_cast<PFN_vkVoidFunction>(tracked_create_descriptor_pool);
+    }
+    if (wanted == "vkDestroyDescriptorPool")
+    {
+        g_tracking.destroy_descriptor_pool = reinterpret_cast<PFN_vkDestroyDescriptorPool>(real);
+        return reinterpret_cast<PFN_vkVoidFunction>(tracked_destroy_descriptor_pool);
+    }
+    if (wanted == "vkCreateRenderPass")
+    {
+        g_tracking.create_render_pass = reinterpret_cast<PFN_vkCreateRenderPass>(real);
+        return reinterpret_cast<PFN_vkVoidFunction>(tracked_create_render_pass);
+    }
+    if (wanted == "vkDestroyRenderPass")
+    {
+        g_tracking.destroy_render_pass = reinterpret_cast<PFN_vkDestroyRenderPass>(real);
+        return reinterpret_cast<PFN_vkVoidFunction>(tracked_destroy_render_pass);
+    }
+    return real;
+}
+
+// The `entry` librashader loads Vulkan through (libra_device_vk_t): the real
+// vkGetInstanceProcAddr, except vkGetDeviceProcAddr, which is ours. All its
+// device functions come through that one (ash loads them that way).
+static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL tracking_get_instance_proc_addr(VkInstance instance, const char* name)
+{
+    PFN_vkVoidFunction real = vkGetInstanceProcAddr(instance, name);
+    if (real != nullptr && std::string_view(name) == "vkGetDeviceProcAddr")
+    {
+        g_tracking.get_device_proc_addr = reinterpret_cast<PFN_vkGetDeviceProcAddr>(real);
+        return reinterpret_cast<PFN_vkVoidFunction>(tracking_get_device_proc_addr);
+    }
+    return real;
+}
+
+// Destroys what librashader left of a stage (the GPU must be idle). Pools
+// first: their sets were made with the set layouts. The lists only fill
+// through the wrappers, so the real destroy functions are there.
+static void destroy_leftovers(ShaderStageObjects* objects, const VulkanContext* context)
+{
+    size_t count = objects->descriptor_pools.size() + objects->pipeline_layouts.size() + objects->set_layouts.size() +
+                   objects->render_passes.size();
+    if (count == 0)
+    {
+        return;
+    }
+    if (!g_tracking.leak_logged)
+    {
+        SDL_LogInfo(SDL_LOG_CATEGORY_GPU,
+                    "librashader left %zu Vulkan objects of a filter chain: destroyed here (its bug, fixed after 0.12.1)",
+                    count);
+        g_tracking.leak_logged = true;
+    }
+    for (size_t i = 0; i < objects->descriptor_pools.size(); i++)
+    {
+        g_tracking.destroy_descriptor_pool(context->device, objects->descriptor_pools[i], nullptr);
+    }
+    for (size_t i = 0; i < objects->pipeline_layouts.size(); i++)
+    {
+        g_tracking.destroy_pipeline_layout(context->device, objects->pipeline_layouts[i], nullptr);
+    }
+    for (size_t i = 0; i < objects->set_layouts.size(); i++)
+    {
+        g_tracking.destroy_descriptor_set_layout(context->device, objects->set_layouts[i], nullptr);
+    }
+    for (size_t i = 0; i < objects->render_passes.size(); i++)
+    {
+        g_tracking.destroy_render_pass(context->device, objects->render_passes[i], nullptr);
+    }
+    *objects = ShaderStageObjects{};
+}
+
+// Frees a stage's filter chain, then what it leaked. The GPU must be idle.
+static void free_stage_chain(ShaderStage* stage, const ShaderLibrary* library, const VulkanContext* context)
+{
+    if (stage->chain != nullptr && library->loaded)
+    {
+        begin_tracking(&stage->objects);
+        library->vk_filter_chain_free(&stage->chain);
+        end_tracking();
+    }
+    destroy_leftovers(&stage->objects, context);
+}
+
+// ---------------------------------------------------------------------------
 // Images
 // ---------------------------------------------------------------------------
 
@@ -261,11 +578,8 @@ void shader_chain_clear(ShaderChain* chain, const ShaderLibrary* library, const 
     if (target->chain != nullptr)
     {
         vkDeviceWaitIdle(context->device);   // earlier frames may still be running its passes
-        if (library->loaded)
-        {
-            library->vk_filter_chain_free(&target->chain);
-        }
     }
+    free_stage_chain(target, library, context);
     *target = ShaderStage{};
 }
 
@@ -278,10 +592,7 @@ void shader_chain_destroy(ShaderChain* chain, const ShaderLibrary* library, cons
     }
     for (uint32_t i = 0; i < SHADER_CHAIN_STAGES; i++)
     {
-        if (chain->stages[i].chain != nullptr && library->loaded)
-        {
-            library->vk_filter_chain_free(&chain->stages[i].chain);
-        }
+        free_stage_chain(&chain->stages[i], library, context);
     }
     destroy_image(&chain->input, context);
     destroy_image(&chain->middle, context);
@@ -315,7 +626,8 @@ bool shader_chain_load(ShaderChain* chain, const ShaderLibrary* library, const V
         // Ours. Creation submits uploads (lookup textures) on it; we call
         // this between frames on the main thread, so no submit of ours races it.
         .queue           = context->queue,
-        .entry           = vkGetInstanceProcAddr,
+        // Ours, to destroy what librashader leaks ("librashader's leaks").
+        .entry           = tracking_get_instance_proc_addr,
     };
     filter_chain_vk_opt_t options = {};
     options.version = SHADER_LIBRARY_API_VERSION;
@@ -330,7 +642,9 @@ bool shader_chain_load(ShaderChain* chain, const ShaderLibrary* library, const V
     // only when it's still there: libra_preset_free on a used-up preset
     // panics inside librashader (0.12.1, presets.rs: unwrap on None).
     libra_vk_filter_chain_t created = nullptr;
+    begin_tracking(&target->objects);
     error = library->vk_filter_chain_create(&preset, device, &options, &created);
+    end_tracking();
     if (preset != nullptr)
     {
         library->preset_free(&preset);
@@ -338,8 +652,16 @@ bool shader_chain_load(ShaderChain* chain, const ShaderLibrary* library, const V
     if (error != nullptr)
     {
         log_error(library, error, preset_path);
+        // A failed creation may have made some passes' objects already.
+        vkDeviceWaitIdle(context->device);
+        destroy_leftovers(&target->objects, context);
         return false;
     }
+    // Room for a render pass per pass made during frames (the 1.1 path makes
+    // one for the final pass's output format on first use), so recording them
+    // never allocates in the frame loop.
+    target->objects.render_passes.reserve(target->objects.render_passes.size() +
+                                          target->objects.pipeline_layouts.size());
     target->chain = created;
     target->preset_path = preset_path;
     target->failed_path.clear();
@@ -536,8 +858,10 @@ static void run_stage(ShaderStage* stage, const ShaderLibrary* library, VkComman
     frame_options.frame_direction = 1;
     frame_options.total_subframes = 1;
     frame_options.current_subframe = 1;
+    begin_tracking(&stage->objects);   // it may make a render pass (the 1.1 path, first frame)
     libra_error_t error = library->vk_filter_chain_frame(&stage->chain, command_buffer, stage->frame_count, input,
                                                          output, nullptr, nullptr, &frame_options);
+    end_tracking();
     if (error != nullptr)
     {
         // Logged and dropped: the image keeps old contents for this frame.

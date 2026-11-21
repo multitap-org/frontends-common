@@ -93,12 +93,25 @@ struct ShaderChainImage
 
 constexpr uint32_t SHADER_CHAIN_STAGES = 2;
 
+// Objects librashader made for one stage that it may never destroy itself
+// (librashader 0.12.1 leaks them; see "librashader's leaks" in
+// shader_chain.cpp). Recorded while librashader works for the stage; what is
+// still here after its free is destroyed by us.
+struct ShaderStageObjects
+{
+    std::vector<VkPipelineLayout>      pipeline_layouts;
+    std::vector<VkDescriptorSetLayout> set_layouts;
+    std::vector<VkDescriptorPool>      descriptor_pools;   // its descriptor sets go with it
+    std::vector<VkRenderPass>          render_passes;      // the 1.1 path only
+};
+
 struct ShaderStage
 {
     libra_vk_filter_chain_t chain = nullptr;
     std::string preset_path;     // the loaded preset ("" = none)
     std::string failed_path;     // the last preset that failed to load (not retried every frame)
     uint64_t frame_count = 0;    // frames rendered through it (shaders animate with it)
+    ShaderStageObjects objects;
 };
 
 struct ShaderChain
