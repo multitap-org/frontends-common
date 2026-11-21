@@ -2,6 +2,10 @@
 
 #include <SDL3/SDL.h>
 
+#if defined(SDL_PLATFORM_EMSCRIPTEN)
+#include <emscripten/html5.h>   // emscripten_vibrate: the browser's Vibration API
+#endif
+
 constexpr float    BUZZ_STRENGTH = 0.6f;
 constexpr uint32_t BUZZ_MS       = 20;
 
@@ -44,8 +48,14 @@ void haptics_close(Haptics* haptics)
 
 void haptics_buzz(const Haptics* haptics)
 {
+#if defined(SDL_PLATFORM_EMSCRIPTEN)
+    // In a browser: the Vibration API (Chrome on Android; elsewhere nothing).
+    (void)haptics;
+    emscripten_vibrate(static_cast<int>(BUZZ_MS));
+#else
     if (haptics->device != nullptr)
     {
         SDL_PlayHapticRumble(haptics->device, BUZZ_STRENGTH, BUZZ_MS);
     }
+#endif
 }

@@ -1,8 +1,8 @@
 #pragma once
 
 // VIBRATE ON PRESS (the touch pads of piccoletto and piccolo): a short buzz
-// from the phone's vibrator (SDL lists it as a haptic device on Android). On
-// the desktop there's none: nothing happens.
+// from the phone's vibrator (SDL lists it as a haptic device on Android; in a
+// browser, the Vibration API). On the desktop there's none: nothing happens.
 
 #include <cstdint>
 
