@@ -187,6 +187,7 @@ add_library(frontend_common STATIC
     viewport.cpp
     frame_delta.cpp
     state_delta.cpp
+    rewind_buffer.cpp
     video_texture.cpp
     video_output.cpp
     gl_context.cpp
@@ -491,6 +492,14 @@ if(MULTITAP_BUILD_TESTS)
     add_test(NAME frontend_state_delta COMMAND frontend_state_delta_test)
     set_tests_properties(frontend_state_delta PROPERTIES
                          PASS_REGULAR_EXPRESSION "state delta: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    add_executable(frontend_rewind_buffer_test tests/rewind_buffer_test.cpp)
+    target_link_libraries(frontend_rewind_buffer_test PRIVATE frontend_common)
+    multitap_set_project_flags(frontend_rewind_buffer_test)
+    add_test(NAME frontend_rewind_buffer COMMAND frontend_rewind_buffer_test)
+    set_tests_properties(frontend_rewind_buffer PROPERTIES
+                         PASS_REGULAR_EXPRESSION "rewind buffer: all checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
     add_executable(frontend_rate_control_test tests/rate_control_test.cpp)
