@@ -122,6 +122,7 @@ enum class InputAction
     hotkey_fast_forward,
     hotkey_grab_mouse,   // lets go of a grabbed mouse (or grabs it again)
     hotkey_ports,        // the frontend's ports board: who plays on which port, pads moved between them
+    hotkey_pause,        // pause / resume the game (the frontend's USER pause)
     hotkey_dvr,          // the rewind DVR (Backspace; no gamepad button by default)
     count,
 };
@@ -158,10 +159,11 @@ void input_sources_remove(InputSource* sources, uint32_t row);
 bool input_is_bound(const InputBindingSet* set, InputAction action, InputSource source);
 
 // The defaults for the keyboard (arrows, Z X A S Q W E R, Enter, Right Shift;
-// Escape goes back in the UI (Backspace is kept for rewind), F1 opens the
+// Escape goes back in the UI (Backspace is kept for rewind), F10 opens the
 // menu bar's first menu; the hotkey
 // modifier is Left Shift:
-// Shift + F1 quick menu, F2 save, F3 ports, F4 load, Escape menu, Space fast forward).
+// Shift + F1 quick menu, F2 save, F3 ports, F4 load, Escape menu, Space fast
+// forward, Enter pause).
 void input_default_keyboard_bindings(InputBindingSet* set);
 
 // The defaults for a gamepad, by position (the RetroPad's SNES layout: B
@@ -199,6 +201,10 @@ struct InputSettings
 {
     bool keyboard_shares_port1 = true;
     bool ui_active = false;   // the frontend's UI is up (a menu or a dialog): the INTERFACE layer
+    // With ui_active: the keyboard's hotkeys fire without the modifier too
+    // (piccolo's MAIN MENU), except a key that is also one of its interface
+    // keys (Escape, Enter...): the interface keeps it. Gamepads still need it.
+    bool keyboard_hotkeys_free = false;
     uint64_t press_ms = 5000;   // binding: how long a control waits for a press before going on
     uint64_t hold_ms = 500;     // binding: how long a gamepad's control must be held to be taken
 };
@@ -548,3 +554,9 @@ void input_swap_ports(InputSystem* system, uint32_t a, uint32_t b);
 // and what every action says. Call once per frame, then
 // input_devices_end_frame(&system->devices).
 void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame);
+
+// Everything held now is ignored until let go, by every controller (the
+// frontend changed what has the input: the key that did it, or anything
+// held meanwhile, must not act in what comes next). A turned-on modifier
+// (ONE HOTKEY / STAYS ON) turns off too.
+void input_hold_until_released(InputSystem* system);

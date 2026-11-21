@@ -54,6 +54,9 @@
 //               ("beacon.get-piccolo.app", "host:port", "[v6]:port"); UDP first,
 //               then WebRTC through its signaling (wss://<name>/signal, or a
 //               full ws:// / wss:// URL given as SERVER is used for signaling)
+//               With --listen it also prints the pair link; --pair LINK CODE
+//               pairs across the internet with the host that link names
+//               (its beacon, else --beacon, else the default one)
 //   --forget N  forget paired host N (0 = the first) here only, without connecting
 //   --dir DIR   where net_probe keeps its device key and paired devices
 //               (net_probe_identity.cfg, net_probe_devices.cfg; default ".")
@@ -92,6 +95,7 @@
 #include "net_client.h"
 #include "net_content.h"
 #include "net_link.h"
+#include "net_pair_link.h"
 #include "net_service.h"
 #include "net_settings.h"
 #include "net_share_link.h"
@@ -184,6 +188,7 @@ static int run_listener(uint16_t port, const char* name, const std::string* dir,
         {
             std::printf("signaling at %s (browsers, WebRTC)\n", net_signal_url(beacon).c_str());
         }
+        std::printf("pair link: %s\n", net_pair_link(identity.public_key, beacon).c_str());
     }
     NetBeaconStatus beacon_status = NetBeaconStatus::off;
     uint32_t answered = 0;
@@ -861,6 +866,19 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
     NetKeypair identity;
     NetAddress address;
     bool via_beacon = at[0] == '#';
+    // A pair link instead of an address: pairing across the internet.
+    uint8_t link_key[NET_KEY_SIZE];
+    std::string link_beacon;
+    bool via_link = code != nullptr && net_pair_link_parse(at, link_key, &link_beacon);
+    if (via_link)
+    {
+        if (link_beacon.empty())
+        {
+            link_beacon = beacon != nullptr ? beacon : NET_BEACON_DEFAULT_SERVER;
+        }
+        beacon = link_beacon.c_str();
+        via_beacon = true;
+    }
     if (!load_identity(dir, &identity) || (!via_beacon && !net_address_from_text(at, port, &address)))
     {
         return 1;
@@ -877,14 +895,22 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
     {
         NetAddress servers[NET_BEACON_MAX_SERVERS];
         uint32_t count = net_address_resolve(beacon, NET_BEACON_DEFAULT_PORT, servers);
-        uint32_t device = static_cast<uint32_t>(std::atoi(at + 1));
         net_client_set_signal(client, net_signal_url(beacon).c_str(), net_signal_stun(beacon).c_str());
-        if (device < client->trust.devices.size())
+        if (via_link)
         {
-            std::printf("meeting \"%s\" through the beacon (%u address(es))\n",
-                        client->trust.devices[device].name.c_str(), static_cast<unsigned>(count));
+            std::printf("pairing through the beacon %s (%u address(es))\n", beacon, static_cast<unsigned>(count));
+            started = net_client_pair_beacon(client, servers, count, link_key, code);
         }
-        started = net_client_connect_beacon(client, servers, count, device);
+        else
+        {
+            uint32_t device = static_cast<uint32_t>(std::atoi(at + 1));
+            if (device < client->trust.devices.size())
+            {
+                std::printf("meeting \"%s\" through the beacon (%u address(es))\n",
+                            client->trust.devices[device].name.c_str(), static_cast<unsigned>(count));
+            }
+            started = net_client_connect_beacon(client, servers, count, device);
+        }
     }
     else if (started)
     {
