@@ -195,6 +195,9 @@ add_library(frontend_common STATIC
     app_paths.cpp
     viewport.cpp
     frame_delta.cpp
+    state_delta.cpp
+    rewind_buffer.cpp
+    rewind_recorder.cpp
     video_texture.cpp
     video_output.cpp
     gl_context.cpp
@@ -507,6 +510,30 @@ if(MULTITAP_BUILD_TESTS)
     set_tests_properties(frontend_frame_delta PROPERTIES
                          PASS_REGULAR_EXPRESSION "frame delta: all checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    add_executable(frontend_state_delta_test tests/state_delta_test.cpp)
+    target_link_libraries(frontend_state_delta_test PRIVATE frontend_common)
+    multitap_set_project_flags(frontend_state_delta_test)
+    add_test(NAME frontend_state_delta COMMAND frontend_state_delta_test)
+    set_tests_properties(frontend_state_delta PROPERTIES
+                         PASS_REGULAR_EXPRESSION "state delta: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    add_executable(frontend_rewind_buffer_test tests/rewind_buffer_test.cpp)
+    target_link_libraries(frontend_rewind_buffer_test PRIVATE frontend_common)
+    multitap_set_project_flags(frontend_rewind_buffer_test)
+    add_test(NAME frontend_rewind_buffer COMMAND frontend_rewind_buffer_test)
+    set_tests_properties(frontend_rewind_buffer PROPERTIES
+                         PASS_REGULAR_EXPRESSION "rewind buffer: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    add_executable(frontend_rewind_recorder_test tests/rewind_recorder_test.cpp)
+    target_link_libraries(frontend_rewind_recorder_test PRIVATE frontend_common)
+    multitap_set_project_flags(frontend_rewind_recorder_test)
+    add_test(NAME frontend_rewind_recorder COMMAND frontend_rewind_recorder_test)
+    set_tests_properties(frontend_rewind_recorder PROPERTIES
+                         PASS_REGULAR_EXPRESSION "rewind recorder: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:|ThreadSanitizer")
 
     add_executable(frontend_rate_control_test tests/rate_control_test.cpp)
     target_link_libraries(frontend_rate_control_test PRIVATE frontend_common)
