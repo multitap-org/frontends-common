@@ -151,6 +151,14 @@ if(MULTITAP_HAVE_ENET AND NOT EMSCRIPTEN AND EXISTS "${MULTITAP_LIBDATACHANNEL}/
         add_subdirectory("${MULTITAP_LIBDATACHANNEL}" "${CMAKE_BINARY_DIR}/deps/libdatachannel" EXCLUDE_FROM_ALL)
     endif()
 endif()
+# In the browser WebRTC is the browser's own (net_rtc_emscripten.cpp +
+# net_webrtc.js). frontend_net adds the JS library to whatever links it; the
+# path is also exported, for a frontend that links it some other way.
+set(MULTITAP_HAVE_WEBRTC_JS OFF)
+if(MULTITAP_HAVE_ENET AND EMSCRIPTEN)
+    set(MULTITAP_HAVE_WEBRTC_JS ON)
+    set(MULTITAP_NET_WEBRTC_JS "${CMAKE_CURRENT_SOURCE_DIR}/net_webrtc.js" CACHE INTERNAL "net_webrtc.js (Emscripten)")
+endif()
 
 # As a subproject it builds only `beacon_wire`; with the tests on Linux also
 # the server itself (beacon_core, the `beacon` binary), which the network
@@ -325,6 +333,7 @@ if(MULTITAP_HAVE_ENET)
         net_cpace.cpp
         net_trust.cpp
         net_pairing.cpp
+        net_pair_link.cpp
         net_access.cpp
         net_client.cpp
         net_content.cpp
@@ -347,6 +356,10 @@ if(MULTITAP_HAVE_ENET)
     if(MULTITAP_HAVE_RTC)
         target_sources(frontend_net PRIVATE net_rtc_datachannel.cpp net_signal.cpp)
         target_link_libraries(frontend_net PRIVATE datachannel-static)
+    elseif(MULTITAP_HAVE_WEBRTC_JS)
+        target_sources(frontend_net PRIVATE net_rtc_emscripten.cpp net_signal.cpp)
+        target_link_options(frontend_net INTERFACE "--js-library=${MULTITAP_NET_WEBRTC_JS}")
+        set_property(TARGET frontend_net APPEND PROPERTY INTERFACE_LINK_DEPENDS "${MULTITAP_NET_WEBRTC_JS}")
     else()
         target_sources(frontend_net PRIVATE net_rtc_none.cpp net_signal.cpp)
     endif()
@@ -572,6 +585,22 @@ if(MULTITAP_BUILD_TESTS)
     endif()
 endif()
 
+# WebRTC in the browser (Emscripten only, MULTITAP_WEB_TESTS=ON): a page that
+# runs net_rtc_emscripten.cpp + net_webrtc.js, and the signaling flow against
+# a beacon run natively. Opened by hand or by a driven browser
+# (tests/web/serve.py serves it with the headers threads need).
+option(MULTITAP_WEB_TESTS "Emscripten: build the browser test page for WebRTC" OFF)
+if(EMSCRIPTEN AND MULTITAP_WEB_TESTS AND MULTITAP_HAVE_WEBRTC_JS)
+    add_executable(frontend_net_web_test tests/net_web_test.cpp)
+    target_link_libraries(frontend_net_web_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_net_web_test)
+    target_link_options(frontend_net_web_test PRIVATE -pthread -sPROXY_TO_PTHREAD -sPTHREAD_POOL_SIZE=2
+                        -sEXIT_RUNTIME -sINITIAL_MEMORY=64mb -sSTACK_SIZE=1mb -sDEFAULT_PTHREAD_STACK_SIZE=1mb)
+    add_custom_command(TARGET frontend_net_web_test POST_BUILD
+                       COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/tests/web/net_web_test.html"
+                               "$<TARGET_FILE_DIR:frontend_net_web_test>/net_web_test.html")
+endif()
+
 if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
     # Discovery packets, then a listener and a client over loopback.
     add_executable(frontend_net_test tests/net_test.cpp)
@@ -605,6 +634,14 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
         set_tests_properties(frontend_net_rtc PROPERTIES
                              PASS_REGULAR_EXPRESSION "net rtc: all checks passed"
                              FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    endif()
+
+    # The native half of the mixed browser test (tests/net_web_test.cpp "host":
+    # a libdatachannel host the page meets). Run by hand, not by ctest.
+    if(MULTITAP_HAVE_RTC)
+        add_executable(frontend_net_web_host tests/net_web_test.cpp)
+        target_link_libraries(frontend_net_web_host PRIVATE frontend_net)
+        multitap_set_project_flags(frontend_net_web_host)
     endif()
 
     # WebRTC through the beacon's signaling: the real `beacon` binary runs

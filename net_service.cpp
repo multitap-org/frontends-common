@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "host_log.h"
+#include "net_rtc.h"
 
 // One poll: everything NetAccess has for us, copied into the queue.
 static void poll_once(NetService* service)
@@ -231,6 +232,10 @@ void net_service_set_beacon(NetService* service, const char* server)
         net_access_set_signal(&service->access, net_signal_url(text.c_str()).c_str(), net_signal_stun(text.c_str()).c_str());
     }
     service->lock.unlock();
+    if (net_rtc_only())
+    {
+        return;   // the browser: no UDP, so no beacon registration to look up (signaling only)
+    }
     service->resolver = std::thread(resolve_beacon, service, generation, text);
 }
 
