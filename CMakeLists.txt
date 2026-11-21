@@ -219,6 +219,16 @@ else()
     target_sources(frontend_common PRIVATE vulkan_none.cpp app_shell_vulkan_none.cpp debug_ui_vulkan_none.cpp)
 endif()
 
+# Who drives the loop and where the frontend's folder lives (app_loop.h,
+# app_storage.h): the browser's own versions under Emscripten; the page's half
+# is in web/ (multitap-page.js, multitap-storage.js, sw.js), which a frontend's
+# web package copies next to its page.
+if(EMSCRIPTEN)
+    target_sources(frontend_common PRIVATE app_loop_web.cpp app_storage_web.cpp)
+else()
+    target_sources(frontend_common PRIVATE app_loop.cpp app_storage.cpp)
+endif()
+
 # GameMode (deps/gamemode, BSD-3-Clause): only its client header, which
 # loads libgamemode at run time (nothing linked). Linux only; elsewhere a
 # stub, chosen here instead of #if in the code. (The Android build says
