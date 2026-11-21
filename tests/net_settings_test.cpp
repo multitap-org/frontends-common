@@ -10,6 +10,7 @@
 
 #include "localization.h"
 #include "net_link.h"
+#include "net_pairing.h"   // net_message_required_access
 #include "net_settings.h"
 #include "settings.h"
 
@@ -171,6 +172,10 @@ static void test_messages()
           "device_port read");
     size = net_settings_write_devices_request(out, sizeof(out), 4);
     check(net_settings_read_devices_request(out, size, &id) && id == 4, "devices_request read");
+    size = net_settings_write_devices_watch(out, sizeof(out), 6);
+    check(net_settings_read_devices_watch(out, size, &id) && id == 6, "devices_watch read");
+    check(!net_settings_read_devices_request(out, size, &id), "devices_watch isn't devices_request");
+    check(net_message_required_access(out[0]) == NetAccessLevel::gamepad, "devices_watch: any level");
 
     bool pressed = false;
     size = net_settings_write_action(out, sizeof(out), "fast_forward", true);

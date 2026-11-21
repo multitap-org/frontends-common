@@ -59,8 +59,9 @@ const char* app_paths_home_folder();
 
 // Other storage the user can browse, as folders: on Android the SD cards and
 // USB drives mounted now (/storage/XXXX-XXXX; readable with storage access),
-// read again at every call so a drive plugged in later shows up. Empty on
-// desktop (and when nothing is mounted or readable).
+// on Windows the drives (C:/, D:/... the ones ready); read again at every call
+// so a drive plugged in later shows up. Empty on other desktops (and when
+// nothing is mounted or readable).
 void app_paths_storage_volumes(std::vector<std::string>* volumes);
 
 // --- The pieces of app_paths_init, separate so they can be tested ---------

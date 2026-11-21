@@ -180,6 +180,7 @@ add_library(frontend_common STATIC
     text_input.cpp
     app_shell.cpp
     audio_output.cpp
+    haptics.cpp
     frame_timing.cpp
     settings_file.cpp
     settings.cpp

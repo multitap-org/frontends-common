@@ -471,6 +471,20 @@ bool net_settings_read_devices_request(const uint8_t* data, size_t size, uint32_
     return net_wire_done(&reader);
 }
 
+size_t net_settings_write_devices_watch(uint8_t* out, size_t capacity, uint32_t id)
+{
+    NetWriter writer = writer_begin(out, capacity, NetSettingsMessage::devices_watch);
+    net_wire_put_u32(&writer, id);
+    return writer_end(&writer);
+}
+
+bool net_settings_read_devices_watch(const uint8_t* data, size_t size, uint32_t* id)
+{
+    NetReader reader = reader_begin(data, size, NetSettingsMessage::devices_watch);
+    *id = net_wire_get_u32(&reader);
+    return net_wire_done(&reader);
+}
+
 size_t net_settings_write_devices(uint8_t* out, size_t capacity, uint32_t id, const std::vector<NetDevice>* devices)
 {
     if (devices->size() > UINT16_MAX)

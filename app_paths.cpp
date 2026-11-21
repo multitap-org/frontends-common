@@ -7,6 +7,10 @@
 #include "host_fs.h"
 #include "settings_file.h"
 
+#if defined(_WIN32)
+#include <windows.h>   // GetLogicalDrives (the drives, in app_paths_storage_volumes)
+#endif
+
 static bool is_separator(char c)
 {
     return c == '/' || c == '\\';
@@ -180,6 +184,22 @@ void app_paths_storage_volumes(std::vector<std::string>* volumes)
         }
     }
     SDL_free(names);
+#elif defined(_WIN32)
+    // Windows: the drives ("C:/", "D:/"...), the ones ready now (an empty
+    // card reader or DVD drive isn't a folder).
+    DWORD drives = GetLogicalDrives();
+    for (int letter = 0; letter < 26; letter++)
+    {
+        if ((drives & (1u << letter)) == 0)
+        {
+            continue;
+        }
+        char path[4] = {static_cast<char>('A' + letter), ':', '/', '\0'};
+        if (host_fs_is_directory(path))
+        {
+            volumes->push_back(path);
+        }
+    }
 #endif
 }
 
