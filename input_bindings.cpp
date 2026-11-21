@@ -23,7 +23,7 @@ static const char* const ACTION_NAMES[INPUT_ACTION_COUNT] = {
     "mouse.wheel_up", "mouse.wheel_down", "gun.reload", "gun.aux_a", "gun.aux_b", "gun.aux_c", "gun.start", "gun.select",
     "ui.up", "ui.down", "ui.left", "ui.right", "ui.accept", "ui.back", "ui.page_left", "ui.page_right", "ui.open_menu",
     "hotkey.enable", "hotkey.menu", "hotkey.quick_menu", "hotkey.save_state", "hotkey.load_state",
-    "hotkey.fast_forward", "hotkey.grab_mouse", "hotkey.ports",
+    "hotkey.fast_forward", "hotkey.grab_mouse", "hotkey.ports", "hotkey.pause",
 };
 
 static uint32_t index_of(InputAction action)
@@ -225,7 +225,7 @@ static InputSource key(uint16_t code)
 // HID usage ids for the defaults.
 constexpr uint16_t HID_A = 4, HID_E = 8, HID_Q = 20, HID_R = 21, HID_S = 22, HID_W = 26, HID_X = 27, HID_Z = 29;
 constexpr uint16_t HID_RETURN = 40, HID_ESCAPE = 41, HID_SPACE = 44;
-constexpr uint16_t HID_F1 = 58, HID_F2 = 59, HID_F3 = 60, HID_F4 = 61, HID_F11 = 68;
+constexpr uint16_t HID_F1 = 58, HID_F2 = 59, HID_F3 = 60, HID_F4 = 61, HID_F10 = 67, HID_F11 = 68;
 constexpr uint16_t HID_PAGE_UP = 75, HID_PAGE_DOWN = 78;
 constexpr uint16_t HID_RIGHT = 79, HID_LEFT = 80, HID_DOWN = 81, HID_UP = 82;
 constexpr uint16_t HID_RIGHT_SHIFT = 229;
@@ -259,7 +259,7 @@ void input_default_keyboard_bindings(InputBindingSet* set)
     input_bind(set, InputAction::ui_back, key(HID_ESCAPE));   // Backspace is kept for rewind
     input_bind(set, InputAction::ui_page_left, key(HID_PAGE_UP));
     input_bind(set, InputAction::ui_page_right, key(HID_PAGE_DOWN));
-    input_bind(set, InputAction::ui_open_menu, key(HID_F1));   // like the quick menu's hotkey (Shift + F1) in a game
+    input_bind(set, InputAction::ui_open_menu, key(HID_F10));   // the usual menu bar key (F1 is the quick menu's)
 
     // The modifier: Left Shift ("shift" to the HOTKEY layer; Right Shift is SELECT).
     input_bind(set, InputAction::hotkey_enable, key(HID_LEFT_SHIFT));
@@ -270,6 +270,7 @@ void input_default_keyboard_bindings(InputBindingSet* set)
     input_bind(set, InputAction::hotkey_fast_forward, key(HID_SPACE));
     input_bind(set, InputAction::hotkey_grab_mouse, key(HID_F11));
     input_bind(set, InputAction::hotkey_ports, key(HID_F3));
+    input_bind(set, InputAction::hotkey_pause, key(HID_RETURN));   // Shift + Enter (Enter alone is START)
 }
 
 static InputSource pad_button(InputButton b)
@@ -1247,6 +1248,33 @@ static bool game_only_hotkey(InputAction action)
            action == InputAction::hotkey_fast_forward;
 }
 
+// One of the hotkey's keys is also one of the controller's interface keys
+// (Escape is both MENU and BACK by default): with keyboard_hotkeys_free the
+// interface keeps it.
+static bool shares_interface_source(const InputController* controller, InputAction hotkey)
+{
+    const InputSource* sources = controller->bindings.sources[index_of(hotkey)];
+    for (uint32_t s = 0; s < INPUT_SOURCES_PER_ACTION; s++)
+    {
+        if (sources[s].type == InputSourceType::none)
+        {
+            continue;
+        }
+        for (uint32_t a = index_of(InputAction::ui_up); a <= index_of(InputAction::ui_open_menu); a++)
+        {
+            const InputSource* ui = controller->bindings.sources[a];
+            for (uint32_t t = 0; t < INPUT_SOURCES_PER_ACTION; t++)
+            {
+                if (ui[t].type != InputSourceType::none && input_source_equal(sources[s], ui[t]))
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 static bool modifier_active(InputController* controller, const bool* held, const bool* pressed, uint64_t now_ms)
 {
     uint32_t modifier = index_of(InputAction::hotkey_enable);
@@ -1729,6 +1757,21 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
                     frame->gamepad_held[a] = frame->gamepad_held[a] || held[a];
                 }
             }
+            // The keyboard's hotkeys without the modifier, where the frontend
+            // allows it; never a key the interface uses.
+            if (keyboard && system->settings.keyboard_hotkeys_free)
+            {
+                for (uint32_t a = modifier + 1; a < INPUT_ACTION_COUNT; a++)
+                {
+                    if (shares_interface_source(controller, static_cast<InputAction>(a)))
+                    {
+                        continue;
+                    }
+                    frame->held[a] = frame->held[a] || held[a];
+                    frame->pressed[a] = frame->pressed[a] || pressed[a];
+                    frame->keyboard_pressed[a] = frame->keyboard_pressed[a] || pressed[a];
+                }
+            }
             break;
         case InputLayer::game:
         {
@@ -1952,5 +1995,18 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         float mdy = cursor_dy[p] < -32767.0f ? -32767.0f : (cursor_dy[p] > 32767.0f ? 32767.0f : cursor_dy[p]);
         frame->mouse_dx[p] = static_cast<int16_t>(mdx);
         frame->mouse_dy[p] = static_cast<int16_t>(mdy);
+    }
+}
+
+void input_hold_until_released(InputSystem* system)
+{
+    for (size_t c = 0; c < system->controllers.size(); c++)
+    {
+        InputController* controller = &system->controllers[c];
+        for (uint32_t a = 0; a < INPUT_ACTION_COUNT; a++)
+        {
+            controller->held_at_switch[a] = controller->held_at_switch[a] || controller->held_last[a];
+        }
+        controller->modifier_on = false;
     }
 }

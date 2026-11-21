@@ -25,6 +25,7 @@ static void check(bool condition, const char* what)
 }
 
 constexpr uint32_t HID_Z = 29, HID_X = 27, HID_RETURN = 40, HID_F1 = 58, HID_F2 = 59, HID_UP = 82, HID_LEFT_SHIFT = 225;
+constexpr uint32_t HID_ESCAPE = 41, HID_F10 = 67;
 constexpr uint32_t PAD_BIT_B = 1u << 0, PAD_BIT_START = 1u << 3, PAD_BIT_A = 1u << 8;
 
 static InputSource button(InputButton b)
@@ -188,6 +189,70 @@ static void test_keyboard_join_and_play()
     input_devices_set_code(&system->devices, keyboard, HID_Z, true);
     frame(system, 192, &out);
     check((out.pad_buttons[0] & PAD_BIT_B) != 0, "keyboard: pressed again, it plays");
+    delete system;
+}
+
+// keyboard_hotkeys_free (piccolo's MAIN MENU): the keyboard's hotkeys
+// without Shift in the interface, except keys the interface uses; and
+// input_hold_until_released.
+static void test_keyboard_hotkeys_free()
+{
+    InputSystem* system = new InputSystem{};
+    uint32_t keyboard = input_devices_add(&system->devices, InputDeviceKind::keyboard, "keyboard", "Keyboard");
+    InputBindingSet keys = {};
+    input_default_keyboard_bindings(&keys);
+    input_add_controller(system, keyboard, "Keyboard", &keys);
+    InputFrame out = {};
+    system->settings.ui_active = true;
+    frame(system, 0, &out);
+
+    input_devices_set_code(&system->devices, keyboard, HID_F1, true);
+    frame(system, 16, &out);
+    check(!out.pressed[static_cast<uint32_t>(InputAction::hotkey_quick_menu)], "free: off, F1 alone is no hotkey in the UI");
+    input_devices_set_code(&system->devices, keyboard, HID_F1, false);
+    frame(system, 32, &out);
+
+    system->settings.keyboard_hotkeys_free = true;
+    input_devices_set_code(&system->devices, keyboard, HID_F1, true);
+    frame(system, 48, &out);
+    check(out.pressed[static_cast<uint32_t>(InputAction::hotkey_quick_menu)], "free: F1 alone is the quick menu");
+    check(!out.pressed[static_cast<uint32_t>(InputAction::ui_open_menu)], "free: F1 is no longer OPEN MENU");
+    input_devices_set_code(&system->devices, keyboard, HID_F1, false);
+    input_devices_set_code(&system->devices, keyboard, HID_F10, true);
+    frame(system, 64, &out);
+    check(out.pressed[static_cast<uint32_t>(InputAction::ui_open_menu)], "free: F10 is OPEN MENU");
+    input_devices_set_code(&system->devices, keyboard, HID_F10, false);
+    input_devices_set_code(&system->devices, keyboard, HID_ESCAPE, true);
+    frame(system, 80, &out);
+    check(out.pressed[static_cast<uint32_t>(InputAction::ui_back)] && !out.pressed[static_cast<uint32_t>(InputAction::hotkey_menu)],
+          "free: Escape stays BACK (the interface keeps its keys)");
+    input_devices_set_code(&system->devices, keyboard, HID_ESCAPE, false);
+    input_devices_set_code(&system->devices, keyboard, HID_RETURN, true);
+    frame(system, 96, &out);
+    check(out.pressed[static_cast<uint32_t>(InputAction::ui_accept)] && !out.pressed[static_cast<uint32_t>(InputAction::hotkey_pause)],
+          "free: Enter stays ACCEPT, not PAUSE");
+    input_devices_set_code(&system->devices, keyboard, HID_RETURN, false);
+    frame(system, 112, &out);
+    input_devices_set_code(&system->devices, keyboard, HID_LEFT_SHIFT, true);
+    input_devices_set_code(&system->devices, keyboard, HID_RETURN, true);
+    frame(system, 128, &out);
+    check(out.pressed[static_cast<uint32_t>(InputAction::hotkey_pause)], "free: Shift + Enter is PAUSE");
+    input_devices_set_code(&system->devices, keyboard, HID_LEFT_SHIFT, false);
+    input_devices_set_code(&system->devices, keyboard, HID_RETURN, false);
+    frame(system, 144, &out);
+
+    // Held across a change of what has the input: ignored until let go.
+    input_devices_set_code(&system->devices, keyboard, HID_UP, true);
+    frame(system, 160, &out);
+    check(out.held[static_cast<uint32_t>(InputAction::ui_up)], "hold: UP held drives the UI");
+    input_hold_until_released(system);
+    frame(system, 176, &out);
+    check(!out.held[static_cast<uint32_t>(InputAction::ui_up)], "hold: after the change it's ignored");
+    input_devices_set_code(&system->devices, keyboard, HID_UP, false);
+    frame(system, 192, &out);
+    input_devices_set_code(&system->devices, keyboard, HID_UP, true);
+    frame(system, 208, &out);
+    check(out.pressed[static_cast<uint32_t>(InputAction::ui_up)], "hold: pressed again, it counts");
     delete system;
 }
 
@@ -1318,6 +1383,7 @@ int main()
 {
     test_sources();
     test_keyboard_join_and_play();
+    test_keyboard_hotkeys_free();
     test_split_keyboard();
     test_shared_port_and_reconnects();
     test_gamepad_hotkeys();
