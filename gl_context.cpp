@@ -96,11 +96,16 @@ static const char* COPY_VERTEX_SHADER =
     "    gl_Position = vec4(a_position * 2.0 - 1.0, 0.0, 1.0);\n"
     "}\n";
 
-// mediump: the Tegra 4 computes highp and mediump alike (fp20) and texture
-// coordinates must be mediump there; it holds 0..1 coordinates of textures
-// up to ~2048 texels exactly enough for nearest sampling.
+// highp where the GPU has it in fragment shaders: mediump is really 16-bit
+// on some GPUs (Mali with panfrost), only about 1/2048 apart near 1.0, half a
+// texel of a 1024-wide texture, too close for nearest sampling. The Tegra 4
+// has no highp there (fp20 for both, enough for its textures), so mediump.
 static const char* COPY_FRAGMENT_SHADER =
+    "#ifdef GL_FRAGMENT_PRECISION_HIGH\n"
+    "precision highp float;\n"
+    "#else\n"
     "precision mediump float;\n"
+    "#endif\n"
     "uniform sampler2D u_texture;\n"
     "uniform float u_swap_red_blue;\n"
     "varying vec2 v_coord;\n"
