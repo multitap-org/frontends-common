@@ -195,6 +195,7 @@ add_library(frontend_common STATIC
     app_paths.cpp
     app_assets.cpp
     input_hold.cpp
+    shader_check.cpp
     viewport.cpp
     frame_delta.cpp
     state_delta.cpp
@@ -460,6 +461,14 @@ if(MULTITAP_BUILD_TESTS)
     add_test(NAME frontend_viewport COMMAND frontend_viewport_test)
     set_tests_properties(frontend_viewport PROPERTIES
                          FAIL_REGULAR_EXPRESSION "ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    # The slow shader check: a fast preset goes back to idle, a slow one asks.
+    add_executable(frontend_shader_check_test tests/shader_check_test.cpp)
+    target_link_libraries(frontend_shader_check_test PRIVATE frontend_common)
+    multitap_set_project_flags(frontend_shader_check_test)
+    add_test(NAME frontend_shader_check COMMAND frontend_shader_check_test)
+    set_tests_properties(frontend_shader_check PROPERTIES
+        FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
     add_executable(frontend_input_test tests/input_test.cpp)
     target_link_libraries(frontend_input_test PRIVATE frontend_common)
