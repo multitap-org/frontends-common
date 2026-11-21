@@ -26,6 +26,7 @@
 //   client -> host  devices_request   id u32
 //   host -> client  devices           id u32 | count u16 | count x device   (id 0 = sent unasked: it changed)
 //   client -> host  device_port       controller u32 | device u32 | port i8
+//   client -> host  devices_watch     id u32           (any level: devices, read only, again on changes)
 //
 //   setting = type u8 | flags u8 | page | subpage | section | label | help |
 //             min i32 | max i32 | step i32 | min_real | max_real | step_real |
@@ -61,6 +62,8 @@
 // device_port arrives: a stale pair is ignored and `devices` comes again).
 // device_port puts that controller on `port` only (-1 = on none: it joins
 // again with START), as the quick menu's CONTROLS does; nothing is saved.
+// devices_watch (type 23, GAMEPAD level) asks for the same list read only:
+// every device may show who plays where (the ports' tabs); moving takes FULL.
 //
 // Settings need FULL access (types 136-140). Actions are asked for and
 // triggered at GAMEPAD level (types 17-19); the host lists only the actions
@@ -83,6 +86,7 @@ enum class NetSettingsMessage : uint8_t
     controllers_request = 20,
     controllers = 21,
     port_device = 22,
+    devices_watch = 23,   // (GAMEPAD level: the list, read only)
     devices_request = 141,
     devices = 142,
     device_port = 143,
@@ -254,6 +258,8 @@ bool   net_settings_read_port_device(const uint8_t* data, size_t size, uint8_t* 
 
 size_t net_settings_write_devices_request(uint8_t* out, size_t capacity, uint32_t id);
 bool   net_settings_read_devices_request(const uint8_t* data, size_t size, uint32_t* id);
+size_t net_settings_write_devices_watch(uint8_t* out, size_t capacity, uint32_t id);
+bool   net_settings_read_devices_watch(const uint8_t* data, size_t size, uint32_t* id);
 size_t net_settings_write_devices(uint8_t* out, size_t capacity, uint32_t id, const std::vector<NetDevice>* devices);
 bool   net_settings_read_devices(const uint8_t* data, size_t size, uint32_t* id, std::vector<NetDevice>* devices);
 size_t net_settings_write_device_port(uint8_t* out, size_t capacity, uint32_t controller, uint32_t device, int8_t port);
