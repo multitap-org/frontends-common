@@ -122,6 +122,7 @@ enum class InputAction
     hotkey_fast_forward,
     hotkey_grab_mouse,   // lets go of a grabbed mouse (or grabs it again)
     hotkey_ports,        // the frontend's ports board: who plays on which port, pads moved between them
+    hotkey_dvr,          // the rewind DVR (Backspace; no gamepad button by default)
     count,
 };
 
