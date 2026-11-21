@@ -92,13 +92,16 @@ static void test_messages()
     pause.key = "pause";
     pause.label = "PAUSE";
     pause.kind = NetActionKind::toggle;
-    pause.state = 1;
+    pause.state = NET_PAUSE_USER | NET_PAUSE_MENU;   // paused by a device and by a window on the host
     actions.push_back(pause);
     std::vector<NetAction> got;
     size = net_settings_write_actions(out, sizeof(out), 0, &actions);
     check(net_settings_read_actions(out, size, &id, &got) && id == 0 && got.size() == 2 && got[0].state == 3 &&
               got[1].kind == NetActionKind::toggle && got[1].label == "PAUSE",
           "actions_result read");
+    check((got[1].state & NET_PAUSE_USER) != 0 && (got[1].state & NET_PAUSE_MENU) != 0 &&
+              (got[1].state & NET_PAUSE_FOCUS) == 0,
+          "pause causes read");
     size = net_settings_write_actions_request(out, sizeof(out), 8, "en");
     check(net_settings_read_actions_request(out, size, &id, &language) && id == 8 && language == "en",
           "actions_request read");
