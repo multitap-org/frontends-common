@@ -25,3 +25,8 @@
 
 void vk_cmd_image_barriers(VkCommandBuffer command_buffer, VulkanPath path, PFN_vkCmdPipelineBarrier2 barrier2,
                            const VkImageMemoryBarrier2* barriers, uint32_t barrier_count);
+
+// One global memory barrier, same translation (e.g. a copy's writes made
+// available to the host before the CPU reads a buffer).
+void vk_cmd_memory_barrier(VkCommandBuffer command_buffer, VulkanPath path, PFN_vkCmdPipelineBarrier2 barrier2,
+                           const VkMemoryBarrier2* barrier);

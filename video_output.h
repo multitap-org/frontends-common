@@ -19,6 +19,13 @@
 //                            upload, before app_shell_present()
 //
 // Stages are loaded and changed between frames.
+//
+// Screen effects (screen_effect_params.h): the frontend sets this frame's
+// knobs with video_output_set_effect() before video_output_prepare(); when
+// they aren't at rest the picture goes through the screen effect pass
+// (screen_effect.h / gl_screen_effect.h) after the stages, before the UI.
+// The same pass makes GPU screenshots: video_output_request_capture(), then
+// video_output_take_capture() a few frames later.
 
 #include <cstdint>
 #include <string>
@@ -26,6 +33,8 @@
 #include "gl_picture.h"
 #include "gl_shader_chain.h"
 #include "picture.h"
+#include "screen_effect.h"
+#include "screen_effect_params.h"
 #include "shader_chain.h"
 #include "viewport.h"
 
@@ -36,10 +45,13 @@ struct VideoTexture;
 struct VideoOutput
 {
     bool shaded = false;   // this frame goes through the stages (set by video_output_prepare)
+    bool effect_on = false;   // this frame goes through the screen effect pass (set by video_output_prepare)
+    ScreenEffectParams effect = {};   // this frame's knobs (video_output_set_effect)
 
     // Vulkan, underneath (only video_output.cpp looks inside).
     ShaderChain chain   = {};
     Picture     picture = {};
+    ScreenEffect effect_pass = {};
     // OpenGL ES: our own presets (gl_shader_chain.h), else the picture.
     bool          on_gl      = false;   // set by load_stage / prepare from the shell
     GlShaderChain gl_chain   = {};
@@ -71,6 +83,18 @@ bool video_output_shaded_available(const VideoOutput* output);
 // stage is empty or has no parameter by that name.
 bool video_output_set_param(VideoOutput* output, const ShaderLibrary* library, AppShell* shell, uint32_t stage,
                             const char* name, float value);
+
+// This frame's screen effect knobs (all at rest: none). Before video_output_prepare().
+void video_output_set_effect(VideoOutput* output, const ScreenEffectParams* params);
+
+// Asks for a GPU screenshot: the picture as shown (stages, crop, scale; no
+// UI, no effect), read back without stalling the GPU. False if one is
+// already on its way or this API can't. Taken from the next frame drawn.
+bool video_output_request_capture(VideoOutput* output);
+
+// The screenshot asked for, once it has been read back (the caller frees it
+// with video_capture_free). False while it isn't ready.
+bool video_output_take_capture(VideoOutput* output, VideoCapture* capture);
 
 // Decides what this frame draws: through the stages when there are any and
 // they can run, else plain. False: nothing to draw (no picture yet).

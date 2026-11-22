@@ -104,3 +104,34 @@ void vk_cmd_image_barriers(VkCommandBuffer command_buffer, VulkanPath path, PFN_
     }
     vkCmdPipelineBarrier(command_buffer, src, dst, 0, 0, nullptr, 0, nullptr, barrier_count, classic);
 }
+
+void vk_cmd_memory_barrier(VkCommandBuffer command_buffer, VulkanPath path, PFN_vkCmdPipelineBarrier2 barrier2,
+                           const VkMemoryBarrier2* barrier)
+{
+    if (path == VulkanPath::vulkan_1_3)
+    {
+        VkDependencyInfo dependency = {
+            .sType              = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .memoryBarrierCount = 1,
+            .pMemoryBarriers    = barrier,
+        };
+        barrier2(command_buffer, &dependency);
+        return;
+    }
+    VkMemoryBarrier classic = {
+        .sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .srcAccessMask = access_to_1_1(barrier->srcAccessMask),
+        .dstAccessMask = access_to_1_1(barrier->dstAccessMask),
+    };
+    VkPipelineStageFlags src = stages_to_1_1(barrier->srcStageMask);
+    VkPipelineStageFlags dst = stages_to_1_1(barrier->dstStageMask);
+    if (src == 0)
+    {
+        src = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    }
+    if (dst == 0)
+    {
+        dst = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    }
+    vkCmdPipelineBarrier(command_buffer, src, dst, 0, 1, &classic, 0, nullptr, 0, nullptr);
+}

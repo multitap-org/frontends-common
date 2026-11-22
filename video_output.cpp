@@ -56,8 +56,49 @@ bool video_output_set_param(VideoOutput* output, const ShaderLibrary* library, A
     return shader_chain_set_param(&output->chain, library, stage, name, value);
 }
 
-bool video_output_prepare(VideoOutput* output, AppShell* shell, const VideoTexture* source,
-                          const ViewportResult* viewport)
+void video_output_set_effect(VideoOutput* output, const ScreenEffectParams* params)
+{
+    output->effect = *params;
+}
+
+bool video_output_request_capture(VideoOutput* output)
+{
+    if (output->on_gl)
+    {
+        return false;
+    }
+    return screen_effect_request_capture(&output->effect_pass);
+}
+
+bool video_output_take_capture(VideoOutput* output, VideoCapture* capture)
+{
+    if (output->on_gl)
+    {
+        return false;
+    }
+    return screen_effect_capture_take(&output->effect_pass, capture);
+}
+
+// After the picture's own decision: the screen effect pass this frame when
+// there's an effect or a capture to take (and the pass can run).
+static void prepare_effect(VideoOutput* output, AppShell* shell, const ViewportResult* viewport)
+{
+    output->effect_on = false;
+    if (output->on_gl)
+    {
+        return;
+    }
+    bool capture = output->effect_pass.capture_state == ScreenEffectCaptureState::requested;
+    if (screen_effect_params_at_rest(&output->effect) && !capture)
+    {
+        output->effect_pass.ready = false;
+        return;
+    }
+    output->effect_on = screen_effect_prepare(&output->effect_pass, &shell->vulkan, viewport);
+}
+
+static bool prepare_picture(VideoOutput* output, AppShell* shell, const VideoTexture* source,
+                            const ViewportResult* viewport)
 {
     if (shell->api == GpuApi::gl)
     {
@@ -80,9 +121,24 @@ bool video_output_prepare(VideoOutput* output, AppShell* shell, const VideoTextu
     return picture_prepare(&output->picture, &shell->vulkan, &source->vulkan, viewport);
 }
 
+bool video_output_prepare(VideoOutput* output, AppShell* shell, const VideoTexture* source,
+                          const ViewportResult* viewport)
+{
+    if (!prepare_picture(output, shell, source, viewport))
+    {
+        output->effect_on = false;
+        output->effect_pass.ready = false;
+        return false;
+    }
+    prepare_effect(output, shell, viewport);
+    return true;
+}
+
 void video_output_skip(VideoOutput* output)
 {
     output->shaded = false;
+    output->effect_on = false;
+    output->effect_pass.ready = false;
     output->chain.ready = false;
     output->picture.ready = false;
     output->gl_picture.ready = false;
@@ -102,6 +158,10 @@ void video_output_draw(const VideoOutput* output, ImDrawList* draw_list, const V
         {
             gl_picture_draw(&output->gl_picture, draw_list, &source->gl, origin_x, origin_y);
         }
+    }
+    else if (output->effect_on)
+    {
+        screen_effect_draw(&output->effect_pass, draw_list, origin_x, origin_y);
     }
     else if (output->shaded)
     {
@@ -126,6 +186,38 @@ void video_output_record(VideoOutput* output, const ShaderLibrary* library, AppS
     VkCommandBuffer command_buffer = renderer_command_buffer(&shell->renderer);
     picture_record(&output->picture, command_buffer, &source->vulkan);
     shader_chain_record(&output->chain, library, command_buffer, &source->vulkan);
+    screen_effect_collect(&output->effect_pass, &shell->vulkan);
+    if (!output->effect_on)
+    {
+        return;
+    }
+    // What the picture would have drawn, sampled the same way. Each one's
+    // last barrier left it readable by fragment shaders.
+    ScreenEffectSource effect_source = {};
+    if (output->shaded && output->chain.output.view != VK_NULL_HANDLE)
+    {
+        effect_source.view = output->chain.output.view;   // already the picture's size
+    }
+    else if (!output->shaded && output->picture.use_copy && output->picture.view != VK_NULL_HANDLE)
+    {
+        effect_source.view = output->picture.view;
+        effect_source.linear = true;
+    }
+    else
+    {
+        // The shown part of the core's (bigger) texture.
+        const ViewportResult* viewport = &output->effect_pass.viewport;
+        float capacity_width = static_cast<float>(source->vulkan.capacity_width);
+        float capacity_height = static_cast<float>(source->vulkan.capacity_height);
+        effect_source.view = source->vulkan.view;
+        effect_source.linear = viewport->filter != ViewportFilter::nearest;
+        effect_source.rect[0] = static_cast<float>(viewport->source_x) / capacity_width;
+        effect_source.rect[1] = static_cast<float>(viewport->source_y) / capacity_height;
+        effect_source.rect[2] = static_cast<float>(viewport->source_width) / capacity_width;
+        effect_source.rect[3] = static_cast<float>(viewport->source_height) / capacity_height;
+    }
+    screen_effect_record(&output->effect_pass, &shell->vulkan, command_buffer, renderer_frame_index(&shell->renderer),
+                         &effect_source, &output->effect);
 }
 
 bool video_output_stage0_result(const VideoOutput* output, uint64_t* imgui_id, uint32_t* width, uint32_t* height)
@@ -155,9 +247,11 @@ void video_output_destroy(VideoOutput* output, const ShaderLibrary* library, App
         gl_picture_destroy(&output->gl_picture, &shell->gl);
         gl_shader_chain_destroy(&output->gl_chain, &shell->gl);
         output->chain = ShaderChain{};   // never had a chain or images on GL
+        output->effect_pass = ScreenEffect{};
         output->shaded = false;
         return;
     }
+    screen_effect_destroy(&output->effect_pass, &shell->vulkan);
     picture_destroy(&output->picture, &shell->vulkan);
     shader_chain_destroy(&output->chain, library, &shell->vulkan);
     output->shaded = false;

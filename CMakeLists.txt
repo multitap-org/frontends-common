@@ -248,6 +248,7 @@ add_library(frontend_common STATIC
     rewind_recorder.cpp
     video_texture.cpp
     video_output.cpp
+    screen_effect_params.cpp
     gl_context.cpp
     gl_texture.cpp
     gl_picture.cpp
@@ -265,7 +266,7 @@ add_library(frontend_common STATIC
 )
 if(MULTITAP_GPU_VULKAN)
     target_sources(frontend_common PRIVATE vk_context.cpp vk_barrier.cpp vk_swapchain.cpp renderer.cpp vk_texture.cpp
-                   picture.cpp app_shell_vulkan.cpp debug_ui_vulkan.cpp)
+                   picture.cpp screen_effect.cpp app_shell_vulkan.cpp debug_ui_vulkan.cpp)
     target_link_libraries(frontend_common PUBLIC Vulkan::Vulkan)
 else()
     target_sources(frontend_common PRIVATE vulkan_none.cpp app_shell_vulkan_none.cpp debug_ui_vulkan_none.cpp)

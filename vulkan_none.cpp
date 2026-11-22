@@ -9,6 +9,7 @@
 
 #include "picture.h"
 #include "renderer.h"
+#include "screen_effect.h"
 #include "shader_chain.h"
 #include "vk_context.h"
 #include "vk_texture.h"
@@ -181,4 +182,56 @@ void shader_chain_record(ShaderChain* chain, const ShaderLibrary* library, VkCom
     static_cast<void>(library);
     static_cast<void>(command_buffer);
     static_cast<void>(source);
+}
+
+void screen_effect_destroy(ScreenEffect* effect, const VulkanContext* context)
+{
+    static_cast<void>(context);
+    *effect = ScreenEffect{};
+}
+
+bool screen_effect_prepare(ScreenEffect* effect, const VulkanContext* context, const ViewportResult* viewport)
+{
+    static_cast<void>(effect);
+    static_cast<void>(context);
+    static_cast<void>(viewport);
+    return false;
+}
+
+void screen_effect_draw(const ScreenEffect* effect, ImDrawList* draw_list, float origin_x, float origin_y)
+{
+    static_cast<void>(effect);
+    static_cast<void>(draw_list);
+    static_cast<void>(origin_x);
+    static_cast<void>(origin_y);
+}
+
+bool screen_effect_request_capture(ScreenEffect* effect)
+{
+    static_cast<void>(effect);
+    return false;
+}
+
+void screen_effect_collect(ScreenEffect* effect, const VulkanContext* context)
+{
+    static_cast<void>(effect);
+    static_cast<void>(context);
+}
+
+void screen_effect_record(ScreenEffect* effect, const VulkanContext* context, VkCommandBuffer command_buffer,
+                          uint32_t frame_index, const ScreenEffectSource* source, const ScreenEffectParams* params)
+{
+    static_cast<void>(effect);
+    static_cast<void>(context);
+    static_cast<void>(command_buffer);
+    static_cast<void>(frame_index);
+    static_cast<void>(source);
+    static_cast<void>(params);
+}
+
+bool screen_effect_capture_take(ScreenEffect* effect, VideoCapture* capture)
+{
+    static_cast<void>(effect);
+    static_cast<void>(capture);
+    return false;
 }
