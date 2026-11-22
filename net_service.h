@@ -88,7 +88,7 @@ struct NetService
     // thread should wait for it).
     std::thread    resolver;
     std::string    beacon_text;          // guarded by `lock`
-    // piccolo-share: OWNER devices' listings and copies, handled on the
+    // piccolo-share: SHARE devices' listings and copies, handled on the
     // thread (never queued for the frontend); guarded by `lock`.
     NetShareHost   share;
     uint32_t       beacon_generation = 0;   // guarded by `lock`: a newer set_beacon wins
@@ -116,7 +116,7 @@ void net_service_set_beacon(NetService* service, const char* server);
 // the next call. False when the queue is empty.
 bool net_service_next(NetService* service, NetAccessEvent* event);
 
-// Locked: the shared folders for OWNER devices (piccolo-share): the game
+// Locked: the shared folders for SHARE devices (piccolo-share): the game
 // folders, then SAVES and STATES ("" = not shared).
 void net_service_set_share_folders(NetService* service, const std::vector<std::string>* game_paths,
                                    const char* saves_path, const char* states_path);

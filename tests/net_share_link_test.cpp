@@ -1,6 +1,6 @@
 // Checks net_share_link.h over loopback: a frontend's client connection to
-// another piccolo (a net_service host) on its own thread. A wrong code is
-// refused, the right one pairs (as GAMEPAD: no listing), raised to OWNER it
+// another piccolo (a net_service host) on its own thread. It asks to pair and
+// pairs once the host types its code (as GAMEPAD: no listing), raised to SHARE it
 // lists and copies a file, and disconnecting ends it cleanly.
 //
 // Usage: frontend_net_share_link_test <scratch folder>
@@ -29,7 +29,7 @@ static void check(bool condition, const char* what)
     }
 }
 
-static bool g_pairing_failed = false;   // the host reported a failed attempt (its code changed)
+static std::string g_code;   // the code the client shows: the host's user types it
 
 // The host's frontend drains its queue, as piccolo's loop does.
 static void host_round(NetService* service)
@@ -38,9 +38,9 @@ static void host_round(NetService* service)
     NetAccessEvent event;
     while (net_service_next(service, &event))
     {
-        if (event.type == NetAccessEventType::pairing_failed)
+        if (event.type == NetAccessEventType::pairing_requested)
         {
-            g_pairing_failed = true;
+            net_access_answer_pairing(&service->access, event.peer, g_code.c_str(), NetAccessLevel::gamepad);
         }
     }
     net_service_unlock(service);
@@ -119,8 +119,6 @@ int main(int argc, char** argv)
     games.push_back(host_games);
     net_service_lock(service);
     net_service_set_share_folders(service, &games, "", "");
-    net_access_open_pairing(&service->access);
-    std::string code = service->access.code;
     uint16_t port = net_host_port(&service->access.session.host);
     net_service_unlock(service);
 
@@ -133,25 +131,10 @@ int main(int argc, char** argv)
     net_address_from_text("127.0.0.1", port, &address);
 
     NetShareLinkStatus status;
-    std::string wrong = code == "000000" ? "111111" : "000000";
-    net_share_link_connect(link, address, wrong.c_str());
-    wait_state(link, service, NetShareLinkState::ready, &status);
-    check(status.state == NetShareLinkState::idle && status.refusal == NetClientRefusal::wrong_code,
-          "a wrong code is refused");
-
-    // The host changes its code once it has counted the failure: wait for
-    // that before asking for a new one.
-    for (int i = 0; i < 400 && !g_pairing_failed; i++)
-    {
-        host_round(service);
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-    check(g_pairing_failed, "the host counted the failed attempt");
-    net_service_lock(service);
-    net_access_open_pairing(&service->access);   // a new code after the failure
-    code = service->access.code;
-    net_service_unlock(service);
-    net_share_link_connect(link, address, code.c_str());
+    char code[NET_PAIR_CODE_DIGITS + 1];
+    net_pair_code_generate(code);
+    g_code = code;
+    net_share_link_connect(link, address, code);
     check(wait_state(link, service, NetShareLinkState::ready, &status) == NetShareLinkState::ready &&
               status.host_name == "HOST PICCOLO" && status.access == NetAccessLevel::gamepad,
           "paired with the code, as GAMEPAD");
@@ -167,15 +150,15 @@ int main(int argc, char** argv)
     check(!wait_listing(link, service, &entries, &list_status, 100), "no listing at GAMEPAD");
 
     net_service_lock(service);
-    net_access_set_level(&service->access, 0, NetAccessLevel::owner);
+    net_access_set_level(&service->access, 0, NetAccessLevel::share);
     net_service_unlock(service);
-    for (int i = 0; i < 100 && status.access != NetAccessLevel::owner; i++)
+    for (int i = 0; i < 100 && status.access != NetAccessLevel::share; i++)
     {
         host_round(service);
         net_share_link_status(link, &status);
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    check(status.access == NetAccessLevel::owner, "told it's OWNER now");
+    check(status.access == NetAccessLevel::share, "told it's SHARE now");
     net_share_link_list(link, "");
     check(wait_listing(link, service, &entries, &list_status, 1000) && list_status == NetShareStatus::ok &&
               entries.size() == 1 && entries[0].name == "roms",

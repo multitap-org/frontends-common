@@ -1,7 +1,8 @@
 // Checks net_share_link.h across the internet, over loopback against the
 // real beacon server code: a piccolo paired on the LAN is reached again
 // through the beacon (net_share_link_connect_paired), and a new piccolo
-// pairs with the host's pair link and code (net_share_link_pair_link).
+// pairs across the internet with its own code, which the host's user types
+// in INVITE (net_access_invite, net_share_link_pair_beacon).
 // Linux only, like the server.
 //
 // Usage: frontend_net_share_link_beacon_test <scratch folder>
@@ -18,7 +19,6 @@
 #include "beacon_net.h"
 #include "beacon_server.h"
 #include "host_fs.h"
-#include "net_pair_link.h"
 #include "net_service.h"
 #include "net_share_link.h"
 
@@ -41,8 +41,10 @@ struct World
     NetService*  service = nullptr;
 };
 
+static std::string g_code;   // the code the client shows: the host's user types it
+
 // One round: the beacon answers what came, the host's frontend drains its
-// queue (as piccolo's loop does).
+// queue (as piccolo's loop does) and types the client's code at SHARE.
 static void pump(World* world)
 {
     uint64_t now = beacon_now_ms();
@@ -53,6 +55,10 @@ static void pump(World* world)
     NetAccessEvent event;
     while (net_service_next(world->service, &event))
     {
+        if (event.type == NetAccessEventType::pairing_requested)
+        {
+            net_access_answer_pairing(&world->service->access, event.peer, g_code.c_str(), NetAccessLevel::share);
+        }
     }
     net_service_unlock(world->service);
 }
@@ -151,8 +157,6 @@ int main(int argc, char** argv)
           "host started");
     net_service_set_beacon(world->service, beacon_name.c_str());
     net_service_lock(world->service);
-    net_access_open_pairing(&world->service->access);
-    std::string code = world->service->access.code;
     uint16_t port = net_host_port(&world->service->access.session.host);
     net_service_unlock(world->service);
     check(wait_registered(world), "the host registered with the beacon");
@@ -163,7 +167,10 @@ int main(int argc, char** argv)
     NetAddress address;
     net_address_from_text("127.0.0.1", port, &address);
     NetShareLinkStatus status;
-    net_share_link_connect(link, address, code.c_str());
+    char code[NET_PAIR_CODE_DIGITS + 1];
+    net_pair_code_generate(code);
+    g_code = code;
+    net_share_link_connect(link, address, code);
     check(wait_state(world, link, NetShareLinkState::ready, &status) == NetShareLinkState::ready, "paired on the LAN");
     check(status.paired.size() == 1 && status.paired[0] == "HOST PICCOLO", "the paired piccolo listed");
     net_share_link_disconnect(link);
@@ -185,24 +192,26 @@ int main(int argc, char** argv)
     }
     net_share_link_disconnect(link);
 
-    // A new piccolo pairs with the host's pair link and its code.
+    // A new piccolo pairs across the internet: the host's user types its code
+    // in INVITE, which waits in the code's pairing room.
     NetShareLink* second = new NetShareLink();
     check(net_share_link_start(second, &second_key, "SECOND PICCOLO", (base + "/second_hosts.cfg").c_str()),
           "second link started");
     net_share_link_set_beacon(second, beacon_name.c_str());
-    std::string pair_link = net_pair_link(host_key.public_key, beacon_name.c_str());
-    check(!net_share_link_pair_link(second, "https://get-piccolo.app/pair/#k=nope", "123456"), "a bad link is refused");
+    check(!net_share_link_pair_beacon(second, "123456"), "a code that isn't 9 digits is refused");
+    net_pair_code_generate(code);
+    g_code = code;
     net_service_lock(world->service);
-    net_access_open_pairing(&world->service->access);
-    code = world->service->access.code;
+    check(net_access_invite(&world->service->access, code), "the host invites with that code");
     net_service_unlock(world->service);
     check(wait_registered(world), "the host's pairing room registered");
     pump_for(world, 300);
-    check(net_share_link_pair_link(second, pair_link.c_str(), code.c_str()), "pairing with the link starts");
-    check(wait_state(world, second, NetShareLinkState::ready, &status) == NetShareLinkState::ready, "paired with the link");
+    check(net_share_link_pair_beacon(second, code), "pairing across the internet starts");
+    check(wait_state(world, second, NetShareLinkState::ready, &status) == NetShareLinkState::ready,
+          "paired across the internet");
     if (status.state != NetShareLinkState::ready)
     {
-        std::printf("link pairing: state %u refusal %u\n", static_cast<unsigned>(status.state),
+        std::printf("internet pairing: state %u refusal %u\n", static_cast<unsigned>(status.state),
                     static_cast<unsigned>(status.refusal));
     }
     check(status.paired.size() == 1, "the second piccolo lists its host");

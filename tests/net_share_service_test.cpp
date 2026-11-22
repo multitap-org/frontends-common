@@ -1,10 +1,10 @@
 // Checks piccolo-share end to end over loopback: a host whose network runs
 // on its own thread (net_service, with net_share_host) and a client
-// (NetClient + net_share_client) paired at OWNER. The client lists the
+// (NetClient + net_share_client) paired at SHARE. The client lists the
 // host's shared folders (roots with their kinds, a folder paged), gets a
 // file and puts one (byte for byte, on the files channel), copies wait while
 // the device streams, a busy host says so, and a device at FULL gets no
-// answer at all (NetAccess drops OWNER's messages).
+// answer at all (NetAccess drops SHARE's messages).
 //
 // Usage: frontend_net_share_service_test <scratch folder>
 // Exit code 0 = all checks passed. Each failure is printed.
@@ -205,7 +205,7 @@ int main(int argc, char** argv)
           "identities");
     NetTrust host_trust;
     net_trust_add(&host_trust, client_key.public_key, "CLIENT");
-    host_trust.devices[0].access = NetAccessLevel::owner;
+    host_trust.devices[0].access = NetAccessLevel::share;
     NetTrust client_trust;
     net_trust_add(&client_trust, host_key.public_key, "HOST");
     check(net_trust_save(&host_trust, host_devices.c_str()) && net_trust_save(&client_trust, client_hosts.c_str()),
@@ -238,7 +238,7 @@ int main(int argc, char** argv)
         client_round(&side, true);
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    check(side.ready && side.client->access == NetAccessLevel::owner, "connected at OWNER");
+    check(side.ready && side.client->access == NetAccessLevel::share, "connected at SHARE");
 
     // Listing.
     std::vector<NetShareEntry> entries;
@@ -310,9 +310,9 @@ int main(int argc, char** argv)
     check(wait_done(&side, &done, 20000) && done.status == NetShareStatus::ok && same_files(&host_game, &second),
           "and goes once it stops");
 
-    // At FULL, the host doesn't answer OWNER's messages at all.
+    // At STREAM, the host doesn't answer SHARE's messages at all.
     net_service_lock(side.service);
-    net_access_set_level(&side.service->access, 0, NetAccessLevel::full);
+    net_access_set_level(&side.service->access, 0, NetAccessLevel::stream);
     uint32_t dropped_before = side.service->access.dropped_by_access;
     net_service_unlock(side.service);
     for (int i = 0; i < 100; i++)
@@ -321,7 +321,7 @@ int main(int argc, char** argv)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     net_share_client_list(side.share, "");
-    check(!wait_listing(&side, &entries, &status), "no listing at FULL");
+    check(!wait_listing(&side, &entries, &status), "no listing at STREAM");
     net_service_lock(side.service);
     check(side.service->access.dropped_by_access > dropped_before, "the request was dropped by access");
     net_service_unlock(side.service);

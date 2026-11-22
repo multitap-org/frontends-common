@@ -842,6 +842,14 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
     set_tests_properties(frontend_net_share_link PROPERTIES
                          PASS_REGULAR_EXPRESSION "net share link: all checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    # The host link (net_pair_link.h): kept for links to come, checked here.
+    add_executable(frontend_net_pair_link_test tests/net_pair_link_test.cpp)
+    target_link_libraries(frontend_net_pair_link_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_net_pair_link_test)
+    add_test(NAME frontend_net_pair_link COMMAND frontend_net_pair_link_test)
+    set_tests_properties(frontend_net_pair_link PROPERTIES
+                         PASS_REGULAR_EXPRESSION "net pair link: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
     # SHARE across the internet: against the real beacon server code (Linux
     # only, like the server and frontend_net_beacon).
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
