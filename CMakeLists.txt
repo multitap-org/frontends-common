@@ -149,6 +149,13 @@ if(MULTITAP_HAVE_ENET AND NOT EMSCRIPTEN AND EXISTS "${MULTITAP_LIBDATACHANNEL}/
         set(NO_EXAMPLES ON CACHE BOOL "" FORCE)
         set(NO_TESTS ON CACHE BOOL "" FORCE)
         add_subdirectory("${MULTITAP_LIBDATACHANNEL}" "${CMAKE_BINARY_DIR}/deps/libdatachannel" EXCLUDE_FROM_ALL)
+        # v0.24.6's src/configuration.cpp uses std::transform without
+        # <algorithm>: libstdc++ brings it in through other headers, libc++
+        # (CLANGARM64) doesn't. Fixed upstream in 69bee9a7 (master only, not
+        # in v0.24.7); drop this once a release has it.
+        if(TARGET datachannel-static AND NOT MSVC)
+            target_compile_options(datachannel-static PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include algorithm>")
+        endif()
     endif()
 endif()
 # In the browser WebRTC is the browser's own (net_rtc_emscripten.cpp +
