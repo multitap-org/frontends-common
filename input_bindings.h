@@ -128,6 +128,7 @@ enum class InputAction
     // the frontend watches it held, on each controller, in the GAME layer too
     // (piccolo's HOLD START TO REMAP card; the game sees the button as well).
     hotkey_remap,        // START on gamepads, nothing on the keyboard
+    hotkey_screenshot,   // take a screenshot (F8; no gamepad button by default)
     count,
 };
 
