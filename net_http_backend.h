@@ -45,6 +45,11 @@ bool net_http_backend_init(const char* user_agent, char* description, size_t des
                            char* error, size_t error_size);
 void net_http_backend_shutdown();
 
+// POSTs `body` to `url` (http:// or https://, no redirects) and gives the
+// status; the response body is dropped. False (reason in `error`) without a
+// response. Called from any thread.
+bool net_http_backend_post(const char* url, const char* content_type, const uint8_t* body, size_t size,
+                           uint32_t* status, char* error, size_t error_size);
 // Downloads `url` (http:// or https://) into `transfer`. Called from any thread.
 NetHttpFetch net_http_backend_fetch(const char* url, NetHttpTransfer* transfer, char* error, size_t error_size);
 

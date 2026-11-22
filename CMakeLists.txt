@@ -403,6 +403,7 @@ if(MULTITAP_HAVE_ENET)
         net_trust.cpp
         net_pairing.cpp
         net_pair_link.cpp
+        net_guest.cpp
         net_access.cpp
         net_client.cpp
         net_content.cpp
@@ -843,6 +844,32 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
                          PASS_REGULAR_EXPRESSION "net share link: all checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
     # The host link (net_pair_link.h): kept for links to come, checked here.
+    add_executable(frontend_net_guest_test tests/net_guest_test.cpp)
+    target_link_libraries(frontend_net_guest_test PRIVATE frontend_net)
+    multitap_set_project_flags(frontend_net_guest_test)
+    add_test(NAME frontend_net_guest COMMAND frontend_net_guest_test)
+    set_tests_properties(frontend_net_guest PROPERTIES
+                         PASS_REGULAR_EXPRESSION "net guest: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    # Guest links end to end: the real `beacon` binary, a host and guests over
+    # UDP and WebRTC (and the card through net_http where it's built).
+    if(MULTITAP_HAVE_RTC AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(frontend_net_guest_link_test tests/net_guest_link_test.cpp)
+        target_link_libraries(frontend_net_guest_link_test PRIVATE frontend_net)
+        if(TARGET frontend_download)
+            target_link_libraries(frontend_net_guest_link_test PRIVATE frontend_download)
+            target_compile_definitions(frontend_net_guest_link_test PRIVATE MULTITAP_TEST_HTTP)
+        endif()
+        add_dependencies(frontend_net_guest_link_test beacon)
+        multitap_set_project_flags(frontend_net_guest_link_test)
+        add_test(NAME frontend_net_guest_link
+                 COMMAND frontend_net_guest_link_test $<TARGET_FILE:beacon> "${CMAKE_CURRENT_BINARY_DIR}/net_guest_link_test")
+        set_tests_properties(frontend_net_guest_link PROPERTIES
+                             PASS_REGULAR_EXPRESSION "net guest link: all checks passed"
+                             FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    endif()
+
     add_executable(frontend_net_pair_link_test tests/net_pair_link_test.cpp)
     target_link_libraries(frontend_net_pair_link_test PRIVATE frontend_net)
     multitap_set_project_flags(frontend_net_pair_link_test)

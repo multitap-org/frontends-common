@@ -1,7 +1,8 @@
 #pragma once
 
 // HTTP(S) downloads to a file, for the core downloader (and later anything
-// else a frontend fetches). Backends (net_http_backend.h): libcurl, the
+// else a frontend fetches); and one small POST (net_http_post: a guest link's
+// card to the beacon). Backends (net_http_backend.h): libcurl, the
 // system's, on Linux; WinHTTP on Windows; Android (JNI) later, behind this
 // same API. Only GET to a file: no uploads, no cookies, nothing kept between
 // downloads.
@@ -69,3 +70,10 @@ NetHttpState net_http_job_finish(NetHttpJob* job);
 // The same download on the calling thread (tools, tests, a worker thread of
 // the caller's own). False with the reason in `error`.
 bool net_http_download(const char* url, const char* path, int64_t max_bytes, char* error, size_t error_size);
+
+// POSTs `size` bytes of `body` to `url` (http:// or https://; redirects are
+// not followed) on the calling thread, with `content_type`, and gives the
+// HTTP status. The response's body is read and dropped. False (the reason in
+// `error`) when there was no response at all; any status is a response.
+bool net_http_post(const char* url, const char* content_type, const uint8_t* body, size_t size, uint32_t* status,
+                   char* error, size_t error_size);

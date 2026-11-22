@@ -54,6 +54,14 @@ struct HttpJni
     jmethodID stream_close          = nullptr;
     jclass    throwable_class       = nullptr;   // java.lang.Throwable
     jmethodID throwable_to_string   = nullptr;   // for the error text
+    // POST (net_http_backend_post).
+    jmethodID set_request_method    = nullptr;   // setRequestMethod(String)
+    jmethodID set_do_output         = nullptr;   // setDoOutput(boolean)
+    jmethodID set_fixed_length      = nullptr;   // setFixedLengthStreamingMode(int)
+    jmethodID get_output_stream     = nullptr;   // getOutputStream()
+    jclass    output_class          = nullptr;   // java.io.OutputStream
+    jmethodID output_write          = nullptr;   // write(byte[])
+    jmethodID output_close          = nullptr;
 };
 
 static HttpJni g_jni;
@@ -180,12 +188,21 @@ bool net_http_backend_init(const char* user_agent, char* description, size_t des
     g_jni.stream_read          = find_method(env, g_jni.stream_class, "read", "([B)I");
     g_jni.stream_close         = find_method(env, g_jni.stream_class, "close", "()V");
     g_jni.throwable_to_string  = find_method(env, g_jni.throwable_class, "toString", "()Ljava/lang/String;");
+    g_jni.output_class         = find_class(env, "java/io/OutputStream");
+    g_jni.set_request_method   = find_method(env, g_jni.connection_class, "setRequestMethod", "(Ljava/lang/String;)V");
+    g_jni.set_do_output        = find_method(env, g_jni.connection_class, "setDoOutput", "(Z)V");
+    g_jni.set_fixed_length     = find_method(env, g_jni.connection_class, "setFixedLengthStreamingMode", "(I)V");
+    g_jni.get_output_stream    = find_method(env, g_jni.connection_class, "getOutputStream", "()Ljava/io/OutputStream;");
+    g_jni.output_write         = find_method(env, g_jni.output_class, "write", "([B)V");
+    g_jni.output_close         = find_method(env, g_jni.output_class, "close", "()V");
 
     const jmethodID methods[] = {
         g_jni.url_new, g_jni.url_new_relative, g_jni.url_open, g_jni.url_get_protocol,
         g_jni.set_connect_timeout, g_jni.set_read_timeout, g_jni.set_follow_redirects, g_jni.set_request_property,
         g_jni.get_response_code, g_jni.get_header_field, g_jni.get_input_stream, g_jni.disconnect,
         g_jni.stream_read, g_jni.stream_close, g_jni.throwable_to_string,
+        g_jni.set_request_method, g_jni.set_do_output, g_jni.set_fixed_length, g_jni.get_output_stream,
+        g_jni.output_write, g_jni.output_close,
     };
     for (jmethodID method : methods)
     {
@@ -208,7 +225,7 @@ void net_http_backend_shutdown()
     if (env != nullptr)
     {
         const jclass classes[] = { g_jni.url_class, g_jni.connection_class, g_jni.stream_class,
-                                   g_jni.throwable_class };
+                                   g_jni.throwable_class, g_jni.output_class };
         for (jclass type : classes)
         {
             if (type != nullptr)
@@ -299,6 +316,74 @@ static jobject open_following_redirects(JNIEnv* env, const char* url_text, int32
         env->DeleteLocalRef(url);
         url = next;
     }
+}
+
+bool net_http_backend_post(const char* url, const char* content_type, const uint8_t* body, size_t size,
+                           uint32_t* status, char* error, size_t error_size)
+{
+    JNIEnv* env = jni_env();
+    if (env == nullptr)
+    {
+        std::snprintf(error, error_size, "no JNI environment (%s)", SDL_GetError());
+        return false;
+    }
+    if (size > 0x7fffffff || env->PushLocalFrame(LOCAL_FRAME_SIZE) != 0)
+    {
+        env->ExceptionClear();
+        std::snprintf(error, error_size, "can't post that");
+        return false;
+    }
+    bool ok = false;
+    jstring text = env->NewStringUTF(url);
+    jobject java_url = env->NewObject(g_jni.url_class, g_jni.url_new, text);
+    jobject connection = nullptr;
+    if (!threw(env, "bad URL", error, error_size))
+    {
+        connection = env->CallObjectMethod(java_url, g_jni.url_open);
+        if (threw(env, "can't connect", error, error_size) || !env->IsInstanceOf(connection, g_jni.connection_class))
+        {
+            connection = nullptr;
+        }
+    }
+    if (connection != nullptr)
+    {
+        env->CallVoidMethod(connection, g_jni.set_connect_timeout, CONNECT_TIMEOUT_MS);
+        env->CallVoidMethod(connection, g_jni.set_read_timeout, READ_TIMEOUT_MS);
+        env->CallVoidMethod(connection, g_jni.set_follow_redirects, JNI_FALSE);
+        env->CallVoidMethod(connection, g_jni.set_request_method, env->NewStringUTF("POST"));
+        env->CallVoidMethod(connection, g_jni.set_do_output, JNI_TRUE);
+        env->CallVoidMethod(connection, g_jni.set_fixed_length, static_cast<jint>(size));
+        env->CallVoidMethod(connection, g_jni.set_request_property, env->NewStringUTF("User-Agent"),
+                            env->NewStringUTF(g_user_agent));
+        env->CallVoidMethod(connection, g_jni.set_request_property, env->NewStringUTF("Content-Type"),
+                            env->NewStringUTF(content_type));
+        jbyteArray java_body = env->NewByteArray(static_cast<jsize>(size));
+        if (java_body != nullptr)
+        {
+            env->SetByteArrayRegion(java_body, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(body));
+        }
+        jobject output = env->CallObjectMethod(connection, g_jni.get_output_stream);
+        if (!threw(env, "can't send the request", error, error_size) && java_body != nullptr)
+        {
+            env->CallVoidMethod(output, g_jni.output_write, java_body);
+            bool sent = !threw(env, "can't send the request", error, error_size);
+            env->CallVoidMethod(output, g_jni.output_close);
+            env->ExceptionClear();
+            if (sent)
+            {
+                int32_t code = env->CallIntMethod(connection, g_jni.get_response_code);
+                if (!threw(env, "no response", error, error_size))
+                {
+                    *status = static_cast<uint32_t>(code);
+                    ok = true;
+                }
+            }
+        }
+        env->CallVoidMethod(connection, g_jni.disconnect);
+        env->ExceptionClear();
+    }
+    env->PopLocalFrame(nullptr);
+    return ok;
 }
 
 NetHttpFetch net_http_backend_fetch(const char* url, NetHttpTransfer* transfer, char* error, size_t error_size)

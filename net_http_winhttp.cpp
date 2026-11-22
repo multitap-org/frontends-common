@@ -116,6 +116,75 @@ void net_http_backend_shutdown()
     }
 }
 
+bool net_http_backend_post(const char* url, const char* content_type, const uint8_t* body, size_t size,
+                           uint32_t* status, char* error, size_t error_size)
+{
+    std::wstring wide_url = widen(url);
+    URL_COMPONENTS parts = {};
+    parts.dwStructSize      = sizeof(parts);
+    parts.dwHostNameLength  = static_cast<DWORD>(-1);
+    parts.dwUrlPathLength   = static_cast<DWORD>(-1);
+    parts.dwExtraInfoLength = static_cast<DWORD>(-1);
+    if (wide_url.empty() || !WinHttpCrackUrl(wide_url.c_str(), 0, 0, &parts))
+    {
+        describe_error("bad URL", error, error_size);
+        return false;
+    }
+    std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
+    std::wstring object(parts.lpszUrlPath, parts.dwUrlPathLength);
+    object.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
+    if (object.empty())
+    {
+        object = L"/";
+    }
+    bool secure = parts.nScheme == INTERNET_SCHEME_HTTPS;
+    HINTERNET connection = WinHttpConnect(g_session, host.c_str(), parts.nPort, 0);
+    if (connection == nullptr)
+    {
+        describe_error("can't connect", error, error_size);
+        return false;
+    }
+    HINTERNET request = WinHttpOpenRequest(connection, L"POST", object.c_str(), nullptr, WINHTTP_NO_REFERER,
+                                           WINHTTP_DEFAULT_ACCEPT_TYPES, secure ? WINHTTP_FLAG_SECURE : 0);
+    if (request == nullptr)
+    {
+        describe_error("can't make the request", error, error_size);
+        WinHttpCloseHandle(connection);
+        return false;
+    }
+    DWORD no_redirects = WINHTTP_DISABLE_REDIRECTS;
+    WinHttpSetOption(request, WINHTTP_OPTION_DISABLE_FEATURE, &no_redirects, sizeof(no_redirects));
+    std::wstring headers = L"Content-Type: " + widen(content_type);
+    bool ok = false;
+    if (!WinHttpSendRequest(request, headers.c_str(), static_cast<DWORD>(headers.size()),
+                            const_cast<uint8_t*>(body), static_cast<DWORD>(size), static_cast<DWORD>(size), 0))
+    {
+        describe_error("can't send the request", error, error_size);
+    }
+    else if (!WinHttpReceiveResponse(request, nullptr))
+    {
+        describe_error("no response", error, error_size);
+    }
+    else
+    {
+        DWORD code = 0;
+        DWORD code_size = sizeof(code);
+        WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
+                            &code, &code_size, WINHTTP_NO_HEADER_INDEX);
+        *status = static_cast<uint32_t>(code);
+        // The body, if any, read and dropped.
+        uint8_t buffer[4096];
+        DWORD got = 0;
+        while (WinHttpReadData(request, buffer, sizeof(buffer), &got) && got > 0)
+        {
+        }
+        ok = true;
+    }
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connection);
+    return ok;
+}
+
 NetHttpFetch net_http_backend_fetch(const char* url, NetHttpTransfer* transfer, char* error, size_t error_size)
 {
     std::wstring wide_url = widen(url);

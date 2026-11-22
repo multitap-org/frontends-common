@@ -212,6 +212,23 @@ bool net_http_download(const char* url, const char* path, int64_t max_bytes, cha
     return ok;
 }
 
+bool net_http_post(const char* url, const char* content_type, const uint8_t* body, size_t size, uint32_t* status,
+                   char* error, size_t error_size)
+{
+    *status = 0;
+    if (std::strncmp(url, "https://", 8) != 0 && std::strncmp(url, "http://", 7) != 0)
+    {
+        std::snprintf(error, error_size, "only http(s) URLs can be posted to");
+        return false;
+    }
+    bool ok = net_http_backend_post(url, content_type, body, size, status, error, error_size);
+    if (!ok)
+    {
+        host_log(LogLevel::warning, "net_http: POST %s: %s", url, error);
+    }
+    return ok;
+}
+
 static int job_thread(void* user)
 {
     NetHttpJob* job = static_cast<NetHttpJob*>(user);

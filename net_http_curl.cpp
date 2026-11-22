@@ -51,6 +51,53 @@ void net_http_backend_shutdown()
     curl_global_cleanup();
 }
 
+// A POST's response body: read and dropped.
+static size_t on_discard(char*, size_t size, size_t count, void*)
+{
+    return size * count;
+}
+
+bool net_http_backend_post(const char* url, const char* content_type, const uint8_t* body, size_t size,
+                           uint32_t* status, char* error, size_t error_size)
+{
+    CURL* curl = curl_easy_init();
+    if (curl == nullptr)
+    {
+        std::snprintf(error, error_size, "curl_easy_init failed");
+        return false;
+    }
+    char curl_error[CURL_ERROR_SIZE] = {};
+    std::string type_header = std::string("Content-Type: ") + content_type;
+    curl_slist* headers = curl_slist_append(nullptr, type_header.c_str());
+    // No "Expect: 100-continue" round trip for a small body.
+    headers = curl_slist_append(headers, "Expect:");
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, g_user_agent.c_str());
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(size));
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 20L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, on_discard);
+    CURLcode result = curl_easy_perform(curl);
+    long code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+    curl_easy_cleanup(curl);
+    curl_slist_free_all(headers);
+    if (result != CURLE_OK)
+    {
+        std::snprintf(error, error_size, "%s", curl_error[0] != '\0' ? curl_error : curl_easy_strerror(result));
+        return false;
+    }
+    *status = static_cast<uint32_t>(code);
+    return true;
+}
+
 NetHttpFetch net_http_backend_fetch(const char* url, NetHttpTransfer* transfer, char* error, size_t error_size)
 {
     CURL* curl = curl_easy_init();
