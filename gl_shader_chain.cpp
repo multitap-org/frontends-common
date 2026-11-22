@@ -401,20 +401,24 @@ bool gl_shader_chain_prepare(GlShaderChain* chain, GlContext* context, const GlS
     return true;
 }
 
+GLuint gl_shader_chain_output_texture(const GlShaderChain* chain)
+{
+    for (uint32_t s = GL_SHADER_STAGES; s > 0; s--)
+    {
+        const GlShaderStage* stage = &chain->stages[s - 1];
+        if (stage->pass_count > 0)
+        {
+            return stage->passes[stage->pass_count - 1].texture;
+        }
+    }
+    return 0;
+}
+
 void gl_shader_chain_draw(const GlShaderChain* chain, ImDrawList* draw_list, float origin_x, float origin_y)
 {
     if (!chain->ready)
     {
         return;
-    }
-    const GlShaderPass* final_pass = nullptr;
-    for (uint32_t s = GL_SHADER_STAGES; s > 0 && final_pass == nullptr; s--)
-    {
-        const GlShaderStage* stage = &chain->stages[s - 1];
-        if (stage->pass_count > 0)
-        {
-            final_pass = &stage->passes[stage->pass_count - 1];
-        }
     }
     const ViewportResult* viewport = &chain->viewport;
     ImVec2 top_left(origin_x + static_cast<float>(viewport->x), origin_y + static_cast<float>(viewport->y));
@@ -423,7 +427,8 @@ void gl_shader_chain_draw(const GlShaderChain* chain, ImDrawList* draw_list, flo
     const ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
     // Already the picture's size: 1:1, nearest.
     draw_list->AddCallback(platform_io.DrawCallback_SetSamplerNearest, nullptr);
-    draw_list->AddImage(ImTextureRef(static_cast<ImTextureID>(final_pass->texture)), top_left, bottom_right,
+    GLuint output = gl_shader_chain_output_texture(chain);
+    draw_list->AddImage(ImTextureRef(static_cast<ImTextureID>(output)), top_left, bottom_right,
                         ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
     draw_list->AddCallback(platform_io.DrawCallback_SetSamplerLinear, nullptr);
 }

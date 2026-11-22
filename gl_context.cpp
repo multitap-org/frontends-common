@@ -78,6 +78,29 @@ static bool load_functions(GlFunctions* f)
     return ok;
 }
 
+// The GLES 3 read back functions: optional (none of them fails the context).
+// Not in the browser: WebGL 2 has no glMapBufferRange (Emscripten would
+// emulate it with a copy that waits anyway).
+static void load_async_read(GlFunctions* f)
+{
+#if !defined(__EMSCRIPTEN__)
+    f->MapBufferRange = reinterpret_cast<GlMapBufferRangeProc>(SDL_GL_GetProcAddress("glMapBufferRange"));
+    f->UnmapBuffer = reinterpret_cast<GlUnmapBufferProc>(SDL_GL_GetProcAddress("glUnmapBuffer"));
+    f->FenceSync = reinterpret_cast<GlFenceSyncProc>(SDL_GL_GetProcAddress("glFenceSync"));
+    f->ClientWaitSync = reinterpret_cast<GlClientWaitSyncProc>(SDL_GL_GetProcAddress("glClientWaitSync"));
+    f->DeleteSync = reinterpret_cast<GlDeleteSyncProc>(SDL_GL_GetProcAddress("glDeleteSync"));
+#else
+    static_cast<void>(f);
+#endif
+}
+
+bool gl_context_has_async_read(const GlContext* context)
+{
+    const GlFunctions* gl = &context->gl;
+    return context->major >= 3 && gl->MapBufferRange != nullptr && gl->UnmapBuffer != nullptr &&
+           gl->FenceSync != nullptr && gl->ClientWaitSync != nullptr && gl->DeleteSync != nullptr;
+}
+
 // ---------------------------------------------------------------------------
 // The copy program
 // ---------------------------------------------------------------------------
@@ -253,6 +276,10 @@ bool gl_context_create(GlContext* context, SDL_Window* window, bool gles2)
     }
     SDL_GL_GetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, &context->major);
     SDL_GL_GetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, &context->minor);
+    if (context->major >= 3)
+    {
+        load_async_read(&context->gl);
+    }
     GlFunctions* gl = &context->gl;
     copy_string(context->renderer, sizeof(context->renderer), gl->GetString(GL_RENDERER));
     copy_string(context->version, sizeof(context->version), gl->GetString(GL_VERSION));

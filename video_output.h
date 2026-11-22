@@ -31,6 +31,7 @@
 #include <string>
 
 #include "gl_picture.h"
+#include "gl_screen_effect.h"
 #include "gl_shader_chain.h"
 #include "picture.h"
 #include "screen_effect.h"
@@ -56,6 +57,7 @@ struct VideoOutput
     bool          on_gl      = false;   // set by load_stage / prepare from the shell
     GlShaderChain gl_chain   = {};
     GlPicture     gl_picture = {};
+    GlScreenEffect gl_effect = {};
 };
 
 // Loads `preset_path` into stage `stage` (0 or 1), replacing what it had;

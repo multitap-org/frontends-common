@@ -65,7 +65,7 @@ bool video_output_request_capture(VideoOutput* output)
 {
     if (output->on_gl)
     {
-        return false;
+        return gl_screen_effect_request_capture(&output->gl_effect);
     }
     return screen_effect_request_capture(&output->effect_pass);
 }
@@ -74,7 +74,7 @@ bool video_output_take_capture(VideoOutput* output, VideoCapture* capture)
 {
     if (output->on_gl)
     {
-        return false;
+        return gl_screen_effect_capture_take(&output->gl_effect, capture);
     }
     return screen_effect_capture_take(&output->effect_pass, capture);
 }
@@ -84,14 +84,18 @@ bool video_output_take_capture(VideoOutput* output, VideoCapture* capture)
 static void prepare_effect(VideoOutput* output, AppShell* shell, const ViewportResult* viewport)
 {
     output->effect_on = false;
-    if (output->on_gl)
-    {
-        return;
-    }
-    bool capture = output->effect_pass.capture_state == ScreenEffectCaptureState::requested;
+    ScreenEffectCaptureState capture_state =
+        output->on_gl ? output->gl_effect.capture_state : output->effect_pass.capture_state;
+    bool capture = capture_state == ScreenEffectCaptureState::requested;
     if (screen_effect_params_at_rest(&output->effect) && !capture)
     {
         output->effect_pass.ready = false;
+        output->gl_effect.ready = false;
+        return;
+    }
+    if (output->on_gl)
+    {
+        output->effect_on = gl_screen_effect_prepare(&output->gl_effect, &shell->gl, viewport);
         return;
     }
     output->effect_on = screen_effect_prepare(&output->effect_pass, &shell->vulkan, viewport);
@@ -128,6 +132,7 @@ bool video_output_prepare(VideoOutput* output, AppShell* shell, const VideoTextu
     {
         output->effect_on = false;
         output->effect_pass.ready = false;
+        output->gl_effect.ready = false;
         return false;
     }
     prepare_effect(output, shell, viewport);
@@ -139,6 +144,7 @@ void video_output_skip(VideoOutput* output)
     output->shaded = false;
     output->effect_on = false;
     output->effect_pass.ready = false;
+    output->gl_effect.ready = false;
     output->chain.ready = false;
     output->picture.ready = false;
     output->gl_picture.ready = false;
@@ -150,7 +156,11 @@ void video_output_draw(const VideoOutput* output, ImDrawList* draw_list, const V
 {
     if (output->on_gl)
     {
-        if (output->shaded)
+        if (output->effect_on)
+        {
+            gl_screen_effect_draw(&output->gl_effect, draw_list, origin_x, origin_y);
+        }
+        else if (output->shaded)
         {
             gl_shader_chain_draw(&output->gl_chain, draw_list, origin_x, origin_y);
         }
@@ -180,6 +190,35 @@ void video_output_record(VideoOutput* output, const ShaderLibrary* library, AppS
         // Each does nothing unless its prepare said this frame is its.
         gl_shader_chain_record(&output->gl_chain, &shell->gl, &source->gl);
         gl_picture_record(&output->gl_picture, &shell->gl, &source->gl);
+        gl_screen_effect_collect(&output->gl_effect, &shell->gl);
+        if (!output->effect_on)
+        {
+            return;
+        }
+        // What the picture would have drawn, sampled the same way.
+        GlScreenEffectSource gl_source = {};
+        if (output->shaded)
+        {
+            gl_source.texture = gl_shader_chain_output_texture(&output->gl_chain);   // the picture's size
+        }
+        else if (output->gl_picture.use_copy && output->gl_picture.texture != 0)
+        {
+            gl_source.texture = output->gl_picture.texture;
+            gl_source.linear = true;
+        }
+        else
+        {
+            const ViewportResult* viewport = &output->gl_effect.viewport;
+            float capacity_width = static_cast<float>(source->gl.capacity_width);
+            float capacity_height = static_cast<float>(source->gl.capacity_height);
+            gl_source.texture = source->gl.shown;
+            gl_source.linear = viewport->filter != ViewportFilter::nearest;
+            gl_source.rect[0] = static_cast<float>(viewport->source_x) / capacity_width;
+            gl_source.rect[1] = static_cast<float>(viewport->source_y) / capacity_height;
+            gl_source.rect[2] = static_cast<float>(viewport->source_width) / capacity_width;
+            gl_source.rect[3] = static_cast<float>(viewport->source_height) / capacity_height;
+        }
+        gl_screen_effect_record(&output->gl_effect, &shell->gl, &gl_source, &output->effect);
         return;
     }
     // Each records nothing unless its prepare said this frame is its.
@@ -244,6 +283,7 @@ void video_output_destroy(VideoOutput* output, const ShaderLibrary* library, App
 {
     if (shell->api == GpuApi::gl)
     {
+        gl_screen_effect_destroy(&output->gl_effect, &shell->gl);
         gl_picture_destroy(&output->gl_picture, &shell->gl);
         gl_shader_chain_destroy(&output->gl_chain, &shell->gl);
         output->chain = ShaderChain{};   // never had a chain or images on GL

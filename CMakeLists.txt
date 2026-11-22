@@ -252,6 +252,7 @@ add_library(frontend_common STATIC
     gl_context.cpp
     gl_texture.cpp
     gl_picture.cpp
+    gl_screen_effect.cpp
     gl_shader_chain.cpp
     window_size.cpp
     localization.cpp

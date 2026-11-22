@@ -20,6 +20,25 @@
 #include <SDL3/SDL_opengles2.h>
 #include <SDL3/SDL_video.h>
 
+// GLES 3.0 functions used for reading the picture back without a stall (a
+// GPU screenshot: gl_screen_effect.h). Not in SDL's GLES 2 headers, so their
+// types and constants are ours. Looked up only on a GLES 3 context, and
+// optional: without them the read back waits (as on GLES 2).
+struct GlSyncObject;
+typedef GlSyncObject* GlSync;
+typedef void* (GL_APIENTRYP GlMapBufferRangeProc)(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);
+typedef GLboolean (GL_APIENTRYP GlUnmapBufferProc)(GLenum target);
+typedef GlSync (GL_APIENTRYP GlFenceSyncProc)(GLenum condition, GLbitfield flags);
+typedef GLenum (GL_APIENTRYP GlClientWaitSyncProc)(GlSync sync, GLbitfield flags, uint64_t timeout);
+typedef void (GL_APIENTRYP GlDeleteSyncProc)(GlSync sync);
+constexpr GLenum GLES3_PIXEL_PACK_BUFFER          = 0x88EB;
+constexpr GLenum GLES3_STREAM_READ                = 0x88E1;
+constexpr GLbitfield GLES3_MAP_READ_BIT           = 0x0001;
+constexpr GLenum GLES3_SYNC_GPU_COMMANDS_COMPLETE = 0x9117;
+constexpr GLenum GLES3_ALREADY_SIGNALED           = 0x911A;
+constexpr GLenum GLES3_CONDITION_SATISFIED        = 0x911C;
+constexpr GLenum GLES3_WAIT_FAILED                = 0x911D;
+
 struct GlFunctions
 {
     PFNGLGETSTRINGPROC               GetString               = nullptr;
@@ -69,7 +88,13 @@ struct GlFunctions
     PFNGLVERTEXATTRIBPOINTERPROC     VertexAttribPointer     = nullptr;
     PFNGLENABLEVERTEXATTRIBARRAYPROC EnableVertexAttribArray = nullptr;
     PFNGLDRAWARRAYSPROC              DrawArrays              = nullptr;
-    PFNGLREADPIXELSPROC              ReadPixels              = nullptr;   // tests
+    PFNGLREADPIXELSPROC              ReadPixels              = nullptr;   // tests, screenshots
+    // GLES 3 only (nullptr otherwise, or in the browser: see gl_screen_effect.h).
+    GlMapBufferRangeProc             MapBufferRange          = nullptr;
+    GlUnmapBufferProc                UnmapBuffer             = nullptr;
+    GlFenceSyncProc                  FenceSync               = nullptr;
+    GlClientWaitSyncProc             ClientWaitSync          = nullptr;
+    GlDeleteSyncProc                 DeleteSync              = nullptr;
 };
 
 // The copy program (see the top of this file).
@@ -113,6 +138,9 @@ const char* gl_context_imgui_glsl_version(const GlContext* context);
 // sampling (it sets the texture's filter: ImGui changes it too, so it's set
 // on every copy).
 void gl_copy_draw(GlContext* context, GLuint texture, const float source_rect[4], bool swap_red_blue, bool linear);
+
+// True when the GLES 3 read back functions (GlFunctions' last ones) are all there.
+bool gl_context_has_async_read(const GlContext* context);
 
 // Logs and clears GL errors (debug builds call it after each step; `where` names the step).
 void gl_check_errors(GlContext* context, const char* where);

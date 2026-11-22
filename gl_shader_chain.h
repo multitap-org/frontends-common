@@ -111,6 +111,9 @@ bool gl_shader_chain_prepare(GlShaderChain* chain, GlContext* context, const GlS
 
 void gl_shader_chain_draw(const GlShaderChain* chain, ImDrawList* draw_list, float origin_x, float origin_y);
 
+// The last pass's output (the picture's size on screen), or 0 without passes.
+GLuint gl_shader_chain_output_texture(const GlShaderChain* chain);
+
 // Runs the passes (after the source's upload this frame).
 void gl_shader_chain_record(GlShaderChain* chain, GlContext* context, const GlStreamingTexture* source);
 
