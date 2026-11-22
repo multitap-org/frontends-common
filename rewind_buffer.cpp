@@ -409,6 +409,51 @@ bool rewind_cursor_forward_to_state(const RewindBuffer* buffer, RewindCursor* cu
     return false;
 }
 
+bool rewind_buffer_copy(RewindBuffer* destination, const RewindBuffer* source)
+{
+    const RewindBufferConfig* from = &source->config;
+    const RewindBufferConfig* to   = &destination->config;
+    if (destination->arena == nullptr || from->state_size != to->state_size || from->input_size != to->input_size ||
+        from->arena_bytes != to->arena_bytes || from->max_records != to->max_records)
+    {
+        host_log(LogLevel::error, "rewind: a history can only be copied into one of the same size");
+        return false;
+    }
+    destination->config.max_frames = from->max_frames;
+    // The arena: live bytes are [tail, head) or, wrapped, [tail, end) + [0, head).
+    if (source->count > 0)
+    {
+        if (source->wrapped)
+        {
+            std::memcpy(destination->arena + source->tail, source->arena + source->tail, from->arena_bytes - source->tail);
+            std::memcpy(destination->arena, source->arena, source->head);
+        }
+        else
+        {
+            std::memcpy(destination->arena + source->tail, source->arena + source->tail, source->head - source->tail);
+        }
+    }
+    for (uint32_t i = 0; i < source->count; i++)
+    {
+        uint32_t at = (source->first + i) % from->max_records;
+        destination->records[at] = source->records[at];
+    }
+    destination->first     = source->first;
+    destination->count     = source->count;
+    destination->states    = source->states;
+    destination->head      = source->head;
+    destination->tail      = source->tail;
+    destination->wrapped   = source->wrapped;
+    destination->has_state = source->has_state;
+    destination->dropped   = source->dropped;
+    std::memcpy(destination->newest_state, source->newest_state, from->state_size);
+    if (from->input_size > 0)
+    {
+        std::memcpy(destination->newest_input, source->newest_input, from->input_size);
+    }
+    return true;
+}
+
 void rewind_buffer_truncate(RewindBuffer* buffer, const RewindCursor* cursor)
 {
     if (buffer->count == 0 || cursor->position >= buffer->count)

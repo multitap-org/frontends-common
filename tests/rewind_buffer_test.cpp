@@ -184,6 +184,37 @@ static void check_scrub(const Truth* truth)
     }
     check_walk(&buffer, truth, true, "scrub: walk after truncate");
 
+    // A copy (the DVR's kept lane) walks the same, and stays when the
+    // original is cut and goes on.
+    RewindBuffer copy;
+    check(rewind_buffer_create(&copy, &config), "copy: created");
+    check(rewind_buffer_copy(&copy, &buffer) && copy.count == buffer.count && copy.wrapped == buffer.wrapped,
+          "copy: copied");
+    check_walk(&copy, truth, true, "copy: walks like the original");
+    RewindCursor back;
+    rewind_cursor_create(&back, &buffer);
+    rewind_cursor_to_newest(&buffer, &back);
+    for (int i = 0; i < 30; i++)
+    {
+        rewind_cursor_back_to_state(&buffer, &back);
+    }
+    rewind_buffer_truncate(&buffer, &back);
+    rewind_cursor_destroy(&back);
+    for (uint32_t frame = 0; frame < 500; frame++)
+    {
+        std::memcpy(slot, truth->states[frame].data(), STATE_SIZE);
+        rewind_buffer_push_state(&buffer, &slot, frame + FRAMES);   // other frames: the original moves on
+    }
+    check(copy.count > 0 && rewind_buffer_record(&copy, copy.count - 1)->frame == FRAMES - 1,
+          "copy: untouched by the original");
+    check_walk(&copy, truth, true, "copy: still walks");
+    RewindBufferConfig other = config;
+    other.arena_bytes += 1;
+    RewindBuffer bigger;
+    check(rewind_buffer_create(&bigger, &other) && !rewind_buffer_copy(&bigger, &copy), "copy: only the same size");
+    rewind_buffer_destroy(&bigger);
+    rewind_buffer_destroy(&copy);
+
     delete[] slot;
     rewind_buffer_destroy(&buffer);
 }

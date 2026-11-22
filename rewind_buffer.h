@@ -123,6 +123,13 @@ bool rewind_cursor_forward(const RewindBuffer* buffer, RewindCursor* cursor);
 bool rewind_cursor_back_to_state(const RewindBuffer* buffer, RewindCursor* cursor);
 bool rewind_cursor_forward_to_state(const RewindBuffer* buffer, RewindCursor* cursor);
 
+// Makes `destination` (created with the same config) the same history as
+// `source`: records, newest state and input. Copies only the arena's bytes in
+// use and the index entries in use. False (logged) if the configs differ.
+// The DVR's kept lane (Andrés, 2026-11-22: a buffer of its own, the same size
+// as the history's) is made with it before "play from here" cuts the future.
+bool rewind_buffer_copy(RewindBuffer* destination, const RewindBuffer* source);
+
 // "Play from here": drops every record after the cursor; the cursor's state
 // and input become the newest. Recording continues from them.
 void rewind_buffer_truncate(RewindBuffer* buffer, const RewindCursor* cursor);
