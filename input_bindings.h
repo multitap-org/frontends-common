@@ -124,6 +124,10 @@ enum class InputAction
     hotkey_ports,        // the frontend's ports board: who plays on which port, pads moved between them
     hotkey_pause,        // pause / resume the game (the frontend's USER pause)
     hotkey_dvr,          // the rewind DVR (Backspace; no gamepad button by default)
+    // Listed with the hotkeys (INPUT > HOTKEYS) but never fired by the router:
+    // the frontend watches it held, on each controller, in the GAME layer too
+    // (piccolo's HOLD START TO REMAP card; the game sees the button as well).
+    hotkey_remap,        // START on gamepads, nothing on the keyboard
     count,
 };
 
@@ -139,6 +143,9 @@ bool        input_action_parse(const char* name, InputAction* action);
 
 bool input_action_is_pad(InputAction action);
 bool input_action_is_hotkey(InputAction action);
+// A hotkey the router fires from the HOTKEY layer (all but hotkey_enable,
+// the modifier itself, and hotkey_remap, which the frontend watches).
+bool input_action_is_fired_hotkey(InputAction action);
 
 struct InputBindingSet
 {
@@ -148,6 +155,31 @@ struct InputBindingSet
 // Adds `source` to the action (if it isn't there and a slot is free).
 bool input_bind(InputBindingSet* set, InputAction action, InputSource source);
 void input_unbind_all(InputBindingSet* set, InputAction action);
+
+// Two actions bound to one control that would fire together (Andrés,
+// 2026-11-21: "a system to detect conflicts"). Only in the same layer:
+//   - two hotkeys (pressing the control fires both);
+//   - HOTKEY ENABLE and a hotkey, REMAP included (the control would be the
+//     modifier and the hotkey at once; REMAP held would also shift the pad
+//     into the HOTKEY layer, and the game wouldn't see it);
+//   - two interface actions (ACCEPT and BACK on one button).
+// Not conflicts: RetroPad buttons sharing a control (a combo, on purpose), a
+// hotkey and a RetroPad button (the modifier keeps them apart), and REMAP on
+// a RetroPad button (it's watched in the game, START by default).
+struct InputConflict
+{
+    InputAction first = InputAction::count;    // the earlier one in InputAction order
+    InputAction second = InputAction::count;
+    InputSource source = {};                    // the control both use
+};
+
+// Every conflicting pair in a binding set, up to `max` (the count found,
+// which may be more than `max`). Nothing is allocated.
+uint32_t input_binding_conflicts(const InputBindingSet* set, InputConflict* out, uint32_t max);
+
+// The first action that conflicts with `action` in the set
+// (InputAction::count: none).
+InputAction input_binding_conflict_with(const InputBindingSet* set, InputAction action);
 
 // One action's sources (INPUT_SOURCES_PER_ACTION of them) as rows, the way
 // the binding tables show them: one row per source, in order.
@@ -246,6 +278,7 @@ struct InputController
     InputHotkeyMode hotkey_mode = InputHotkeyMode::hold;
 
     // Kept between frames by input_update().
+    bool       shared_seated = false;   // its device shares_port1 and it was put on port 1 (once: a move stays)
     bool       last_ports[INPUT_PORT_COUNT] = {};    // the ports it was on when its device went away
     bool       held_last[INPUT_ACTION_COUNT] = {};
     InputLayer layer = InputLayer::none;

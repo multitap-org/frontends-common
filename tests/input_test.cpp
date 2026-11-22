@@ -508,6 +508,36 @@ static void press_start(InputSystem* system, uint32_t pad, uint64_t now_ms, Inpu
     frame(system, now_ms + 8, &after);
 }
 
+// A device that shares port 1 (piccolo's touch pad): on port 1 by itself,
+// and a gamepad's START still joins port 1; the next gamepad port 2.
+static void test_touch_pad_shares_port1()
+{
+    InputSystem* system = new InputSystem{};
+    system->settings.keyboard_shares_port1 = false;
+    InputBindingSet pad_set = {};
+    gamepad_bindings(&pad_set);
+    uint32_t touch = input_devices_add(&system->devices, InputDeviceKind::gamepad, "touch", "TOUCH PAD");
+    input_devices_find(&system->devices, touch)->shares_port1 = true;
+    input_add_controller(system, touch, "TOUCH PAD", &pad_set);   // controller 0
+    uint32_t pad_a = input_devices_add(&system->devices, InputDeviceKind::gamepad, "guid-a", "Pad");
+    input_add_controller(system, pad_a, "Pad", &pad_set);          // controller 1
+    uint32_t pad_b = input_devices_add(&system->devices, InputDeviceKind::gamepad, "guid-b", "Pad");
+    input_add_controller(system, pad_b, "Pad", &pad_set);          // controller 2
+    InputFrame out = {};
+    frame(system, 0, &out);
+    check(input_port_has(system, 0, 0), "touch pad: on port 1 by itself");
+    press_start(system, pad_a, 100, &out);
+    check(out.joined_port == 0 && input_port_has(system, 0, 1), "touch pad: a gamepad's START still joins port 1");
+    press_start(system, pad_b, 200, &out);
+    check(out.joined_port == 1, "touch pad: the next gamepad port 2");
+    // Moved to port 2 by hand: it stays there.
+    input_port_remove(system, 0, 0);
+    input_port_add(system, 1, 0);
+    frame(system, 300, &out);
+    check(!input_port_has(system, 0, 0) && input_port_has(system, 1, 0), "touch pad: a move stays");
+    delete system;
+}
+
 // N:N: several controllers on a port (N:1), a controller on several ports
 // (1:N), START with every port taken, unplugging from several ports.
 static void test_shared_ports()
@@ -1437,6 +1467,53 @@ static void test_pad_positions()
           "pad: sticks");
 }
 
+// Conflicts: two actions on one control that would fire together.
+static void test_conflicts()
+{
+    InputConflict found[16] = {};
+    InputBindingSet keys = {};
+    input_default_bindings(InputDeviceKind::keyboard, &keys);
+    InputBindingSet pad = {};
+    input_default_gamepad_bindings(&pad);
+    check(input_binding_conflicts(&keys, found, 16) == 0, "conflicts: none in the keyboard's defaults");
+    check(input_binding_conflicts(&pad, found, 16) == 0, "conflicts: none in a gamepad's defaults");
+    check(input_binding_conflict_with(&pad, InputAction::hotkey_remap) == InputAction::count,
+          "conflicts: REMAP on START beside START and QUICK MENU is fine");
+
+    // Two hotkeys on one button.
+    InputBindingSet two = pad;
+    input_bind(&two, InputAction::hotkey_save_state, button(InputButton::start));
+    uint32_t count = input_binding_conflicts(&two, found, 16);
+    check(count == 1 && found[0].first == InputAction::hotkey_quick_menu && found[0].second == InputAction::hotkey_save_state,
+          "conflicts: two hotkeys on START");
+    check(input_source_equal(found[0].source, button(InputButton::start)), "conflicts: ...on that control");
+    check(input_binding_conflict_with(&two, InputAction::hotkey_save_state) == InputAction::hotkey_quick_menu,
+          "conflicts: found from either side");
+
+    // HOTKEY ENABLE on REMAP's button.
+    InputBindingSet modifier = pad;
+    modifier.sources[static_cast<uint32_t>(InputAction::hotkey_enable)][0] = button(InputButton::start);
+    check(input_binding_conflict_with(&modifier, InputAction::hotkey_remap) == InputAction::hotkey_enable,
+          "conflicts: REMAP on HOTKEY ENABLE's button");
+
+    // ACCEPT and BACK on one button.
+    InputBindingSet ui = pad;
+    input_bind(&ui, InputAction::ui_back, button(InputButton::south));
+    check(input_binding_conflict_with(&ui, InputAction::ui_accept) == InputAction::ui_back, "conflicts: two interface actions");
+
+    // Not conflicts: a combo (two RetroPad buttons), a hotkey on a RetroPad button.
+    InputBindingSet combo = pad;
+    input_bind(&combo, InputAction::pad_a, button(InputButton::south));
+    input_bind(&combo, InputAction::hotkey_save_state, button(InputButton::left_stick));   // also RetroPad L3
+    check(input_binding_conflicts(&combo, found, 16) == 0, "conflicts: combos and hotkeys on game buttons are fine");
+
+    // More than `max`: counted, only `max` written.
+    InputBindingSet many = pad;
+    input_bind(&many, InputAction::hotkey_save_state, button(InputButton::start));
+    input_bind(&many, InputAction::hotkey_load_state, button(InputButton::start));
+    check(input_binding_conflicts(&many, found, 1) == 3, "conflicts: all counted beyond max");
+}
+
 int main()
 {
     test_sources();
@@ -1447,6 +1524,7 @@ int main()
     test_gamepad_hotkeys();
     test_combo_and_stick();
     test_shared_ports();
+    test_touch_pad_shares_port1();
     test_fake_gamepad();
     test_hold();
     test_menus_and_defaults();
@@ -1460,6 +1538,7 @@ int main()
     test_cursor();
     test_layouts();
     test_pad_positions();
+    test_conflicts();
     if (g_failures == 0)
     {
         std::printf("input: all checks passed\n");

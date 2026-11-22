@@ -188,8 +188,14 @@ RenderFrameResult renderer_begin_frame(Renderer* renderer, const VulkanContext* 
     }
     if (acquire_result == VK_SUBOPTIMAL_KHR)
     {
-        // Still usable: draw this frame, recreate after presenting it.
-        renderer->swapchain_suboptimal = true;
+        // Still usable: draw this frame, recreate after presenting it. Not
+        // when the compositor turns our upright images on purpose (Android,
+        // a phone on its side): it says suboptimal every frame, and a new
+        // swapchain would be the same (vk_swapchain.cpp).
+        if (!swapchain->compositor_rotates)
+        {
+            renderer->swapchain_suboptimal = true;
+        }
     }
     else if (!vk_succeeded(acquire_result, "vkAcquireNextImageKHR"))
     {
@@ -463,6 +469,14 @@ RenderFrameResult renderer_end_frame(Renderer* renderer, const VulkanContext* co
     {
         renderer->swapchain_suboptimal = false;
         return RenderFrameResult::surface_lost;   // see renderer_begin_frame
+    }
+    // While the compositor turns our upright images (Android, a phone on its
+    // side), suboptimal comes every frame and means only that: the frame was
+    // shown. A real size change is still caught by app_shell, which compares
+    // the window's size with the extent every frame.
+    if (present_result == VK_SUBOPTIMAL_KHR && swapchain->compositor_rotates)
+    {
+        present_result = VK_SUCCESS;
     }
     if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR ||
         renderer->swapchain_suboptimal)

@@ -24,6 +24,7 @@ static const char* const ACTION_NAMES[INPUT_ACTION_COUNT] = {
     "ui.up", "ui.down", "ui.left", "ui.right", "ui.accept", "ui.back", "ui.page_left", "ui.page_right", "ui.open_menu",
     "hotkey.enable", "hotkey.menu", "hotkey.quick_menu", "hotkey.save_state", "hotkey.load_state",
     "hotkey.fast_forward", "hotkey.grab_mouse", "hotkey.ports", "hotkey.pause", "hotkey.dvr",
+    "hotkey.remap",
 };
 
 static uint32_t index_of(InputAction action)
@@ -83,6 +84,95 @@ bool input_action_is_pad(InputAction action)
 bool input_action_is_hotkey(InputAction action)
 {
     return index_of(action) >= index_of(InputAction::hotkey_enable) && index_of(action) < INPUT_ACTION_COUNT;
+}
+
+bool input_action_is_fired_hotkey(InputAction action)
+{
+    return input_action_is_hotkey(action) && action != InputAction::hotkey_enable && action != InputAction::hotkey_remap;
+}
+
+static bool is_interface(InputAction action)
+{
+    return index_of(action) >= index_of(InputAction::ui_up) && index_of(action) <= index_of(InputAction::ui_open_menu);
+}
+
+// Would `a` and `b` fire together if bound to one control? (input_binding_conflicts)
+static bool fire_together(InputAction a, InputAction b)
+{
+    if (input_action_is_fired_hotkey(a) && input_action_is_fired_hotkey(b))
+    {
+        return true;
+    }
+    if (a == InputAction::hotkey_enable || b == InputAction::hotkey_enable)
+    {
+        InputAction other = a == InputAction::hotkey_enable ? b : a;
+        return input_action_is_hotkey(other) && other != InputAction::hotkey_enable;
+    }
+    return is_interface(a) && is_interface(b);
+}
+
+// The control `a` and `b` share, if they may not share one.
+static bool conflict_between(const InputBindingSet* set, InputAction a, InputAction b, InputSource* shared)
+{
+    if (a == b || !fire_together(a, b))
+    {
+        return false;
+    }
+    const InputSource* sources_a = set->sources[index_of(a)];
+    const InputSource* sources_b = set->sources[index_of(b)];
+    for (uint32_t s = 0; s < INPUT_SOURCES_PER_ACTION; s++)
+    {
+        if (sources_a[s].type == InputSourceType::none)
+        {
+            continue;
+        }
+        for (uint32_t t = 0; t < INPUT_SOURCES_PER_ACTION; t++)
+        {
+            if (sources_b[t].type != InputSourceType::none && input_source_equal(sources_a[s], sources_b[t]))
+            {
+                *shared = sources_a[s];
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+uint32_t input_binding_conflicts(const InputBindingSet* set, InputConflict* out, uint32_t max)
+{
+    uint32_t found = 0;
+    for (uint32_t a = index_of(InputAction::ui_up); a < INPUT_ACTION_COUNT; a++)
+    {
+        for (uint32_t b = a + 1; b < INPUT_ACTION_COUNT; b++)
+        {
+            InputSource shared = {};
+            if (!conflict_between(set, static_cast<InputAction>(a), static_cast<InputAction>(b), &shared))
+            {
+                continue;
+            }
+            if (found < max)
+            {
+                out[found].first = static_cast<InputAction>(a);
+                out[found].second = static_cast<InputAction>(b);
+                out[found].source = shared;
+            }
+            found++;
+        }
+    }
+    return found;
+}
+
+InputAction input_binding_conflict_with(const InputBindingSet* set, InputAction action)
+{
+    for (uint32_t b = index_of(InputAction::ui_up); b < INPUT_ACTION_COUNT; b++)
+    {
+        InputSource shared = {};
+        if (conflict_between(set, action, static_cast<InputAction>(b), &shared))
+        {
+            return static_cast<InputAction>(b);
+        }
+    }
+    return InputAction::count;
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +428,9 @@ void input_default_gamepad_bindings(InputBindingSet* set)
     input_bind(set, InputAction::hotkey_enable, pad_button(InputButton::back));
     input_bind(set, InputAction::hotkey_quick_menu, pad_button(InputButton::start));
     input_bind(set, InputAction::hotkey_menu, pad_button(InputButton::west));
+    // REMAP: held on a controller whose remap for the core isn't decided
+    // (piccolo's card). START, as the old HOLD START TO REMAP.
+    input_bind(set, InputAction::hotkey_remap, pad_button(InputButton::start));
     input_bind(set, InputAction::hotkey_save_state, pad_button(InputButton::right_shoulder));
     input_bind(set, InputAction::hotkey_load_state, pad_button(InputButton::left_shoulder));
     input_bind(set, InputAction::hotkey_fast_forward, pad_axis(InputAxis::right_trigger, true));
@@ -689,7 +782,19 @@ static int32_t first_mouse(const InputSystem* system)
     return -1;
 }
 
-// Free for START: no members but the keyboard and the mouse put there.
+// A controller whose device shares port 1 (the touch pad).
+static bool shares_port1(const InputSystem* system, uint32_t controller)
+{
+    if (controller >= system->controllers.size())
+    {
+        return false;
+    }
+    const InputDevice* device = input_devices_find_const(&system->devices, system->controllers[controller].device_id);
+    return device != nullptr && device->shares_port1;
+}
+
+// Free for START: no members but the keyboard, the mouse and the devices that
+// share port 1 put there.
 static bool port_free(const InputSystem* system, uint32_t port)
 {
     const std::vector<uint32_t>* members = &system->ports[port];
@@ -697,7 +802,9 @@ static bool port_free(const InputSystem* system, uint32_t port)
     int32_t mouse = system->mouse_seated ? first_mouse(system) : -1;
     for (size_t m = 0; m < members->size(); m++)
     {
-        if (static_cast<int32_t>((*members)[m]) != keyboard && static_cast<int32_t>((*members)[m]) != mouse)
+        uint32_t member = (*members)[m];
+        if (static_cast<int32_t>(member) != keyboard && static_cast<int32_t>(member) != mouse &&
+            !shares_port1(system, member))
         {
             return false;
         }
@@ -1320,7 +1427,7 @@ static bool modifier_active(InputController* controller, const bool* held, const
         bool hotkey_pressed = false;
         for (uint32_t a = index_of(InputAction::hotkey_enable) + 1; a < INPUT_ACTION_COUNT; a++)
         {
-            hotkey_pressed = hotkey_pressed || pressed[a];
+            hotkey_pressed = hotkey_pressed || (pressed[a] && input_action_is_fired_hotkey(static_cast<InputAction>(a)));
         }
         return hotkey_pressed || controller->layer == InputLayer::hotkey ||
                now_ms - controller->modifier_down_ms >= HOTKEY_BLOCK_DELAY_MS;
@@ -1605,6 +1712,20 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
         system->mouse_seated = true;
     }
 
+    // Devices that share port 1 (the touch pad) on it, once each: moved
+    // elsewhere later (DEVICES), they stay where they were moved.
+    for (size_t c = 0; c < system->controllers.size(); c++)
+    {
+        uint32_t index = static_cast<uint32_t>(c);
+        const InputDevice* device = input_devices_find_const(&system->devices, system->controllers[c].device_id);
+        if (device != nullptr && device->connected && device->shares_port1 && !system->controllers[c].shared_seated &&
+            input_controller_port(system, index) == INPUT_NO_PORT)
+        {
+            input_port_add(system, 0, index);
+            system->controllers[c].shared_seated = true;
+        }
+    }
+
     // Devices that went away leave their ports; back on all of them when they return.
     for (size_t c = 0; c < system->controllers.size(); c++)
     {
@@ -1753,6 +1874,10 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
             bool fired = false;
             for (uint32_t a = modifier + 1; a < INPUT_ACTION_COUNT; a++)
             {
+                if (!input_action_is_fired_hotkey(static_cast<InputAction>(a)))
+                {
+                    continue;   // REMAP: the frontend watches it
+                }
                 if (!local && (!device->game_hotkeys || !game_only_hotkey(static_cast<InputAction>(a))))
                 {
                     continue;

@@ -247,6 +247,38 @@ static bool create_swapchain_resources(VulkanSwapchain* swapchain, const VulkanC
         swapchain->extent.height = clamp_u32(height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
     }
 
+    // A turned display (Android: a phone on its side reports ROTATE_90 /
+    // ROTATE_270, upside down ROTATE_180). Taking currentTransform as
+    // preTransform promises that we draw the picture already turned, which we
+    // don't (ImGui, the picture and the shaders all draw upright), and the surface's extent may be in the
+    // display's natural orientation (1080 x 2340 on an S22 on its side) while
+    // SDL and ImGui lay out for the window (2340 x 1080): the UI came out
+    // squashed into the wrong shape, and app_shell saw a size mismatch and
+    // recreated the swapchain every frame. So: IDENTITY, images the shape of
+    // the window, and the compositor turns them (on phones its display
+    // hardware usually does that for free). Android accepts an imageExtent
+    // other than currentExtent here (it sizes its buffers from imageExtent),
+    // and then reports VK_SUBOPTIMAL_KHR on every present, which the renderer
+    // ignores while compositor_rotates is set. Pre-rotating ourselves would
+    // save the compositor's turn but touches every draw; not worth it now.
+    VkSurfaceTransformFlagBitsKHR pre_transform = capabilities.currentTransform;
+    swapchain->compositor_rotates = false;
+    if (capabilities.currentTransform != VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR &&
+        (capabilities.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) != 0)
+    {
+        pre_transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+        swapchain->compositor_rotates = true;
+        // On its side, the window and the extent have opposite shapes.
+        bool window_wide = width > height;
+        bool extent_wide = swapchain->extent.width > swapchain->extent.height;
+        if (window_wide != extent_wide)
+        {
+            uint32_t turned_width = swapchain->extent.height;
+            swapchain->extent.height = swapchain->extent.width;
+            swapchain->extent.width = turned_width;
+        }
+    }
+
     // One more than the minimum so we are not blocked waiting on the driver.
     // maxImageCount == 0 means "no limit".
     uint32_t max_images = SWAPCHAIN_MAX_IMAGES;
@@ -266,7 +298,7 @@ static bool create_swapchain_resources(VulkanSwapchain* swapchain, const VulkanC
         .imageArrayLayers = 1,
         .imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
-        .preTransform     = capabilities.currentTransform,
+        .preTransform     = pre_transform,
         .compositeAlpha   = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
         .presentMode      = swapchain->present_mode,
         .clipped          = VK_TRUE,
