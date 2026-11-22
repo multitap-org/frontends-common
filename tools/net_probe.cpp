@@ -276,6 +276,12 @@ static int run_listener(uint16_t port, const char* name, const std::string* dir,
                 }
                 break;
             }
+            case NetAccessEventType::guest_joined:
+                std::printf("guest \"%s\" joined (peer %u)\n", event.name, static_cast<unsigned>(event.peer));
+                break;
+            case NetAccessEventType::guest_full:
+                std::printf("guest \"%s\" turned away: no seat\n", event.name);
+                break;
             case NetAccessEventType::granted_back:
                 std::printf("\"%s\" lets us come to it at %s\n", device, net_access_level_name(event.access));
                 break;
@@ -317,6 +323,12 @@ static const char* refusal_text(NetClientRefusal refusal)
         return "the beacon doesn't know this host (not running, or its internet setting is off)";
     case NetClientRefusal::no_route:
         return "couldn't connect: the beacon introduced us but no path got through the NATs";
+    case NetClientRefusal::guest_full:
+        return "guest link: every seat is taken";
+    case NetClientRefusal::guest_link:
+        return "guest link: the session ended, or the host made a new link";
+    case NetClientRefusal::guest_kicked:
+        return "guest link: the host kicked us";
     }
     return "?";
 }
