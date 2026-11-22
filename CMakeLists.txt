@@ -249,6 +249,7 @@ add_library(frontend_common STATIC
     video_texture.cpp
     video_output.cpp
     screen_effect_params.cpp
+    screenshot_writer.cpp
     gl_context.cpp
     gl_texture.cpp
     gl_picture.cpp
@@ -580,6 +581,15 @@ if(MULTITAP_BUILD_TESTS)
     add_test(NAME frontend_state_delta COMMAND frontend_state_delta_test)
     set_tests_properties(frontend_state_delta PROPERTIES
                          PASS_REGULAR_EXPRESSION "state delta: all checks passed"
+                         FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+
+    add_executable(frontend_screenshot_writer_test tests/screenshot_writer_test.cpp)
+    target_link_libraries(frontend_screenshot_writer_test PRIVATE frontend_common)
+    multitap_set_project_flags(frontend_screenshot_writer_test)
+    add_test(NAME frontend_screenshot_writer COMMAND frontend_screenshot_writer_test
+             "${CMAKE_CURRENT_BINARY_DIR}/screenshot_writer_test")
+    set_tests_properties(frontend_screenshot_writer PROPERTIES
+                         PASS_REGULAR_EXPRESSION "screenshot writer: all checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
     add_executable(frontend_rewind_buffer_test tests/rewind_buffer_test.cpp)

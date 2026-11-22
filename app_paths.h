@@ -40,6 +40,7 @@ struct AppPaths
     std::string saves;      // <root>/saves
     std::string states;     // <root>/states
     std::string system;     // <root>/system (BIOS and other files cores ask for)
+    std::string screenshots;   // <root>/screenshots (made when the first one is saved)
     std::string cache;      // <root>/cache (files extracted from archives, content_cache.h; safe to delete)
 };
 
