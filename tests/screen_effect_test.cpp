@@ -224,7 +224,8 @@ int main(int argc, char** argv)
     }
     if (!want_gl)
     {
-        std::printf("Vulkan path: %s\n", vulkan_path_to_string(shell.vulkan.path));
+        // (Not vulkan_path_to_string: a build without Vulkan has no such function.)
+        std::printf("Vulkan path: %s\n", shell.vulkan.path == VulkanPath::vulkan_1_3 ? "1.3" : "1.1");
     }
 
     const uint16_t rgb565[4] = { 0xF800, 0x07E0, 0x001F, 0xFFFF };
