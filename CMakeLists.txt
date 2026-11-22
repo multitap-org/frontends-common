@@ -759,6 +759,18 @@ if(MULTITAP_BUILD_TESTS AND MULTITAP_HAVE_ENET)
     set_tests_properties(frontend_net_share_link PROPERTIES
                          PASS_REGULAR_EXPRESSION "net share link: all checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    # SHARE across the internet: against the real beacon server code (Linux
+    # only, like the server and frontend_net_beacon).
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(frontend_net_share_link_beacon_test tests/net_share_link_beacon_test.cpp)
+        target_link_libraries(frontend_net_share_link_beacon_test PRIVATE frontend_net beacon_core)
+        multitap_set_project_flags(frontend_net_share_link_beacon_test)
+        add_test(NAME frontend_net_share_link_beacon
+                 COMMAND frontend_net_share_link_beacon_test "${CMAKE_CURRENT_BINARY_DIR}/net_share_link_beacon_test")
+        set_tests_properties(frontend_net_share_link_beacon PROPERTIES
+                             PASS_REGULAR_EXPRESSION "net share link beacon: all checks passed"
+                             FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    endif()
     add_executable(frontend_net_share_folders_test tests/net_share_folders_test.cpp)
     target_link_libraries(frontend_net_share_folders_test PRIVATE frontend_net)
     multitap_set_project_flags(frontend_net_share_folders_test)
