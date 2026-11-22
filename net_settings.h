@@ -142,9 +142,20 @@ enum class NetActionKind : uint8_t
 {
     press,    // once per press
     hold,     // while held (pressed, then released)
-    toggle,   // each press flips it; `state` says on (1) or off (0)
+    toggle,   // each press flips it; `state` bit 0 says on (1) or off (0), higher bits are the action's own
 };
 constexpr uint8_t NET_ACTION_KIND_COUNT = 3;
+
+// The "pause" toggle's state: why the host's game is paused, a bit each
+// (the pause is their sum). Bit 0 is the toggle itself: the USER cause,
+// the one a device's PAUSE sets and lifts. The others only say why else
+// it's paused, so a device can tell its player ("PAUSED ON PICCOLO: MENU");
+// pressing PAUSE doesn't lift them.
+constexpr uint32_t NET_PAUSE_USER = 1u << 0;          // PAUSE (a hotkey, a button, a device)
+constexpr uint32_t NET_PAUSE_MENU = 1u << 1;          // a window open on the host, with PAUSE IN MENU
+constexpr uint32_t NET_PAUSE_FOCUS = 1u << 2;         // the host's window lost focus
+constexpr uint32_t NET_PAUSE_CONTROLLERS = 1u << 3;   // the host's controllers disconnected
+constexpr uint32_t NET_PAUSE_BACKGROUND = 1u << 4;    // the host app is in the background (Android)
 
 struct NetAction
 {
