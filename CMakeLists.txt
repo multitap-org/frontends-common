@@ -135,9 +135,13 @@ endif()
 # libdatachannel (deps/libdatachannel, MPL-2.0; Andrés accepted it 2026-11-20):
 # WebRTC data channels natively, so desktop and Android meet browsers (the
 # browser has its own WebRTC: net_webrtc.js). Built static, with its
-# WebSocket client (the beacon's signaling, wss) and without media; TLS and
-# DTLS from the system's OpenSSL. Optional: a
-# frontend without deps/libdatachannel (or MULTITAP_NET_RTC=OFF) gets ENet only.
+# WebSocket client (the beacon's signaling, wss) and without media. TLS and
+# DTLS from the system's OpenSSL on the desktop; Android has none, so there
+# it's Mbed TLS (deps/mbedtls, Apache-2.0; Andrés, 2026-11-21: "we have no
+# other TLS library, it's fine"), built here with the rest
+# (MULTITAP_NET_RTC_MBEDTLS, also usable on the desktop to test it).
+# Optional: a frontend without deps/libdatachannel (or MULTITAP_NET_RTC=OFF)
+# gets ENet only.
 set(MULTITAP_LIBDATACHANNEL "${MULTITAP_DEPS_DIR}/libdatachannel")
 set(MULTITAP_HAVE_RTC OFF)
 if(MULTITAP_HAVE_ENET AND NOT EMSCRIPTEN AND EXISTS "${MULTITAP_LIBDATACHANNEL}/CMakeLists.txt")
@@ -148,6 +152,40 @@ if(MULTITAP_HAVE_ENET AND NOT EMSCRIPTEN AND EXISTS "${MULTITAP_LIBDATACHANNEL}/
         set(NO_MEDIA ON CACHE BOOL "" FORCE)
         set(NO_EXAMPLES ON CACHE BOOL "" FORCE)
         set(NO_TESTS ON CACHE BOOL "" FORCE)
+        if(ANDROID)
+            set(MULTITAP_NET_RTC_MBEDTLS_DEFAULT ON)
+        else()
+            set(MULTITAP_NET_RTC_MBEDTLS_DEFAULT OFF)
+        endif()
+        option(MULTITAP_NET_RTC_MBEDTLS "libdatachannel's TLS and DTLS from deps/mbedtls instead of OpenSSL" ${MULTITAP_NET_RTC_MBEDTLS_DEFAULT})
+        if(MULTITAP_NET_RTC_MBEDTLS)
+            set(MULTITAP_MBEDTLS "${MULTITAP_DEPS_DIR}/mbedtls")
+            if(NOT EXISTS "${MULTITAP_MBEDTLS}/framework/CMakeLists.txt")
+                message(FATAL_ERROR "MULTITAP_NET_RTC_MBEDTLS needs deps/mbedtls with its submodules (git submodule update --init --recursive)")
+            endif()
+            # The library only: static, no programs, tests or install.
+            set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+            set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+            set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "" FORCE)
+            set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
+            set(DISABLE_PACKAGE_CONFIG_AND_INSTALL ON CACHE BOOL "" FORCE)
+            set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+            add_subdirectory("${MULTITAP_MBEDTLS}" "${CMAKE_BINARY_DIR}/deps/mbedtls" EXCLUDE_FROM_ALL)
+            # Our additions to Mbed TLS's default configuration (DTLS-SRTP:
+            # libdatachannel's DTLS sets its profiles even without media),
+            # seen by Mbed TLS and by whatever includes its headers.
+            foreach(target mbedcrypto mbedx509 mbedtls)
+                target_compile_definitions(${target} PUBLIC
+                    "MBEDTLS_USER_CONFIG_FILE=\"${CMAKE_CURRENT_SOURCE_DIR}/mbedtls_user_config.h\"")
+            endforeach()
+            # The one target libdatachannel asks for (find_package's name).
+            add_library(multitap_mbedtls INTERFACE)
+            target_link_libraries(multitap_mbedtls INTERFACE mbedtls mbedx509 mbedcrypto)
+            add_library(MbedTLS::MbedTLS ALIAS multitap_mbedtls)
+            set(USE_MBEDTLS ON CACHE BOOL "" FORCE)
+        else()
+            set(USE_MBEDTLS OFF CACHE BOOL "" FORCE)
+        endif()
         add_subdirectory("${MULTITAP_LIBDATACHANNEL}" "${CMAKE_BINARY_DIR}/deps/libdatachannel" EXCLUDE_FROM_ALL)
         # v0.24.6's src/configuration.cpp uses std::transform without
         # <algorithm>: libstdc++ brings it in through other headers, libc++
@@ -379,6 +417,11 @@ if(MULTITAP_HAVE_ENET)
     if(MULTITAP_HAVE_RTC)
         target_sources(frontend_net PRIVATE net_rtc_datachannel.cpp net_signal.cpp)
         target_link_libraries(frontend_net PRIVATE datachannel-static)
+        if(MULTITAP_NET_RTC_MBEDTLS)
+            # The signaling socket can't check the beacon's certificate there
+            # (net_rtc_datachannel.cpp, net_rtc_socket_open).
+            target_compile_definitions(frontend_net PRIVATE MULTITAP_NET_RTC_MBEDTLS=1)
+        endif()
     elseif(MULTITAP_HAVE_WEBRTC_JS)
         target_sources(frontend_net PRIVATE net_rtc_emscripten.cpp net_signal.cpp)
         target_link_options(frontend_net INTERFACE "--js-library=${MULTITAP_NET_WEBRTC_JS}")
