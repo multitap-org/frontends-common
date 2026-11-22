@@ -356,7 +356,6 @@ if(MULTITAP_HAVE_ENET)
         net_cpace.cpp
         net_trust.cpp
         net_pairing.cpp
-        net_pair_link.cpp
         net_access.cpp
         net_client.cpp
         net_content.cpp
