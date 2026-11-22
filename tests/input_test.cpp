@@ -729,6 +729,43 @@ static void test_menus_and_defaults()
     delete system;
 }
 
+// A RetroPad device (a screen pad, a phone app's): on port 1 it drives the
+// interface with its own buttons; a remote one (game-only) never does.
+static void test_retropad_interface()
+{
+    InputSystem* system = new InputSystem{};
+    uint32_t screen = input_devices_add(&system->devices, InputDeviceKind::gamepad, "screen", "Screen pad");
+    input_devices_find(&system->devices, screen)->retropad = true;
+    InputBindingSet none = {};
+    uint32_t controller = input_add_controller(system, screen, "Screen pad", &none);
+    input_join(system, controller);
+    system->settings.ui_active = true;
+    InputFrame out = {};
+    const int16_t centered[2][2] = {};
+    auto bit = [](InputAction a) { return static_cast<uint16_t>(1u << static_cast<uint32_t>(a)); };
+    frame(system, 0, &out);
+    input_devices_set_retropad(&system->devices, screen, static_cast<uint16_t>(bit(InputAction::pad_down) | bit(InputAction::pad_b)), centered);
+    out = {};
+    frame(system, 16, &out);
+    check(out.gamepad_held[static_cast<uint32_t>(InputAction::ui_down)], "retropad ui: the d-pad moves");
+    check(out.gamepad_held[static_cast<uint32_t>(InputAction::ui_accept)], "retropad ui: B accepts");
+    check(!out.gamepad_held[static_cast<uint32_t>(InputAction::ui_back)], "retropad ui: A isn't held");
+    input_devices_set_retropad(&system->devices, screen, bit(InputAction::pad_start), centered);
+    out = {};
+    frame(system, 32, &out);
+    check(out.pressed[static_cast<uint32_t>(InputAction::ui_open_menu)], "retropad ui: START opens the menu bar");
+    check(!out.pressed[static_cast<uint32_t>(InputAction::hotkey_quick_menu)], "retropad ui: no hotkeys");
+
+    input_devices_set_retropad(&system->devices, screen, 0, centered);
+    input_devices_find(&system->devices, screen)->game_only = true;
+    frame(system, 48, &out);
+    input_devices_set_retropad(&system->devices, screen, bit(InputAction::pad_down), centered);
+    out = {};
+    frame(system, 64, &out);
+    check(!out.held[static_cast<uint32_t>(InputAction::ui_down)], "retropad ui: a remote one never drives it");
+    delete system;
+}
+
 static void test_config()
 {
     // A split keyboard, a renamed gamepad with a changed binding and deadzone.
@@ -1413,6 +1450,7 @@ int main()
     test_fake_gamepad();
     test_hold();
     test_menus_and_defaults();
+    test_retropad_interface();
     test_config();
     test_capture_and_remove();
     test_core_profiles();

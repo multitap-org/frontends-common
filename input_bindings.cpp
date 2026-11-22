@@ -1176,15 +1176,38 @@ static float set_value(const InputBindingSet* set, const InputDevice* device, In
     return value;
 }
 
+// A RetroPad device's interface: the default bindings' buttons (the D-pad
+// moves, B accepts, A goes back, L / R page, Y opens the menu), and START
+// opens the menu too (a screen pad has no other way to reach it).
+static uint16_t retropad_ui_mask(InputAction action)
+{
+    auto bit = [](InputAction pad) { return static_cast<uint16_t>(1u << index_of(pad)); };
+    switch (action)
+    {
+    case InputAction::ui_up:         return bit(InputAction::pad_up);
+    case InputAction::ui_down:       return bit(InputAction::pad_down);
+    case InputAction::ui_left:       return bit(InputAction::pad_left);
+    case InputAction::ui_right:      return bit(InputAction::pad_right);
+    case InputAction::ui_accept:     return bit(InputAction::pad_b);
+    case InputAction::ui_back:       return bit(InputAction::pad_a);
+    case InputAction::ui_page_left:  return bit(InputAction::pad_l);
+    case InputAction::ui_page_right: return bit(InputAction::pad_r);
+    case InputAction::ui_open_menu:  return static_cast<uint16_t>(bit(InputAction::pad_y) | bit(InputAction::pad_start));
+    default:                         return 0;
+    }
+}
+
 static float action_value(const InputController* controller, const InputDevice* device, InputAction action)
 {
     if (device->retropad)
     {
         // A RetroPad device has no bindings: its RetroPad buttons are its
-        // own (START joins a port); nothing else (no interface, no hotkeys).
+        // own (START joins a port), and the interface's (retropad_ui_mask);
+        // no hotkeys. (A remote one is game-only: it never drives the interface.)
         uint32_t index = index_of(action);
         uint16_t buttons = static_cast<uint16_t>(device->retropad_buttons | device->retropad_tapped);
-        return index < INPUT_PAD_BUTTON_COUNT && (buttons & (1u << index)) != 0 ? 1.0f : 0.0f;
+        uint16_t mask = index < INPUT_PAD_BUTTON_COUNT ? static_cast<uint16_t>(1u << index) : retropad_ui_mask(action);
+        return (buttons & mask) != 0 ? 1.0f : 0.0f;
     }
     float value = 0.0f;
     const InputSource* slots = controller->bindings.sources[index_of(action)];
