@@ -136,11 +136,15 @@ void frame_timing_measure_at(FrameTiming* timing, bool running_frames, uint64_t 
 
 bool frame_timing_frame_due(FrameTiming* timing)
 {
+    return frame_timing_frame_due_at(timing, SDL_GetTicksNS());
+}
+
+bool frame_timing_frame_due_at(FrameTiming* timing, uint64_t now)
+{
     if (timing->effective == TimingMode::vsync)
     {
         return true;
     }
-    uint64_t now = SDL_GetTicksNS();
     if (now < timing->next_frame_ns)
     {
         return false;
@@ -152,6 +156,15 @@ bool frame_timing_frame_due(FrameTiming* timing)
     if (now > timing->next_frame_ns + EXACT_MAX_LATENESS_NS)
     {
         timing->next_frame_ns = now + period;
+    }
+    // Whole frames already due as well run in this loop too (catch_up_frames):
+    // a loop that can't come back sooner (the browser's, once per screen
+    // refresh, which a phone may drop to 48 Hz) would otherwise run the core
+    // at the loop's rate, not its own.
+    while (timing->catch_up_frames < FRAME_TIMING_MAX_CATCH_UP && now >= timing->next_frame_ns)
+    {
+        timing->next_frame_ns += period;
+        timing->catch_up_frames++;
     }
     return true;
 }

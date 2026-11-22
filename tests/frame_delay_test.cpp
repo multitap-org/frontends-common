@@ -139,6 +139,41 @@ static FrameTiming vsync_timing(bool catch_up)
     return timing;
 }
 
+// Exact timing in a loop slower than the core (the browser's, at a phone's
+// 48 Hz): every frame due runs, so the core keeps its own rate; a faster
+// loop (120 Hz) runs no extra ones.
+static uint32_t exact_frames_in(double loop_hz, double seconds, uint32_t* extras)
+{
+    FrameTiming timing = {};
+    frame_timing_update(&timing, true, 59.73, 0.0, false);   // no display rate: Exact
+    uint64_t now = 1000000000ull;
+    timing.next_frame_ns = now;
+    uint32_t frames = 0;
+    *extras = 0;
+    uint64_t loop_ns = static_cast<uint64_t>(1e9 / loop_hz);
+    for (uint64_t t = 0; t < static_cast<uint64_t>(seconds * 1e9); t += loop_ns)
+    {
+        frame_timing_measure_at(&timing, true, now + t);
+        if (frame_timing_frame_due_at(&timing, now + t))
+        {
+            frames += 1 + timing.catch_up_frames;
+            *extras += timing.catch_up_frames;
+        }
+    }
+    return frames;
+}
+
+static void test_exact_slow_loop()
+{
+    uint32_t extras = 0;
+    uint32_t slow = exact_frames_in(48.0, 10.0, &extras);
+    check(slow >= 595 && slow <= 599, "Exact in a 48 Hz loop: the core still runs at 59.73");
+    check(extras > 0, "...with extra frames in some loops");
+    uint32_t fast = exact_frames_in(120.0, 10.0, &extras);
+    check(fast >= 595 && fast <= 599, "Exact in a 120 Hz loop: 59.73 too");
+    check(extras == 0, "...and never an extra frame");
+}
+
 static void test_catch_up()
 {
     uint64_t now = 1000000000ull;
@@ -246,6 +281,7 @@ int main()
     test_auto_delay_minute_must_be_uninterrupted();
     test_auto_delay_warmup_and_restore();
     test_catch_up();
+    test_exact_slow_loop();
     test_vsync_unpaced();
     if (g_failures == 0)
     {
