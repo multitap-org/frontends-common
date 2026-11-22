@@ -8,6 +8,16 @@
 #include "app_shell_vulkan.h"
 #include "debug_ui.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/em_js.h>
+
+// The page measures the screen's rate (frontends-common web/multitap-page.js:
+// multitap_display_hz); 0 until it has.
+EM_JS(double, web_display_hz, (), {
+    return (typeof globalThis.multitap_display_hz === 'number') ? globalThis.multitap_display_hz : 0;
+});
+#endif
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -393,6 +403,11 @@ bool app_shell_set_vsync(AppShell* shell, bool vsync)
 
 double app_shell_display_refresh_hz(const AppShell* shell)
 {
+#ifdef __EMSCRIPTEN__
+    // The browser gives no mode's rate (SDL says 0), and a phone's changes.
+    (void)shell;
+    return web_display_hz();
+#else
     const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(shell->window));
     if (mode == nullptr)
     {
@@ -404,6 +419,7 @@ double app_shell_display_refresh_hz(const AppShell* shell)
         return static_cast<double>(mode->refresh_rate_numerator) / static_cast<double>(mode->refresh_rate_denominator);
     }
     return static_cast<double>(mode->refresh_rate);
+#endif
 }
 
 bool app_shell_vsync_forced(const AppShell* shell)

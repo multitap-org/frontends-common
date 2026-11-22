@@ -96,8 +96,13 @@ void frame_timing_measure(FrameTiming* timing, bool running_frames);
 void frame_timing_measure_at(FrameTiming* timing, bool running_frames, uint64_t now_ns);
 
 // True if a core frame should run now. Vsync: always (vsync paces the loop).
-// Exact: when the timer says so (and advances it).
+// Exact: when the timer says so (and advances it); whole frames due besides
+// go to catch_up_frames (at most FRAME_TIMING_MAX_CATCH_UP), so a loop slower
+// than the core (the browser's at 48 Hz) still runs it at its own rate.
+// Call after frame_timing_measure (which clears catch_up_frames).
+// frame_timing_frame_due_at() takes the time (tests).
 bool frame_timing_frame_due(FrameTiming* timing);
+bool frame_timing_frame_due_at(FrameTiming* timing, uint64_t now_ns);
 
 // Exact mode: sleeps until the next frame is due (vsync off, so nothing else
 // would stop the loop from spinning). Does nothing in vsync mode.
