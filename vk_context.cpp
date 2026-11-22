@@ -463,10 +463,18 @@ static bool select_physical_device(VulkanContext* context, VkSurfaceKHR surface)
 // Logical device
 // ---------------------------------------------------------------------------
 
+// Every texture ImGui draws takes one sampled-image descriptor from this
+// pool (debug_ui_add_texture): the font atlas, the game's picture, QUICK
+// MENU's savestate thumbnail, the DVR's thumbnails (DVR_VIEW_MAX_THUMBS, 15)
+// and whatever comes next. ImGui's minimum (8) ran out on the DVR's first
+// open (VK_ERROR_OUT_OF_POOL_MEMORY, an abort): room for many more.
+constexpr uint32_t IMGUI_TEXTURE_POOL_SIZE = 64;
+static_assert(IMGUI_TEXTURE_POOL_SIZE >= IMGUI_IMPL_VULKAN_MINIMUM_SAMPLED_IMAGE_POOL_SIZE, "ImGui's minimum");
+
 static bool create_imgui_descriptor_pool(VulkanContext* context)
 {
     VkDescriptorPoolSize pool_sizes[] = {
-        { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, IMGUI_IMPL_VULKAN_MINIMUM_SAMPLED_IMAGE_POOL_SIZE },
+        { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, IMGUI_TEXTURE_POOL_SIZE },
         { VK_DESCRIPTOR_TYPE_SAMPLER,       IMGUI_IMPL_VULKAN_MINIMUM_SAMPLER_POOL_SIZE },
     };
     constexpr uint32_t pool_size_count = sizeof(pool_sizes) / sizeof(pool_sizes[0]);
