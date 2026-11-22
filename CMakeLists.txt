@@ -232,6 +232,7 @@ add_library(frontend_common STATIC
     debug_ui.cpp
     text_input.cpp
     app_shell.cpp
+    app_links.cpp
     audio_output.cpp
     haptics.cpp
     frame_timing.cpp
@@ -266,6 +267,10 @@ add_library(frontend_common STATIC
     input_sdl_mapping.cpp
     input_layouts.cpp
 )
+# app_links: AF_UNIX sockets (Winsock) and the per-user scheme in the registry.
+if(WIN32)
+    target_link_libraries(frontend_common PRIVATE ws2_32 advapi32)
+endif()
 if(MULTITAP_GPU_VULKAN)
     target_sources(frontend_common PRIVATE vk_context.cpp vk_barrier.cpp vk_swapchain.cpp renderer.cpp vk_texture.cpp
                    picture.cpp screen_effect.cpp app_shell_vulkan.cpp debug_ui_vulkan.cpp)
@@ -496,6 +501,18 @@ if(MULTITAP_BUILD_TESTS)
 
     # The migration check needs a scratch folder that doesn't exist yet: a
     # fixture empties it first.
+    # The link scheme's hand-over between copies (app_links.h): sockets, so
+    # not in the browser; Android has no hand-over.
+    if(NOT EMSCRIPTEN AND NOT ANDROID AND NOT WIN32)
+        add_executable(frontend_app_links_test tests/app_links_test.cpp)
+        target_link_libraries(frontend_app_links_test PRIVATE frontend_common)
+        multitap_set_project_flags(frontend_app_links_test)
+        add_test(NAME frontend_app_links COMMAND frontend_app_links_test)
+        set_tests_properties(frontend_app_links PROPERTIES
+                             PASS_REGULAR_EXPRESSION "app links: all checks passed"
+                             FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    endif()
+
     add_executable(frontend_app_paths_test tests/app_paths_test.cpp)
     target_link_libraries(frontend_app_paths_test PRIVATE frontend_common)
     multitap_set_project_flags(frontend_app_paths_test)
