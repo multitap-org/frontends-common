@@ -156,6 +156,7 @@ constexpr uint32_t NET_PAUSE_MENU = 1u << 1;          // a window open on the ho
 constexpr uint32_t NET_PAUSE_FOCUS = 1u << 2;         // the host's window lost focus
 constexpr uint32_t NET_PAUSE_CONTROLLERS = 1u << 3;   // the host's controllers disconnected
 constexpr uint32_t NET_PAUSE_BACKGROUND = 1u << 4;    // the host app is in the background (Android)
+constexpr uint32_t NET_PAUSE_PAIRING = 1u << 5;       // a device asks to pair: its dialog is up on the host
 
 struct NetAction
 {
