@@ -37,8 +37,48 @@ static uint32_t bit(InputButton button)
     return 1u << static_cast<uint32_t>(button);
 }
 
+// Guest links: a PLAY guest whose pad finds no free port watches
+// (input_net_peer_port says so), and plays once a port frees up.
+static void test_guest_ports()
+{
+    InputSystem* system = new InputSystem{};
+    InputNet* net = new InputNet{};
+    int32_t controllers[INPUT_PORT_COUNT + 1] = {};
+    for (uint32_t peer = 0; peer < INPUT_PORT_COUNT + 1; peer++)
+    {
+        uint8_t key[32] = {};
+        key[0] = static_cast<uint8_t>(peer + 1);
+        NetPadSender sender;
+        NetPadState none;
+        uint8_t packet[NET_INPUT_MAX_PACKET];
+        size_t size = net_input_push(&sender, 0, &none, packet, sizeof(packet));
+        input_net_receive(net, system, peer, key, "GUEST", packet, size);
+        check(input_net_peer_port(net, system, peer) == INPUT_NO_PORT, "a guest's pad has no port before it joins");
+        controllers[peer] = input_first_controller(system, net->pads[peer][0].device);
+    }
+    for (uint32_t peer = 0; peer < INPUT_PORT_COUNT; peer++)
+    {
+        check(controllers[peer] >= 0 && input_join(system, static_cast<uint32_t>(controllers[peer])),
+              "guests join while ports are free");
+        check(input_net_peer_port(net, system, peer) == static_cast<int32_t>(peer), "each on its port");
+    }
+    uint32_t last = INPUT_PORT_COUNT;
+    check(controllers[last] >= 0 && !input_join(system, static_cast<uint32_t>(controllers[last])),
+          "no free port: the last guest can't join");
+    check(input_net_peer_port(net, system, last) == INPUT_NO_PORT, "it watches");
+    input_net_peer_gone(net, system, 1);
+    InputFrame frame;
+    input_update(system, 16, &frame);   // the router takes the gone pad off its port
+    check(input_join(system, static_cast<uint32_t>(controllers[last])), "a port freed: it joins");
+    check(input_net_peer_port(net, system, last) == 1, "on the freed port");
+    check(input_net_peer_port(net, system, NET_MAX_PEERS) == INPUT_NO_PORT, "a peer out of range has none");
+    delete net;
+    delete system;
+}
+
 int main()
 {
+    test_guest_ports();
     // Packets.
     NetPadSender sender;
     uint8_t packet[NET_INPUT_MAX_PACKET];

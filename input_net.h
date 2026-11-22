@@ -48,5 +48,9 @@ void input_net_receive(InputNet* net, InputSystem* system, uint32_t peer, const 
 // either. Off until set; call it with each packet (levels change live).
 void input_net_set_hotkeys(InputNet* net, InputSystem* system, uint32_t peer, bool allowed);
 
+// The port of the peer's first pad that's on one, or INPUT_NO_PORT (none
+// joined yet, or no port was free: a guest that watches).
+int32_t input_net_peer_port(const InputNet* net, const InputSystem* system, uint32_t peer);
+
 // The peer left (or networking stopped): its pads are unplugged.
 void input_net_peer_gone(InputNet* net, InputSystem* system, uint32_t peer);

@@ -151,3 +151,30 @@ void input_net_set_hotkeys(InputNet* net, InputSystem* system, uint32_t peer, bo
         }
     }
 }
+
+int32_t input_net_peer_port(const InputNet* net, const InputSystem* system, uint32_t peer)
+{
+    if (peer >= NET_MAX_PEERS)
+    {
+        return INPUT_NO_PORT;
+    }
+    for (uint32_t pad = 0; pad < NET_INPUT_MAX_PADS; pad++)
+    {
+        const InputNetPad* entry = &net->pads[peer][pad];
+        if (!entry->active)
+        {
+            continue;
+        }
+        int32_t controller = input_first_controller(system, entry->device);
+        if (controller < 0)
+        {
+            continue;
+        }
+        int32_t port = input_controller_port(system, static_cast<uint32_t>(controller));
+        if (port != INPUT_NO_PORT)
+        {
+            return port;
+        }
+    }
+    return INPUT_NO_PORT;
+}
