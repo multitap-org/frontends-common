@@ -61,7 +61,7 @@
 //   --dir DIR   where net_probe keeps its device key and paired devices
 //               (net_probe_identity.cfg, net_probe_devices.cfg; default ".")
 //
-// piccolo-share (net_share.h; needs OWNER access), with --connect / --pair,
+// piccolo-share (net_share.h; needs SHARE access), with --connect / --pair,
 // through net_share_link as piccolo's SHARE does; --seconds is the time
 // limit (at least 30):
 //   --share-list PATH   list a folder of the host's shared folders ("" = the
@@ -74,7 +74,7 @@
 //   --share-host NAME   be a piccolo-share host instead (net_service, as
 //                       piccolo runs it): --share-dir as its game folder,
 //                       --share-saves DIR / --share-states DIR, pairing open,
-//                       every device that connects raised to OWNER (a test
+//                       every device that connects raised to SHARE (a test
 //                       tool: never on a network you don't trust). Ctrl+C stops
 //
 // A piccolo with networking on is a host like --listen: CONFIG > NETWORK >
@@ -1390,9 +1390,9 @@ static int run_share(uint16_t port, double seconds, const char* at, const char* 
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    // A level raised as we come in (a host that gives OWNER to whoever
+    // A level raised as we come in (a host that gives SHARE to whoever
     // pairs) is told a moment after the welcome.
-    for (int i = 0; i < 400 && status.state == NetShareLinkState::ready && status.access != NetAccessLevel::owner; i++)
+    for (int i = 0; i < 400 && status.state == NetShareLinkState::ready && status.access != NetAccessLevel::share; i++)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
         net_share_link_status(link, &status);
@@ -1402,15 +1402,15 @@ static int run_share(uint16_t port, double seconds, const char* at, const char* 
         std::printf("not connected: %s\n", status.refusal == NetClientRefusal::none ? "out of time"
                                                                                      : refusal_text(status.refusal));
     }
-    else if (status.access != NetAccessLevel::owner)
+    else if (status.access != NetAccessLevel::share)
     {
-        std::printf("connected to \"%s\" with %s access: piccolo-share needs OWNER (give it on the host: "
+        std::printf("connected to \"%s\" with %s access: piccolo-share needs SHARE (give it on the host: "
                     "SETTINGS > NETWORK)\n", status.host_name.c_str(), net_access_level_name(status.access));
         result = 3;
     }
     else
     {
-        std::printf("connected to \"%s\" (OWNER)\n", status.host_name.c_str());
+        std::printf("connected to \"%s\" (SHARE)\n", status.host_name.c_str());
         result = 0;
         NetShareStatus list_status = NetShareStatus::failed;
         std::vector<NetShareEntry> entries;
@@ -1530,8 +1530,8 @@ static int run_share_host(uint16_t port, const char* name, const std::string* di
                 event.device >= 0)
             {
                 uint32_t device = static_cast<uint32_t>(event.device);
-                net_access_set_level(&service->access, device, NetAccessLevel::owner);
-                std::printf("%s \"%s\": OWNER\n", event.type == NetAccessEventType::paired ? "paired" : "connected",
+                net_access_set_level(&service->access, device, NetAccessLevel::share);
+                std::printf("%s \"%s\": SHARE\n", event.type == NetAccessEventType::paired ? "paired" : "connected",
                             service->access.trust.devices[device].name.c_str());
             }
             else if (event.type == NetAccessEventType::closed)

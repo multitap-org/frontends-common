@@ -1,6 +1,6 @@
 // Checks net_share_link.h over loopback: a frontend's client connection to
 // another piccolo (a net_service host) on its own thread. A wrong code is
-// refused, the right one pairs (as GAMEPAD: no listing), raised to OWNER it
+// refused, the right one pairs (as GAMEPAD: no listing), raised to SHARE it
 // lists and copies a file, and disconnecting ends it cleanly.
 //
 // Usage: frontend_net_share_link_test <scratch folder>
@@ -167,15 +167,15 @@ int main(int argc, char** argv)
     check(!wait_listing(link, service, &entries, &list_status, 100), "no listing at GAMEPAD");
 
     net_service_lock(service);
-    net_access_set_level(&service->access, 0, NetAccessLevel::owner);
+    net_access_set_level(&service->access, 0, NetAccessLevel::share);
     net_service_unlock(service);
-    for (int i = 0; i < 100 && status.access != NetAccessLevel::owner; i++)
+    for (int i = 0; i < 100 && status.access != NetAccessLevel::share; i++)
     {
         host_round(service);
         net_share_link_status(link, &status);
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    check(status.access == NetAccessLevel::owner, "told it's OWNER now");
+    check(status.access == NetAccessLevel::share, "told it's SHARE now");
     net_share_link_list(link, "");
     check(wait_listing(link, service, &entries, &list_status, 1000) && list_status == NetShareStatus::ok &&
               entries.size() == 1 && entries[0].name == "roms",
