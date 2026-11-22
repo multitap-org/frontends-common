@@ -2,7 +2,7 @@
 // inputs, events) reaches the buffer in order and intact; an empty pool skips
 // the state; a full queue restarts the history right where an input was
 // lost (never replays across the gap); pause gives the buffer to the caller
-// (a fork, then recording goes on); a worker left far behind (big states,
+// (truncate, then recording goes on); a worker left far behind (big states,
 // no frame pacing) still leaves a consistent history.
 //
 // States and inputs are pure functions of the frame number, so any record
@@ -192,7 +192,7 @@ static void test_record_and_truncate()
     }
     uint64_t from = rewind_buffer_record(&recorder.buffer, cursor.position)->frame;
     check(from <= 1000 && from > 900, "truncate: a state near frame 1000");
-    rewind_buffer_fork(&recorder.buffer, &cursor);
+    rewind_buffer_truncate(&recorder.buffer, &cursor);
     rewind_cursor_destroy(&cursor);
     rewind_recorder_resume(&recorder);
 

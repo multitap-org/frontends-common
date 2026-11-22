@@ -18,7 +18,7 @@
 //
 // The buffer: the worker owns it while recording. While paused
 // (rewind_recorder_pause: the DVR is open) the caller owns it: cursors,
-// fork. Jobs queued while paused wait for rewind_recorder_resume.
+// truncate. Jobs queued while paused wait for rewind_recorder_resume.
 //
 // Threading: std::thread with a plain function, one std::mutex and two
 // condition variables (work queued / worker idle).
