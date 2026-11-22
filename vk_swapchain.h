@@ -34,6 +34,12 @@ struct VulkanSwapchain
     bool               vsync          = true;
     VkExtent2D         extent         = {};
 
+    // The display is turned (Android, a phone on its side) and the swapchain
+    // was made upright (IDENTITY) for the compositor to turn: Android then
+    // reports VK_SUBOPTIMAL_KHR on every present, which isn't a reason to
+    // recreate (renderer.cpp). See create_swapchain_resources.
+    bool               compositor_rotates = false;
+
     uint32_t    min_image_count = 0;   // what we asked for
     uint32_t    image_count     = 0;   // what the driver gave us
     VkImage     images[SWAPCHAIN_MAX_IMAGES]           = {};
