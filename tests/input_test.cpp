@@ -508,6 +508,36 @@ static void press_start(InputSystem* system, uint32_t pad, uint64_t now_ms, Inpu
     frame(system, now_ms + 8, &after);
 }
 
+// A device that shares port 1 (piccolo's touch pad): on port 1 by itself,
+// and a gamepad's START still joins port 1; the next gamepad port 2.
+static void test_touch_pad_shares_port1()
+{
+    InputSystem* system = new InputSystem{};
+    system->settings.keyboard_shares_port1 = false;
+    InputBindingSet pad_set = {};
+    gamepad_bindings(&pad_set);
+    uint32_t touch = input_devices_add(&system->devices, InputDeviceKind::gamepad, "touch", "TOUCH PAD");
+    input_devices_find(&system->devices, touch)->shares_port1 = true;
+    input_add_controller(system, touch, "TOUCH PAD", &pad_set);   // controller 0
+    uint32_t pad_a = input_devices_add(&system->devices, InputDeviceKind::gamepad, "guid-a", "Pad");
+    input_add_controller(system, pad_a, "Pad", &pad_set);          // controller 1
+    uint32_t pad_b = input_devices_add(&system->devices, InputDeviceKind::gamepad, "guid-b", "Pad");
+    input_add_controller(system, pad_b, "Pad", &pad_set);          // controller 2
+    InputFrame out = {};
+    frame(system, 0, &out);
+    check(input_port_has(system, 0, 0), "touch pad: on port 1 by itself");
+    press_start(system, pad_a, 100, &out);
+    check(out.joined_port == 0 && input_port_has(system, 0, 1), "touch pad: a gamepad's START still joins port 1");
+    press_start(system, pad_b, 200, &out);
+    check(out.joined_port == 1, "touch pad: the next gamepad port 2");
+    // Moved to port 2 by hand: it stays there.
+    input_port_remove(system, 0, 0);
+    input_port_add(system, 1, 0);
+    frame(system, 300, &out);
+    check(!input_port_has(system, 0, 0) && input_port_has(system, 1, 0), "touch pad: a move stays");
+    delete system;
+}
+
 // N:N: several controllers on a port (N:1), a controller on several ports
 // (1:N), START with every port taken, unplugging from several ports.
 static void test_shared_ports()
@@ -1410,6 +1440,7 @@ int main()
     test_gamepad_hotkeys();
     test_combo_and_stick();
     test_shared_ports();
+    test_touch_pad_shares_port1();
     test_fake_gamepad();
     test_hold();
     test_menus_and_defaults();

@@ -689,7 +689,19 @@ static int32_t first_mouse(const InputSystem* system)
     return -1;
 }
 
-// Free for START: no members but the keyboard and the mouse put there.
+// A controller whose device shares port 1 (the touch pad).
+static bool shares_port1(const InputSystem* system, uint32_t controller)
+{
+    if (controller >= system->controllers.size())
+    {
+        return false;
+    }
+    const InputDevice* device = input_devices_find_const(&system->devices, system->controllers[controller].device_id);
+    return device != nullptr && device->shares_port1;
+}
+
+// Free for START: no members but the keyboard, the mouse and the devices that
+// share port 1 put there.
 static bool port_free(const InputSystem* system, uint32_t port)
 {
     const std::vector<uint32_t>* members = &system->ports[port];
@@ -697,7 +709,9 @@ static bool port_free(const InputSystem* system, uint32_t port)
     int32_t mouse = system->mouse_seated ? first_mouse(system) : -1;
     for (size_t m = 0; m < members->size(); m++)
     {
-        if (static_cast<int32_t>((*members)[m]) != keyboard && static_cast<int32_t>((*members)[m]) != mouse)
+        uint32_t member = (*members)[m];
+        if (static_cast<int32_t>(member) != keyboard && static_cast<int32_t>(member) != mouse &&
+            !shares_port1(system, member))
         {
             return false;
         }
@@ -1580,6 +1594,20 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
     {
         input_port_add(system, 0, static_cast<uint32_t>(mouse_player));
         system->mouse_seated = true;
+    }
+
+    // Devices that share port 1 (the touch pad) on it, once each: moved
+    // elsewhere later (DEVICES), they stay where they were moved.
+    for (size_t c = 0; c < system->controllers.size(); c++)
+    {
+        uint32_t index = static_cast<uint32_t>(c);
+        const InputDevice* device = input_devices_find_const(&system->devices, system->controllers[c].device_id);
+        if (device != nullptr && device->connected && device->shares_port1 && !system->controllers[c].shared_seated &&
+            input_controller_port(system, index) == INPUT_NO_PORT)
+        {
+            input_port_add(system, 0, index);
+            system->controllers[c].shared_seated = true;
+        }
     }
 
     // Devices that went away leave their ports; back on all of them when they return.

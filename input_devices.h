@@ -126,6 +126,12 @@ struct InputDevice
     // The user's word on it: auto = ignored only if it looks fake.
     InputIgnore ignore = InputIgnore::automatic;
 
+    // On port 1 from the moment it's there, as the mouse is (and the keyboard
+    // with keyboard_shares_port1), and not counted there for START: a gamepad
+    // that joins later still gets port 1, only more gamepads go to 2, 3, 4
+    // (Andrés, 2026-11-21). Set for piccolo's touch pad.
+    bool    shares_port1 = false;
+
     // Only for playing: never the interface, even on port 1, and of the
     // hotkeys only the game's (SAVE STATE, LOAD STATE, FAST FORWARD). Set for
     // remote devices (input_net): someone on the network plays, the menus

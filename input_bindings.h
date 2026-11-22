@@ -246,6 +246,7 @@ struct InputController
     InputHotkeyMode hotkey_mode = InputHotkeyMode::hold;
 
     // Kept between frames by input_update().
+    bool       shared_seated = false;   // its device shares_port1 and it was put on port 1 (once: a move stays)
     bool       last_ports[INPUT_PORT_COUNT] = {};    // the ports it was on when its device went away
     bool       held_last[INPUT_ACTION_COUNT] = {};
     InputLayer layer = InputLayer::none;
