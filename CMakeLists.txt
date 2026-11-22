@@ -567,6 +567,17 @@ if(MULTITAP_BUILD_TESTS)
                          PASS_REGULAR_EXPRESSION "gl video: all checks passed"
                          FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
 
+    add_executable(frontend_screen_effect_test tests/screen_effect_test.cpp)
+    target_link_libraries(frontend_screen_effect_test PRIVATE frontend_common)
+    multitap_set_project_flags(frontend_screen_effect_test)
+    foreach(api IN ITEMS vulkan vulkan11 gl)
+        add_test(NAME frontend_screen_effect_${api} COMMAND frontend_screen_effect_test ${api})
+        set_tests_properties(frontend_screen_effect_${api} PROPERTIES
+                             SKIP_RETURN_CODE 77
+                             PASS_REGULAR_EXPRESSION "screen effect \\(${api}\\): all checks passed"
+                             FAIL_REGULAR_EXPRESSION "FAIL|ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:")
+    endforeach()
+
     add_executable(frontend_frame_delta_test tests/frame_delta_test.cpp)
     target_link_libraries(frontend_frame_delta_test PRIVATE frontend_common)
     multitap_set_project_flags(frontend_frame_delta_test)
