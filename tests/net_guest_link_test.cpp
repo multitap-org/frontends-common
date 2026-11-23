@@ -269,6 +269,7 @@ static void test_guest_links(const char* beacon_path, const std::string& dir)
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     check(reachable, "the host's link is on the beacon (UDP id and guest room)");
+    check(net_access_guest_ready(world.host), "the link reports ready (its room joined)");
 
     // Two guests: one over UDP, one over WebRTC only.
     Guest* a = new_guest(&world, "PIXEL 8", url, stun);
