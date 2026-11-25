@@ -101,6 +101,17 @@ endif()
 # libdatachannel, Mbed TLS on Android) is built by multitap-net, which also
 # tells us which transports it has (MULTITAP_HAVE_RTC, MULTITAP_HAVE_WEBRTC_JS).
 
+# The settings model and the UI text, with no GUI: built without ImGui's
+# include path, so a frontend's logic (its view state) can link this alone and
+# a stray #include "imgui.h" there fails to compile.
+add_library(frontend_settings STATIC
+    settings.cpp
+    localization.cpp
+)
+target_include_directories(frontend_settings PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(frontend_settings PUBLIC SDL3::SDL3 host_common)
+multitap_set_project_flags(frontend_settings)
+
 add_library(frontend_common STATIC
     debug_ui.cpp
     text_input.cpp
@@ -109,7 +120,6 @@ add_library(frontend_common STATIC
     audio_output.cpp
     haptics.cpp
     frame_timing.cpp
-    settings.cpp
     app_paths.cpp
     app_assets.cpp
     input_hold.cpp
@@ -130,7 +140,6 @@ add_library(frontend_common STATIC
     gl_screen_effect.cpp
     gl_shader_chain.cpp
     window_size.cpp
-    localization.cpp
     rate_control.cpp
     frame_delay.cpp
     input_devices.cpp
@@ -195,7 +204,7 @@ target_include_directories(frontend_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # has no GLES2 headers). The guards are Khronos's, so a file that also
 # includes the system's (ImGui's GLES 2 backend) still builds.
 target_compile_definitions(frontend_common PUBLIC SDL_USE_BUILTIN_OPENGL_DEFINITIONS)
-target_link_libraries(frontend_common PUBLIC imgui SDL3::SDL3 host_common multitap_dep_libsamplerate)
+target_link_libraries(frontend_common PUBLIC frontend_settings imgui SDL3::SDL3 host_common multitap_dep_libsamplerate)
 if(MULTITAP_ARCHIVES)
     target_sources(frontend_common PRIVATE archive.cpp content_cache.cpp)
     target_link_libraries(frontend_common PRIVATE multitap_dep_miniz multitap_dep_7z)
@@ -312,7 +321,7 @@ endif()
 
 if(MULTITAP_BUILD_TESTS)
     add_executable(frontend_settings_test tests/settings_test.cpp)
-    target_link_libraries(frontend_settings_test PRIVATE frontend_common)
+    target_link_libraries(frontend_settings_test PRIVATE frontend_settings)
     multitap_set_project_flags(frontend_settings_test)
 
     add_test(NAME frontend_settings
