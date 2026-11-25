@@ -1,7 +1,7 @@
 #pragma once
 
-// picture.h on OpenGL ES: the core's picture where viewport.h says, through
-// ImGui, with the viewport's filter.
+// picture.h on OpenGL ES: the core's picture where viewport.h says, as a
+// ShownImage for the GUI, with the viewport's filter.
 //
 //   nearest         the texture's shown part as is, nearest sampling.
 //   bilinear        a copy of the shown part at its exact size, then bilinear
@@ -10,15 +10,15 @@
 //                   nearest, then bilinear for the rest.
 //
 // The copy is made in gl_picture_record() (the copy program into a render
-// target), after the frame's upload; ImGui draws it when the frame is drawn.
+// target), after the frame's upload; the GUI draws it when the frame is drawn.
 
 #include <cstdint>
 
 #include "gl_context.h"
 #include "gl_texture.h"
+#include "shown_image.h"
 #include "viewport.h"
 
-struct ImDrawList;
 
 struct GlPicture
 {
@@ -39,8 +39,8 @@ void gl_picture_destroy(GlPicture* picture, GlContext* context);
 bool gl_picture_prepare(GlPicture* picture, GlContext* context, const GlStreamingTexture* source, bool has_content,
                         const ViewportResult* viewport);
 
-void gl_picture_draw(const GlPicture* picture, ImDrawList* draw_list, const GlStreamingTexture* source,
-                     float origin_x, float origin_y);
+bool gl_picture_shown_image(const GlPicture* picture, const GlStreamingTexture* source, float origin_x,
+                            float origin_y, ShownImage* image);
 
 // Makes the copy (after the source's upload this frame). Does nothing for nearest.
 void gl_picture_record(GlPicture* picture, GlContext* context, const GlStreamingTexture* source);

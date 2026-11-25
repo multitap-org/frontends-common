@@ -6,7 +6,6 @@
 
 #include <SDL3/SDL.h>
 
-#include "imgui.h"
 
 #include "host_fs.h"
 #include "settings_file.h"
@@ -414,23 +413,15 @@ GLuint gl_shader_chain_output_texture(const GlShaderChain* chain)
     return 0;
 }
 
-void gl_shader_chain_draw(const GlShaderChain* chain, ImDrawList* draw_list, float origin_x, float origin_y)
+bool gl_shader_chain_shown_image(const GlShaderChain* chain, float origin_x, float origin_y, ShownImage* image)
 {
     if (!chain->ready)
     {
-        return;
+        return false;
     }
-    const ViewportResult* viewport = &chain->viewport;
-    ImVec2 top_left(origin_x + static_cast<float>(viewport->x), origin_y + static_cast<float>(viewport->y));
-    ImVec2 bottom_right(top_left.x + static_cast<float>(viewport->width),
-                        top_left.y + static_cast<float>(viewport->height));
-    const ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
     // Already the picture's size: 1:1, nearest.
-    draw_list->AddCallback(platform_io.DrawCallback_SetSamplerNearest, nullptr);
-    GLuint output = gl_shader_chain_output_texture(chain);
-    draw_list->AddImage(ImTextureRef(static_cast<ImTextureID>(output)), top_left, bottom_right,
-                        ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
-    draw_list->AddCallback(platform_io.DrawCallback_SetSamplerLinear, nullptr);
+    shown_image_whole(gl_shader_chain_output_texture(chain), &chain->viewport, origin_x, origin_y, image);
+    return true;
 }
 
 static void set_size(GlFunctions* gl, GLint location, uint32_t width, uint32_t height)

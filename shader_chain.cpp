@@ -2,7 +2,6 @@
 
 #include <SDL3/SDL_log.h>
 
-#include "imgui.h"
 
 #include "debug_ui.h"
 #include "host_fs.h"
@@ -449,23 +448,16 @@ bool shader_chain_prepare(ShaderChain* chain, const VulkanContext* context, cons
     return true;
 }
 
-void shader_chain_draw(const ShaderChain* chain, ImDrawList* draw_list, float origin_x, float origin_y)
+bool shader_chain_shown_image(const ShaderChain* chain, float origin_x, float origin_y, ShownImage* image)
 {
     if (!chain->ready)
     {
-        return;
+        return false;
     }
-    const ViewportResult* viewport = &chain->viewport;
-    ImVec2 top_left(origin_x + static_cast<float>(viewport->x), origin_y + static_cast<float>(viewport->y));
-    ImVec2 bottom_right(top_left.x + static_cast<float>(viewport->width), top_left.y + static_cast<float>(viewport->height));
     // The output is already the picture's size: drawn 1:1 with nearest, so
     // nothing blurs it again.
-    const ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
-    draw_list->AddCallback(platform_io.DrawCallback_SetSamplerNearest, nullptr);
-    draw_list->AddImage(ImTextureRef(static_cast<ImTextureID>(chain->output.texture_id)), top_left, bottom_right,
-                        ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
-    // Back to ImGui's default for whatever this draw list draws next.
-    draw_list->AddCallback(platform_io.DrawCallback_SetSamplerLinear, nullptr);
+    shown_image_whole(chain->output.texture_id, &chain->viewport, origin_x, origin_y, image);
+    return true;
 }
 
 // One image into the layout a stage writes: COLOR_ATTACHMENT_OPTIMAL

@@ -4,7 +4,6 @@
 
 #include <SDL3/SDL_log.h>
 
-#include "imgui.h"
 
 #include "gl_texture.h"
 
@@ -177,22 +176,15 @@ bool gl_screen_effect_prepare(GlScreenEffect* effect, GlContext* context, const 
     return true;
 }
 
-void gl_screen_effect_draw(const GlScreenEffect* effect, ImDrawList* draw_list, float origin_x, float origin_y)
+bool gl_screen_effect_shown_image(const GlScreenEffect* effect, float origin_x, float origin_y, ShownImage* image)
 {
     if (!effect->ready)
     {
-        return;
+        return false;
     }
-    const ViewportResult* viewport = &effect->viewport;
-    ImVec2 top_left(origin_x + static_cast<float>(viewport->x), origin_y + static_cast<float>(viewport->y));
-    ImVec2 bottom_right(top_left.x + static_cast<float>(viewport->width),
-                        top_left.y + static_cast<float>(viewport->height));
-    const ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
-    // ImTextureID on ImGui's GL backend is the texture name. 1:1, nearest.
-    draw_list->AddCallback(platform_io.DrawCallback_SetSamplerNearest, nullptr);
-    draw_list->AddImage(ImTextureRef(static_cast<ImTextureID>(effect->texture)), top_left, bottom_right,
-                        ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
-    draw_list->AddCallback(platform_io.DrawCallback_SetSamplerLinear, nullptr);
+    // On GL the UI's texture handle is the texture name. 1:1, nearest.
+    shown_image_whole(effect->texture, &effect->viewport, origin_x, origin_y, image);
+    return true;
 }
 
 bool gl_screen_effect_request_capture(GlScreenEffect* effect)

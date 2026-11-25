@@ -5,7 +5,7 @@
 // (the shader chain's output, the picture's copy or the core's texture, with
 // the same sampling) drawn again through our own small shader
 // (shaders/screen_effect.*) into an image of the picture's size on screen,
-// which ImGui then draws 1:1 instead. After the shader chain, before the UI:
+// which the GUI then draws 1:1 instead. After the shader chain, before the UI:
 // the user's preset is untouched and the UI never gets the effect.
 //
 // It only runs on frames with an effect (knobs not at rest) or a capture,
@@ -19,7 +19,7 @@
 // Each frame, in video_output's order:
 //   screen_effect_prepare()   while building the UI (may recreate the image,
 //                             which waits for the GPU; only when its size changes)
-//   screen_effect_draw()      adds the image to an ImGui draw list
+//   screen_effect_shown_image()  what the GUI draws (shown_image.h)
 //   screen_effect_collect()   after app_shell_acquire, every frame: a capture whose frame is done
 //   screen_effect_record()    after the picture's own GPU work, before rendering starts
 
@@ -29,10 +29,10 @@
 
 #include "renderer.h"   // FRAMES_IN_FLIGHT
 #include "screen_effect_params.h"
+#include "shown_image.h"
 #include "viewport.h"
 #include "vk_context.h"
 
-struct ImDrawList;
 
 // What the pass reads: an image in SHADER_READ_ONLY_OPTIMAL whose writes this
 // frame are already visible to fragment shaders (the picture's, the chain's
@@ -65,7 +65,7 @@ struct ScreenEffect
     VkImageLayout  layout       = VK_IMAGE_LAYOUT_UNDEFINED;
     uint32_t       width        = 0;
     uint32_t       height       = 0;
-    uint64_t       texture_id   = 0;   // ImGui id of the target
+    uint64_t       texture_id   = 0;   // the UI's handle of the target (debug_ui_add_texture)
 
     // What this frame draws (set by screen_effect_prepare).
     ViewportResult viewport = {};
@@ -99,7 +99,7 @@ void screen_effect_destroy(ScreenEffect* effect, const VulkanContext* context);
 bool screen_effect_prepare(ScreenEffect* effect, const VulkanContext* context, const ViewportResult* viewport);
 
 // Adds the target to `draw_list`; the viewport's (0, 0) is at (origin_x, origin_y).
-void screen_effect_draw(const ScreenEffect* effect, ImDrawList* draw_list, float origin_x, float origin_y);
+bool screen_effect_shown_image(const ScreenEffect* effect, float origin_x, float origin_y, ShownImage* image);
 
 // Copies the target into the capture buffer on the next record (makes the
 // buffer when needed). False if a capture is already on its way.
