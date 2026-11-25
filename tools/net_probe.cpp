@@ -179,6 +179,12 @@ static NetCaps     give = 0;
 static bool        show_pairing_code = false;
 static const char* typed_code = nullptr;
 
+// A set of capabilities to print ("nothing" when empty).
+static std::string caps_text(NetCaps caps)
+{
+    return caps == 0 ? std::string("nothing") : net_caps_name(caps);
+}
+
 // This device as net_probe describes it: a piccolo that offers everything
 // (a test tool) and uses --role.
 static NetDeviceInfo probe_info(const char* name)
@@ -254,7 +260,7 @@ static int run_listener(uint16_t port, const char* name, const std::string* dir,
         if (net_access_show_code(access, give, code))
         {
             std::printf("pairing code %.3s %.3s %.3s (5 min): type it on the other device; it may use: %s\n", code,
-                        code + 3, code + 6, net_caps_name(give).c_str());
+                        code + 3, code + 6, caps_text(give).c_str());
         }
     }
     NetBeaconStatus beacon_status = NetBeaconStatus::off;
@@ -289,10 +295,10 @@ static int run_listener(uint16_t port, const char* name, const std::string* dir,
                 break;
             case NetAccessEventType::paired:
                 std::printf("paired with \"%s\" (%s%s): it uses %s here\n", device, net_app_kind_name(event.info.kind),
-                            event.signed_build ? "" : ", unsigned build", net_caps_name(event.caps).c_str());
+                            event.signed_build ? "" : ", unsigned build", caps_text(event.caps).c_str());
                 break;
             case NetAccessEventType::granted:
-                std::printf("\"%s\" lets us use %s there\n", device, net_caps_name(event.caps).c_str());
+                std::printf("\"%s\" lets us use %s there\n", device, caps_text(event.caps).c_str());
                 break;
             case NetAccessEventType::code_expired:
                 std::printf("the pairing code expired\n");
@@ -316,7 +322,7 @@ static int run_listener(uint16_t port, const char* name, const std::string* dir,
                 std::printf("\"%s\" (%s%s) asks to pair%s: type %.3s %.3s %.3s on it; it may use: %s\n", event.info.name,
                             net_app_kind_name(event.info.kind), event.signed_build ? "" : ", unsigned build",
                             event.retry ? " again (the last code was wrong)" : "", event.code, event.code + 3,
-                            event.code + 6, net_caps_name(grants).c_str());
+                            event.code + 6, caps_text(grants).c_str());
                 break;
             }
             case NetAccessEventType::guest_joined:
@@ -1042,8 +1048,19 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
                 {
                     std::printf("wrong code: \"%s\" shows a new one\n", event.host.name);
                 }
+                // Our pair_ask goes out first (it's only sent while we poll), so
+                // the host shows its code before we wait on stdin.
+                std::string host_name = event.host.name;
+                NetClientEvent ignored;
+                for (int i = 0; i < 30; i++)
+                {
+                    while (net_client_poll(client, &ignored))
+                    {
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
                 char typed[64] = {};
-                if (!read_code(event.host.name, typed, sizeof(typed)) || !net_client_enter_code(client, typed))
+                if (!read_code(host_name.c_str(), typed, sizeof(typed)) || !net_client_enter_code(client, typed))
                 {
                     std::printf("not 9 digits: giving up\n");
                     net_client_close(client);
@@ -1055,12 +1072,12 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
             {
                 std::printf("%s \"%s\" (%s%s; we may use: %s), ", event.newly_paired ? "paired with" : "welcomed by",
                             event.host.name, net_app_kind_name(event.host.kind),
-                            event.host_signed ? "" : ", unsigned build", net_caps_name(event.caps).c_str());
+                            event.host_signed ? "" : ", unsigned build", caps_text(event.caps).c_str());
                 print_key("its key is", client->host_key);
                 if (event.newly_paired && event.device >= 0)
                 {
                     net_client_set_grants(client, static_cast<uint32_t>(event.device), give);
-                    std::printf("it may use here: %s\n", net_caps_name(give).c_str());
+                    std::printf("it may use here: %s\n", caps_text(give).c_str());
                 }
                 std::vector<uint8_t> control = app_message("hello on control");
                 std::vector<uint8_t> input = app_message("hello on input");
@@ -1542,7 +1559,7 @@ static int run_share(uint16_t port, double seconds, const char* at, const char* 
     else if ((status.caps & NET_CAP_SHARE) == 0)
     {
         std::printf("connected to \"%s\" with %s: piccolo-share needs FILE TRANSFER (give it on the host: "
-                    "SETTINGS > NETWORK)\n", status.host_name.c_str(), net_caps_name(status.caps).c_str());
+                    "SETTINGS > NETWORK)\n", status.host_name.c_str(), caps_text(status.caps).c_str());
         result = 3;
     }
     else
