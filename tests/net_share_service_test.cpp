@@ -218,14 +218,14 @@ int main(int argc, char** argv)
     std::vector<std::string> games;
     games.push_back(host_games);
     net_service_lock(side.service);
-    net_service_set_share_folders(side.service, &games, host_saves.c_str(), host_states.c_str());
+    net_service_set_share_folders(side.service, &games, host_saves.c_str(), host_states.c_str(), "");
     uint16_t port = net_host_port(&side.service->access.session.host);
     net_service_unlock(side.service);
 
     NetShareFolders client_folders;
     std::vector<std::string> client_game_paths;
     client_game_paths.push_back(client_games);
-    net_share_set_folders(&client_folders, &client_game_paths, client_saves.c_str(), "");
+    net_share_set_folders(&client_folders, &client_game_paths, client_saves.c_str(), "", "");
     side.share = new NetShareClient();
     net_share_client_start(side.share, &client_folders);
     side.client = new NetClient();

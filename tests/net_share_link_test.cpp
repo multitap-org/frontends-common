@@ -118,7 +118,7 @@ int main(int argc, char** argv)
     std::vector<std::string> games;
     games.push_back(host_games);
     net_service_lock(service);
-    net_service_set_share_folders(service, &games, "", "");
+    net_service_set_share_folders(service, &games, "", "", "");
     uint16_t port = net_host_port(&service->access.session.host);
     net_service_unlock(service);
 
@@ -126,7 +126,7 @@ int main(int argc, char** argv)
     check(net_share_link_start(link, &client_key, "CLIENT PICCOLO", client_hosts.c_str()), "link started");
     std::vector<std::string> client_game_paths;
     client_game_paths.push_back(client_games);
-    net_share_link_set_folders(link, &client_game_paths, "", "");
+    net_share_link_set_folders(link, &client_game_paths, "", "", "");
     NetAddress address;
     net_address_from_text("127.0.0.1", port, &address);
 
