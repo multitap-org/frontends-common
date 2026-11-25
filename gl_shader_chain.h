@@ -119,7 +119,7 @@ void gl_shader_chain_record(GlShaderChain* chain, GlContext* context, const GlSt
 
 // Stage 0's output when stage 1 follows it (the picture with its colors
 // corrected, for previews). False when there's none.
-bool gl_shader_chain_stage0_result(const GlShaderChain* chain, uint64_t* imgui_id, uint32_t* width,
+bool gl_shader_chain_stage0_result(const GlShaderChain* chain, uint64_t* ui_texture, uint32_t* width,
                                    uint32_t* height);
 
 void gl_shader_chain_destroy(GlShaderChain* chain, GlContext* context);

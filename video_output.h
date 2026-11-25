@@ -119,7 +119,7 @@ void video_output_record(VideoOutput* output, const ShaderLibrary* library, AppS
 // Stage 0's result this frame (the shown part, after the crop, before stage
 // 1), once it has been written: for previews of the picture controls. False
 // when there is none.
-bool video_output_stage0_result(const VideoOutput* output, uint64_t* imgui_id, uint32_t* width, uint32_t* height);
+bool video_output_stage0_result(const VideoOutput* output, uint64_t* ui_texture, uint32_t* width, uint32_t* height);
 
 // Frees everything. Waits for the GPU. Safe on an empty output.
 void video_output_destroy(VideoOutput* output, const ShaderLibrary* library, AppShell* shell);

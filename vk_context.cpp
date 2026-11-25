@@ -464,7 +464,7 @@ static bool select_physical_device(VulkanContext* context, VkSurfaceKHR surface)
 // ---------------------------------------------------------------------------
 
 // Every texture ImGui draws takes one sampled-image descriptor from this
-// pool (debug_ui_add_texture): the font atlas, the game's picture, QUICK
+// pool (ui_texture_add_vulkan): the font atlas, the game's picture, QUICK
 // MENU's savestate thumbnail, the DVR's thumbnails (DVR_VIEW_MAX_THUMBS, 15)
 // and whatever comes next. ImGui's minimum (8) ran out on the DVR's first
 // open (VK_ERROR_OUT_OF_POOL_MEMORY, an abort): room for many more.

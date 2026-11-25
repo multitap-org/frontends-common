@@ -65,7 +65,7 @@ struct ScreenEffect
     VkImageLayout  layout       = VK_IMAGE_LAYOUT_UNDEFINED;
     uint32_t       width        = 0;
     uint32_t       height       = 0;
-    uint64_t       texture_id   = 0;   // the UI's handle of the target (debug_ui_add_texture)
+    uint64_t       texture_id   = 0;   // the UI's handle of the target (ui_texture_add_vulkan)
 
     // What this frame draws (set by screen_effect_prepare).
     ViewportResult viewport = {};

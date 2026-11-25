@@ -169,23 +169,19 @@ void debug_ui_end_frame_without_render()
 // Textures
 // ---------------------------------------------------------------------------
 
-void debug_ui_remove_texture(uint64_t texture_id)
+// ui_texture.h for ImGui (ui_texture_add_vulkan is in debug_ui_vulkan.cpp).
+
+uint64_t ui_texture_from_gl(uint32_t texture)
 {
-    // On GL an ImGui id is the texture's own name: nothing was registered.
-    if (g_renderer == DebugUiRenderer::vulkan)
-    {
-        debug_ui_vulkan_remove_texture(texture_id);
-    }
+    // ImGui's GL backend draws a texture by its own name.
+    return texture;
 }
 
-void debug_ui_image_nearest(uint64_t texture_id, float width, float height, float uv_max_x, float uv_max_y)
+void ui_texture_remove(uint64_t texture)
 {
-    // Draw callbacks switch the backend's sampler for the draw commands between them.
-    ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    const ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
-
-    draw_list->AddCallback(platform_io.DrawCallback_SetSamplerNearest, nullptr);
-    ImGui::Image(ImTextureRef(static_cast<ImTextureID>(texture_id)), ImVec2(width, height), ImVec2(0.0f, 0.0f),
-                 ImVec2(uv_max_x, uv_max_y));
-    draw_list->AddCallback(platform_io.DrawCallback_SetSamplerLinear, nullptr);
+    // On GL the handle is the texture's own name: nothing was registered.
+    if (g_renderer == DebugUiRenderer::vulkan)
+    {
+        debug_ui_vulkan_remove_texture(texture);
+    }
 }

@@ -88,7 +88,7 @@ struct ShaderChainImage
     VkImageLayout  layout       = VK_IMAGE_LAYOUT_UNDEFINED;
     uint32_t       width        = 0;
     uint32_t       height       = 0;
-    uint64_t       texture_id   = 0;   // the UI's handle (the output only; debug_ui_add_texture)
+    uint64_t       texture_id   = 0;   // the UI's handle (the output only; ui_texture_add_vulkan)
 };
 
 constexpr uint32_t SHADER_CHAIN_STAGES = 2;

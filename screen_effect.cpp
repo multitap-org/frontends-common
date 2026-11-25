@@ -5,7 +5,7 @@
 #include <SDL3/SDL_log.h>
 
 
-#include "debug_ui.h"
+#include "ui_texture.h"
 #include "screen_effect_spirv.h"
 #include "vk_barrier.h"
 
@@ -30,7 +30,7 @@ static void destroy_target(ScreenEffect* effect, const VulkanContext* context)
     {
         vkDeviceWaitIdle(context->device);   // earlier frames may still be drawing or copying it
     }
-    debug_ui_remove_texture(effect->texture_id);
+    ui_texture_remove(effect->texture_id);
     if (effect->framebuffer != VK_NULL_HANDLE)
     {
         vkDestroyFramebuffer(context->device, effect->framebuffer, nullptr);
@@ -404,7 +404,7 @@ static bool create_target(ScreenEffect* effect, const VulkanContext* context, ui
             return false;
         }
     }
-    effect->texture_id = debug_ui_add_texture(effect->view);
+    effect->texture_id = ui_texture_add_vulkan(effect->view);
     effect->width = width;
     effect->height = height;
     effect->layout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -626,7 +626,7 @@ static void record_capture(ScreenEffect* effect, const VulkanContext* context, V
     vkCmdCopyImageToBuffer(command_buffer, effect->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, effect->capture_buffer,
                            1, &region);
 
-    // The target back to being sampled (ImGui's draw this frame), after the
+    // The target back to being sampled (the GUI's draw this frame), after the
     // copy has read it: an execution dependency plus the layout change.
     VkImageMemoryBarrier2 to_sampled = {
         .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
@@ -687,7 +687,7 @@ void screen_effect_record(ScreenEffect* effect, const VulkanContext* context, Vk
     vkUpdateDescriptorSets(context->device, 1, &write, 0, nullptr);
 
     // The target becomes a color attachment. Earlier frames may still be
-    // sampling it (ImGui) or copying it (a capture): reads only, so an
+    // sampling it (the GUI) or copying it (a capture): reads only, so an
     // execution dependency is enough. Every pixel is redrawn: old contents
     // discarded (UNDEFINED).
     VkImageMemoryBarrier2 to_attachment = {
@@ -771,7 +771,7 @@ void screen_effect_record(ScreenEffect* effect, const VulkanContext* context, Vk
             return;
         }
     }
-    // The pass's writes -> ImGui samples the target this frame.
+    // The pass's writes -> the GUI samples the target this frame.
     VkImageMemoryBarrier2 to_sampled = {
         .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
         .srcStageMask        = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,

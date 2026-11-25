@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL_log.h>
 
+#include "ui_texture.h"
+
 
 void gl_picture_destroy(GlPicture* picture, GlContext* context)
 {
@@ -65,14 +67,13 @@ bool gl_picture_shown_image(const GlPicture* picture, const GlStreamingTexture* 
     {
         return false;
     }
-    // On GL the UI's texture handle is the texture name.
     if (picture->use_copy)
     {
-        shown_image_whole(picture->texture, &picture->viewport, origin_x, origin_y, image);
+        shown_image_whole(ui_texture_from_gl(picture->texture), &picture->viewport, origin_x, origin_y, image);
         image->filter = ShownImageFilter::linear;
         return true;
     }
-    shown_image_part(source->shown, &picture->viewport, source->capacity_width, source->capacity_height, origin_x,
+    shown_image_part(ui_texture_from_gl(source->shown), &picture->viewport, source->capacity_width, source->capacity_height, origin_x,
                      origin_y, image);
     return true;
 }

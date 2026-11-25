@@ -174,7 +174,7 @@ bool video_output_shown_image(const VideoOutput* output, const VideoTexture* sou
     {
         return shader_chain_shown_image(&output->chain, origin_x, origin_y, image);
     }
-    return picture_shown_image(&output->picture, &source->vulkan, source->imgui_id, origin_x, origin_y, image);
+    return picture_shown_image(&output->picture, &source->vulkan, source->ui_texture, origin_x, origin_y, image);
 }
 
 void video_output_record(VideoOutput* output, const ShaderLibrary* library, AppShell* shell, VideoTexture* source)
@@ -253,11 +253,11 @@ void video_output_record(VideoOutput* output, const ShaderLibrary* library, AppS
                          &effect_source, &output->effect);
 }
 
-bool video_output_stage0_result(const VideoOutput* output, uint64_t* imgui_id, uint32_t* width, uint32_t* height)
+bool video_output_stage0_result(const VideoOutput* output, uint64_t* ui_texture, uint32_t* width, uint32_t* height)
 {
     if (output->on_gl)
     {
-        return gl_shader_chain_stage0_result(&output->gl_chain, imgui_id, width, height);
+        return gl_shader_chain_stage0_result(&output->gl_chain, ui_texture, width, height);
     }
     // Only once the chain has written it: a new image is still UNDEFINED
     // while the UI is built.
@@ -267,7 +267,7 @@ bool video_output_stage0_result(const VideoOutput* output, uint64_t* imgui_id, u
     {
         return false;
     }
-    *imgui_id = chain->middle.texture_id;
+    *ui_texture = chain->middle.texture_id;
     *width = chain->middle.width;
     *height = chain->middle.height;
     return true;

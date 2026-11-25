@@ -3,7 +3,7 @@
 #include <SDL3/SDL_log.h>
 
 
-#include "debug_ui.h"
+#include "ui_texture.h"
 #include "host_fs.h"
 #include "renderer.h"
 #include "vk_barrier.h"
@@ -155,7 +155,7 @@ static void log_error(const ShaderLibrary* library, libra_error_t error, const c
 
 static void destroy_image(ShaderChainImage* image, const VulkanContext* context)
 {
-    debug_ui_remove_texture(image->texture_id);
+    ui_texture_remove(image->texture_id);
     if (image->view != VK_NULL_HANDLE)
     {
         vkDestroyImageView(context->device, image->view, nullptr);
@@ -171,9 +171,9 @@ static void destroy_image(ShaderChainImage* image, const VulkanContext* context)
     *image = ShaderChainImage{};
 }
 
-// `for_imgui`: also a view (alpha read as 1) and an ImGui texture id.
+// `for_gui`: also a view (alpha read as 1) and a GUI handle (ui_texture.h).
 static bool create_image(ShaderChainImage* image, const VulkanContext* context, uint32_t width, uint32_t height,
-                         VkImageUsageFlags usage, bool for_imgui, const char* name)
+                         VkImageUsageFlags usage, bool for_gui, const char* name)
 {
     VkImageCreateInfo image_info = {
         .sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -213,7 +213,7 @@ static bool create_image(ShaderChainImage* image, const VulkanContext* context, 
     image->width = width;
     image->height = height;
     image->layout = VK_IMAGE_LAYOUT_UNDEFINED;
-    if (!for_imgui)
+    if (!for_gui)
     {
         return true;
     }
@@ -223,7 +223,7 @@ static bool create_image(ShaderChainImage* image, const VulkanContext* context, 
         .image    = image->image,
         .viewType = VK_IMAGE_VIEW_TYPE_2D,
         .format   = SHADER_CHAIN_FORMAT,
-        // Alpha read as 1: ImGui draws with blending on, and a shader's alpha
+        // Alpha read as 1: the GUI draws with blending on, and a shader's alpha
         // (or a core's unused X bits carried through) must never make the
         // picture see-through.
         .components = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
@@ -234,7 +234,7 @@ static bool create_image(ShaderChainImage* image, const VulkanContext* context, 
     {
         return false;
     }
-    image->texture_id = debug_ui_add_texture(image->view);
+    image->texture_id = ui_texture_add_vulkan(image->view);
     return true;
 }
 
@@ -370,7 +370,7 @@ bool shader_chain_set_param(ShaderChain* chain, const ShaderLibrary* library, ui
 // (Re)creates `image` when its size isn't `width` x `height`. Waits for the
 // GPU only then (a resize, a crop change, a core changing resolution).
 static bool ensure_image(ShaderChainImage* image, const VulkanContext* context, uint32_t width, uint32_t height,
-                         VkImageUsageFlags usage, bool for_imgui, const char* name)
+                         VkImageUsageFlags usage, bool for_gui, const char* name)
 {
     if (image->image != VK_NULL_HANDLE && image->width == width && image->height == height)
     {
@@ -378,7 +378,7 @@ static bool ensure_image(ShaderChainImage* image, const VulkanContext* context, 
     }
     vkDeviceWaitIdle(context->device);
     destroy_image(image, context);
-    if (!create_image(image, context, width, height, usage, for_imgui, name))
+    if (!create_image(image, context, width, height, usage, for_gui, name))
     {
         destroy_image(image, context);
         return false;
@@ -429,7 +429,7 @@ bool shader_chain_prepare(ShaderChain* chain, const VulkanContext* context, cons
     {
         VkImageUsageFlags middle_usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                                          VK_IMAGE_USAGE_SAMPLED_BIT;
-        // An ImGui texture too: a frontend may show it (piccolo: IMAGE
+        // A GUI texture too: a frontend may show it (piccolo: IMAGE
         // SETTINGS' preview, with pass 0's effect).
         if (!ensure_image(&chain->middle, context, viewport->source_width, viewport->source_height, middle_usage,
                           true, "Shader chain middle"))
@@ -462,7 +462,7 @@ bool shader_chain_shown_image(const ShaderChain* chain, float origin_x, float or
 
 // One image into the layout a stage writes: COLOR_ATTACHMENT_OPTIMAL
 // (librashader's requirement for its output). Earlier frames may still be
-// sampling it (ImGui's draw of the output, stage 1 reading the middle) or
+// sampling it (the GUI's draw of the output, stage 1 reading the middle) or
 // copying it (librashader's history of the middle): reads only, so an
 // execution dependency is enough. It's fully redrawn: old contents discarded.
 static VkImageMemoryBarrier2 to_render_target(ShaderChainImage* image)
@@ -487,7 +487,7 @@ static VkImageMemoryBarrier2 to_render_target(ShaderChainImage* image)
 }
 
 // A stage's written image back to sampled, for whoever reads it next: stage 1
-// (fragment shaders; librashader may also copy it: transfer) or ImGui.
+// (fragment shaders; librashader may also copy it: transfer) or the GUI.
 static void render_target_to_sampled(const ShaderChain* chain, VkCommandBuffer command_buffer, ShaderChainImage* image)
 {
     VkImageMemoryBarrier2 barrier = {

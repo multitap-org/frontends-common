@@ -18,7 +18,7 @@ enum class ShownImageFilter
 
 struct ShownImage
 {
-    uint64_t texture = 0;   // the UI's handle for the texture (debug_ui_add_texture; on GL the texture name)
+    uint64_t texture = 0;   // the GUI's handle for the texture (ui_texture.h)
     float    x       = 0.0f;   // where, in window pixels
     float    y       = 0.0f;
     float    width   = 0.0f;
