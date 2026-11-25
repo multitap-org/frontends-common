@@ -35,7 +35,7 @@ struct NetBuildIdentity
 {
     std::string app;        // "piccolo", "piccoletto", "piccolino"
     std::string version;    // "0.4.0"; empty or with "-dev" for an unreleased build (never signed)
-    std::string target;     // "linux-x86_64", ... (core_index_build_target)
+    std::string target;     // "linux-x86_64", ... (build_target.h)
     std::string exe_path;   // the program file, hashed to match the record
 };
 

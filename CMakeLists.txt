@@ -124,6 +124,7 @@ add_library(frontend_common STATIC
     frame_timing.cpp
     app_paths.cpp
     app_assets.cpp
+    build_target.cpp
     input_hold.cpp
     shader_check.cpp
     viewport.cpp
@@ -150,6 +151,27 @@ add_library(frontend_common STATIC
     input_sdl_mapping.cpp
     input_layouts.cpp
 )
+
+# The platform as the release assets name it (build_target.h). Android: the
+# ABI (armeabi-v7a is only built as the legacy APK).
+set(MULTITAP_BUILD_TARGET "")
+if(ANDROID AND ANDROID_ABI STREQUAL "arm64-v8a")
+    set(MULTITAP_BUILD_TARGET "android-arm64-v8a")
+elseif(ANDROID AND ANDROID_ABI STREQUAL "armeabi-v7a")
+    set(MULTITAP_BUILD_TARGET "android-armeabi-v7a-legacy")
+elseif(EMSCRIPTEN)
+    set(MULTITAP_BUILD_TARGET "web")
+elseif(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    set(MULTITAP_BUILD_TARGET "windows-x86_64")
+elseif(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64|arm64")
+    set(MULTITAP_BUILD_TARGET "windows-arm64")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    set(MULTITAP_BUILD_TARGET "linux-x86_64")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+    set(MULTITAP_BUILD_TARGET "linux-aarch64")
+endif()
+set_source_files_properties(build_target.cpp PROPERTIES COMPILE_DEFINITIONS "MULTITAP_BUILD_TARGET=\"${MULTITAP_BUILD_TARGET}\"")
+message(STATUS "frontends-common: build target \"${MULTITAP_BUILD_TARGET}\"")
 # app_links: AF_UNIX sockets (Winsock) and the per-user scheme in the registry.
 if(WIN32)
     target_link_libraries(frontend_common PRIVATE ws2_32 advapi32)
