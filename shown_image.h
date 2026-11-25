@@ -4,7 +4,7 @@
 // with a filter. The renderer side (picture.h, shader_chain.h,
 // screen_effect.h, their GL versions, video_output.h) fills one in and knows
 // no GUI; the frontend's game view widget draws it (piccolo: retroui's
-// retro_ui_draw_shown_image). Another GUI only needs a way to draw a texture.
+// game_view_draw). Another GUI only needs a way to draw a texture.
 
 #include <cstdint>
 

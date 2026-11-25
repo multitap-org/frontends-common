@@ -89,7 +89,7 @@ static ViewportResult picture_viewport(uint32_t size, ViewportFilter filter)
 }
 
 // What a frontend's game view widget does with the ShownImage (piccolo:
-// retro_ui_draw_shown_image), with ImGui as the shell's UI.
+// retroui's game_view_draw), with ImGui as the shell's UI.
 static void draw_shown_image(const ShownImage* image)
 {
     const ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
