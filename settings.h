@@ -72,6 +72,7 @@ struct SettingDescriptor
     uint32_t value_count = 0;
     uint32_t label = SETTING_NO_TEXT;      // string IDs (see SettingEnumValue)
     uint32_t help = SETTING_NO_TEXT;
+    const char* real_format = nullptr;     // real: how the value shows (printf, e.g. "%.1f S"); nullptr: a percent
 };
 
 struct Settings
