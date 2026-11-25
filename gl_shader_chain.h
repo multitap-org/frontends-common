@@ -34,16 +34,16 @@
 //
 //   the source texture's shown part -> input (exact size, nearest copy)
 //     -> stage 0's passes -> stage 1's passes
-//     -> the last pass at the picture's size on screen -> drawn 1:1 by ImGui.
+//     -> the last pass at the picture's size on screen -> drawn 1:1 by the GUI.
 
 #include <cstdint>
 #include <string>
 
 #include "gl_context.h"
 #include "gl_texture.h"
+#include "shown_image.h"
 #include "viewport.h"
 
-struct ImDrawList;
 
 constexpr uint32_t GL_SHADER_MAX_PASSES = 4;
 constexpr uint32_t GL_SHADER_STAGES = 2;
@@ -109,7 +109,7 @@ bool gl_shader_chain_set_param(GlShaderChain* chain, GlContext* context, uint32_
 bool gl_shader_chain_prepare(GlShaderChain* chain, GlContext* context, const GlStreamingTexture* source,
                              bool has_content, const ViewportResult* viewport);
 
-void gl_shader_chain_draw(const GlShaderChain* chain, ImDrawList* draw_list, float origin_x, float origin_y);
+bool gl_shader_chain_shown_image(const GlShaderChain* chain, float origin_x, float origin_y, ShownImage* image);
 
 // The last pass's output (the picture's size on screen), or 0 without passes.
 GLuint gl_shader_chain_output_texture(const GlShaderChain* chain);

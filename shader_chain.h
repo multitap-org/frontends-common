@@ -22,7 +22,7 @@
 //     -> stage 0 -> middle: the input's size (only when both stages are used)
 //     -> stage 1
 //     -> output: the picture's size in window pixels, B8G8R8A8
-//     -> drawn 1:1 through ImGui, like picture.h (behind the UI or in a window)
+//     -> drawn 1:1 by the GUI, like picture.h (behind the UI or in a window)
 //
 // Stage 1's presets see stage 0's output as their Original (and its history),
 // which is what they should shade: the picture with its colors corrected.
@@ -30,7 +30,7 @@
 // Each frame, in this order (same places as picture.h's):
 //   shader_chain_prepare()   while building the UI (may recreate the images,
 //                            which waits for the GPU; only when sizes change)
-//   shader_chain_draw()      adds the output to an ImGui draw list
+//   shader_chain_shown_image()  what the GUI draws (shown_image.h)
 //   shader_chain_record()    after the texture upload, before rendering starts
 
 #include <cstdint>
@@ -42,11 +42,11 @@
 #include "librashader.h"   // LIBRA_RUNTIME_VULKAN is set by CMake
 
 #include "dynamic_library.h"
+#include "shown_image.h"
 #include "viewport.h"
 #include "vk_context.h"
 #include "vk_texture.h"
 
-struct ImDrawList;
 struct VulkanContext;
 
 // librashader's API version this code is written for (librashader.h:
@@ -88,7 +88,7 @@ struct ShaderChainImage
     VkImageLayout  layout       = VK_IMAGE_LAYOUT_UNDEFINED;
     uint32_t       width        = 0;
     uint32_t       height       = 0;
-    uint64_t       texture_id   = 0;   // ImGui id (the output only)
+    uint64_t       texture_id   = 0;   // the UI's handle (the output only; debug_ui_add_texture)
 };
 
 constexpr uint32_t SHADER_CHAIN_STAGES = 2;
@@ -106,7 +106,7 @@ struct ShaderChain
     ShaderStage stages[SHADER_CHAIN_STAGES] = {};
 
     ShaderChainImage input  = {};
-    ShaderChainImage middle = {};   // stage 0's result; has an ImGui texture id (drawable by the frontend)
+    ShaderChainImage middle = {};   // stage 0's result; has a UI texture handle (drawable by the frontend)
     ShaderChainImage output = {};
 
     // What this frame draws (set by shader_chain_prepare).
@@ -146,7 +146,7 @@ bool shader_chain_prepare(ShaderChain* chain, const VulkanContext* context, cons
                           const ViewportResult* viewport);
 
 // Adds the output to `draw_list`; the viewport's (0, 0) is at (origin_x, origin_y).
-void shader_chain_draw(const ShaderChain* chain, ImDrawList* draw_list, float origin_x, float origin_y);
+bool shader_chain_shown_image(const ShaderChain* chain, float origin_x, float origin_y, ShownImage* image);
 
 // Records the input copy and the stages' passes into `command_buffer`
 // (outside a rendering pass, after the source's upload).

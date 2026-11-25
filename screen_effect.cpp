@@ -4,7 +4,6 @@
 
 #include <SDL3/SDL_log.h>
 
-#include "imgui.h"
 
 #include "debug_ui.h"
 #include "screen_effect_spirv.h"
@@ -508,21 +507,15 @@ bool screen_effect_prepare(ScreenEffect* effect, const VulkanContext* context, c
     return true;
 }
 
-void screen_effect_draw(const ScreenEffect* effect, ImDrawList* draw_list, float origin_x, float origin_y)
+bool screen_effect_shown_image(const ScreenEffect* effect, float origin_x, float origin_y, ShownImage* image)
 {
     if (!effect->ready)
     {
-        return;
+        return false;
     }
-    const ViewportResult* viewport = &effect->viewport;
-    ImVec2 top_left(origin_x + static_cast<float>(viewport->x), origin_y + static_cast<float>(viewport->y));
-    ImVec2 bottom_right(top_left.x + static_cast<float>(viewport->width), top_left.y + static_cast<float>(viewport->height));
     // The target is the picture's size: 1:1 with nearest, so nothing blurs it again.
-    const ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
-    draw_list->AddCallback(platform_io.DrawCallback_SetSamplerNearest, nullptr);
-    draw_list->AddImage(ImTextureRef(static_cast<ImTextureID>(effect->texture_id)), top_left, bottom_right,
-                        ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
-    draw_list->AddCallback(platform_io.DrawCallback_SetSamplerLinear, nullptr);
+    shown_image_whole(effect->texture_id, &effect->viewport, origin_x, origin_y, image);
+    return true;
 }
 
 bool screen_effect_request_capture(ScreenEffect* effect)

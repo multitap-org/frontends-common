@@ -249,6 +249,7 @@ add_library(frontend_common STATIC
     rewind_recorder.cpp
     video_texture.cpp
     video_output.cpp
+    shown_image.cpp
     screen_effect_params.cpp
     screenshot_writer.cpp
     gl_context.cpp

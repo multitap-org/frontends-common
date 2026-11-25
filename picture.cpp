@@ -2,7 +2,6 @@
 
 #include <SDL3/SDL_log.h>
 
-#include "imgui.h"
 
 #include "debug_ui.h"
 #include "vk_barrier.h"
@@ -197,39 +196,24 @@ bool picture_prepare(Picture* picture, const VulkanContext* context, const Strea
     return true;
 }
 
-void picture_draw(const Picture* picture, ImDrawList* draw_list, const StreamingTexture* source,
-                  uint64_t source_texture_id, float origin_x, float origin_y)
+bool picture_shown_image(const Picture* picture, const StreamingTexture* source, uint64_t source_texture_id,
+                         float origin_x, float origin_y, ShownImage* image)
 {
     if (!picture->ready)
     {
-        return;
+        return false;
     }
-    const ViewportResult* viewport = &picture->viewport;
-    ImVec2 top_left(origin_x + static_cast<float>(viewport->x), origin_y + static_cast<float>(viewport->y));
-    ImVec2 bottom_right(top_left.x + static_cast<float>(viewport->width), top_left.y + static_cast<float>(viewport->height));
-    const ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
-
     if (picture->use_copy)
     {
-        draw_list->AddCallback(platform_io.DrawCallback_SetSamplerLinear, nullptr);
-        draw_list->AddImage(ImTextureRef(static_cast<ImTextureID>(picture->texture_id)), top_left, bottom_right,
-                            ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
-        return;
+        // The copy is exactly the shown size: bilinear never blurs it twice.
+        shown_image_whole(picture->texture_id, &picture->viewport, origin_x, origin_y, image);
+        image->filter = ShownImageFilter::linear;
+        return true;
     }
-
     // Straight from the source: the shown part of its (bigger) texture.
-    float capacity_width = static_cast<float>(source->capacity_width);
-    float capacity_height = static_cast<float>(source->capacity_height);
-    ImVec2 uv_min(static_cast<float>(viewport->source_x) / capacity_width,
-                  static_cast<float>(viewport->source_y) / capacity_height);
-    ImVec2 uv_max(static_cast<float>(viewport->source_x + viewport->source_width) / capacity_width,
-                  static_cast<float>(viewport->source_y + viewport->source_height) / capacity_height);
-    bool nearest = viewport->filter == ViewportFilter::nearest;
-    draw_list->AddCallback(nearest ? platform_io.DrawCallback_SetSamplerNearest : platform_io.DrawCallback_SetSamplerLinear,
-                           nullptr);
-    draw_list->AddImage(ImTextureRef(static_cast<ImTextureID>(source_texture_id)), top_left, bottom_right, uv_min, uv_max);
-    // Back to ImGui's default for whatever this draw list draws next.
-    draw_list->AddCallback(platform_io.DrawCallback_SetSamplerLinear, nullptr);
+    shown_image_part(source_texture_id, &picture->viewport, source->capacity_width, source->capacity_height, origin_x,
+                     origin_y, image);
+    return true;
 }
 
 void picture_record(Picture* picture, VkCommandBuffer command_buffer, StreamingTexture* source)

@@ -97,15 +97,16 @@ bool picture_prepare(Picture* picture, const VulkanContext* context, const Strea
     return false;
 }
 
-void picture_draw(const Picture* picture, ImDrawList* draw_list, const StreamingTexture* source,
-                  uint64_t source_texture_id, float origin_x, float origin_y)
+bool picture_shown_image(const Picture* picture, const StreamingTexture* source, uint64_t source_texture_id,
+                         float origin_x, float origin_y, ShownImage* image)
 {
     static_cast<void>(picture);
-    static_cast<void>(draw_list);
     static_cast<void>(source);
     static_cast<void>(source_texture_id);
     static_cast<void>(origin_x);
     static_cast<void>(origin_y);
+    static_cast<void>(image);
+    return false;
 }
 
 void picture_record(Picture* picture, VkCommandBuffer command_buffer, StreamingTexture* source)
@@ -167,12 +168,13 @@ bool shader_chain_prepare(ShaderChain* chain, const VulkanContext* context, cons
     return false;
 }
 
-void shader_chain_draw(const ShaderChain* chain, ImDrawList* draw_list, float origin_x, float origin_y)
+bool shader_chain_shown_image(const ShaderChain* chain, float origin_x, float origin_y, ShownImage* image)
 {
     static_cast<void>(chain);
-    static_cast<void>(draw_list);
     static_cast<void>(origin_x);
     static_cast<void>(origin_y);
+    static_cast<void>(image);
+    return false;
 }
 
 void shader_chain_record(ShaderChain* chain, const ShaderLibrary* library, VkCommandBuffer command_buffer,
@@ -198,12 +200,13 @@ bool screen_effect_prepare(ScreenEffect* effect, const VulkanContext* context, c
     return false;
 }
 
-void screen_effect_draw(const ScreenEffect* effect, ImDrawList* draw_list, float origin_x, float origin_y)
+bool screen_effect_shown_image(const ScreenEffect* effect, float origin_x, float origin_y, ShownImage* image)
 {
     static_cast<void>(effect);
-    static_cast<void>(draw_list);
     static_cast<void>(origin_x);
     static_cast<void>(origin_y);
+    static_cast<void>(image);
+    return false;
 }
 
 bool screen_effect_request_capture(ScreenEffect* effect)

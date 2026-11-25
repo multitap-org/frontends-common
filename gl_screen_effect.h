@@ -3,7 +3,7 @@
 // screen_effect.h on OpenGL ES: the picture as it would be drawn (the
 // chain's output, the picture's copy or the core's texture, sampled the same
 // way) drawn again with the effect's knobs into a render target of the
-// picture's size on screen, which ImGui draws 1:1 instead. Only on frames
+// picture's size on screen, which the GUI draws 1:1 instead. Only on frames
 // with an effect or a capture.
 //
 // A capture (a GPU screenshot) reads that target back:
@@ -15,16 +15,16 @@
 //               has no pixel-pack buffers; WebGL 2 has no glMapBufferRange.
 //
 // Each frame, in video_output's order (the same as screen_effect.h's):
-//   gl_screen_effect_prepare(), gl_screen_effect_draw(),
+//   gl_screen_effect_prepare(), gl_screen_effect_shown_image(),
 //   gl_screen_effect_collect() (every frame), gl_screen_effect_record().
 
 #include <cstdint>
 
 #include "gl_context.h"
 #include "screen_effect_params.h"
+#include "shown_image.h"
 #include "viewport.h"
 
-struct ImDrawList;
 
 struct GlScreenEffectSource
 {
@@ -60,7 +60,7 @@ struct GlScreenEffect
 
 void gl_screen_effect_destroy(GlScreenEffect* effect, GlContext* context);
 bool gl_screen_effect_prepare(GlScreenEffect* effect, GlContext* context, const ViewportResult* viewport);
-void gl_screen_effect_draw(const GlScreenEffect* effect, ImDrawList* draw_list, float origin_x, float origin_y);
+bool gl_screen_effect_shown_image(const GlScreenEffect* effect, float origin_x, float origin_y, ShownImage* image);
 bool gl_screen_effect_request_capture(GlScreenEffect* effect);
 void gl_screen_effect_collect(GlScreenEffect* effect, GlContext* context);
 void gl_screen_effect_record(GlScreenEffect* effect, GlContext* context, const GlScreenEffectSource* source,
