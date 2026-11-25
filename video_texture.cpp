@@ -1,7 +1,7 @@
 #include "video_texture.h"
 
 #include "app_shell.h"
-#include "debug_ui.h"
+#include "ui_texture.h"
 
 // The Vulkan format for each pixel format (vk_texture.h: the bit layouts
 // match libretro's on little-endian machines).
@@ -37,7 +37,7 @@ bool video_texture_create(VideoTexture* texture, AppShell* shell, uint32_t width
             *texture = VideoTexture{};
             return false;
         }
-        texture->imgui_id = texture->gl.shown;   // ImGui's GL backend: the texture name
+        texture->ui_texture = ui_texture_from_gl(texture->gl.shown);
     }
     else
     {
@@ -47,7 +47,7 @@ bool video_texture_create(VideoTexture* texture, AppShell* shell, uint32_t width
             *texture = VideoTexture{};
             return false;
         }
-        texture->imgui_id = debug_ui_add_texture(texture->vulkan.view);
+        texture->ui_texture = ui_texture_add_vulkan(texture->vulkan.view);
     }
     texture->format = format;
     texture->bytes_per_pixel = frame_pixel_bytes(format);
@@ -63,7 +63,7 @@ bool video_texture_created(const VideoTexture* texture)
 
 void video_texture_destroy(VideoTexture* texture, AppShell* shell)
 {
-    if (!video_texture_created(texture) && texture->imgui_id == 0)
+    if (!video_texture_created(texture) && texture->ui_texture == 0)
     {
         return;
     }
@@ -75,7 +75,7 @@ void video_texture_destroy(VideoTexture* texture, AppShell* shell)
     else
     {
         vulkan_context_wait_idle(&shell->vulkan);   // earlier frames may still be drawing it
-        debug_ui_remove_texture(texture->imgui_id);
+        ui_texture_remove(texture->ui_texture);
         streaming_texture_destroy(&texture->vulkan, &shell->vulkan);
     }
     *texture = VideoTexture{};

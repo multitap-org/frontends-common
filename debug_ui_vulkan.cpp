@@ -112,7 +112,7 @@ void debug_ui_on_swapchain_recreated(const VulkanSwapchain* swapchain)
 // ImTextureID is always 64 bits. Copying the bytes works for both without casts.
 static_assert(sizeof(VkDescriptorSet) <= sizeof(ImTextureID), "ImTextureID must hold a VkDescriptorSet");
 
-uint64_t debug_ui_add_texture(VkImageView view)
+uint64_t ui_texture_add_vulkan(VkImageView view)
 {
     VkDescriptorSet descriptor_set = ImGui_ImplVulkan_AddTexture(view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     ImTextureID texture_id = 0;

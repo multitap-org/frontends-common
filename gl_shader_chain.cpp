@@ -9,6 +9,7 @@
 
 #include "host_fs.h"
 #include "settings_file.h"
+#include "ui_texture.h"
 
 // ---------------------------------------------------------------------------
 // Programs
@@ -420,7 +421,7 @@ bool gl_shader_chain_shown_image(const GlShaderChain* chain, float origin_x, flo
         return false;
     }
     // Already the picture's size: 1:1, nearest.
-    shown_image_whole(gl_shader_chain_output_texture(chain), &chain->viewport, origin_x, origin_y, image);
+    shown_image_whole(ui_texture_from_gl(gl_shader_chain_output_texture(chain)), &chain->viewport, origin_x, origin_y, image);
     return true;
 }
 
@@ -523,7 +524,7 @@ void gl_shader_chain_record(GlShaderChain* chain, GlContext* context, const GlSt
     gl_check_errors(context, "GL shader chain");
 }
 
-bool gl_shader_chain_stage0_result(const GlShaderChain* chain, uint64_t* imgui_id, uint32_t* width,
+bool gl_shader_chain_stage0_result(const GlShaderChain* chain, uint64_t* ui_texture, uint32_t* width,
                                    uint32_t* height)
 {
     const GlShaderStage* stage0 = &chain->stages[0];
@@ -532,7 +533,7 @@ bool gl_shader_chain_stage0_result(const GlShaderChain* chain, uint64_t* imgui_i
         return false;
     }
     const GlShaderPass* pass = &stage0->passes[stage0->pass_count - 1];
-    *imgui_id = pass->texture;
+    *ui_texture = ui_texture_from_gl(pass->texture);
     *width = pass->width;
     *height = pass->height;
     return true;

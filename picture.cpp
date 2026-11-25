@@ -3,7 +3,7 @@
 #include <SDL3/SDL_log.h>
 
 
-#include "debug_ui.h"
+#include "ui_texture.h"
 #include "vk_barrier.h"
 #include "vk_context.h"
 
@@ -17,7 +17,7 @@ void picture_destroy(Picture* picture, const VulkanContext* context)
     {
         vkDeviceWaitIdle(context->device);   // earlier frames may still be drawing it
     }
-    debug_ui_remove_texture(picture->texture_id);
+    ui_texture_remove(picture->texture_id);
     if (picture->view != VK_NULL_HANDLE)
     {
         vkDestroyImageView(context->device, picture->view, nullptr);
@@ -93,7 +93,7 @@ static bool create_copy(Picture* picture, const VulkanContext* context, uint32_t
         .format   = STREAMING_TEXTURE_FORMAT,
         // Alpha read as 1: the blit copies the source's alpha bits, and a core's
         // native frame (0RGB1555, XRGB8888) leaves them unused, often 0. The
-        // picture is always opaque; ImGui draws it with blending on.
+        // picture is always opaque; the GUI draws it with blending on.
         .components = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
                         VK_COMPONENT_SWIZZLE_ONE },
         .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
@@ -103,7 +103,7 @@ static bool create_copy(Picture* picture, const VulkanContext* context, uint32_t
     {
         return false;
     }
-    picture->texture_id = debug_ui_add_texture(picture->view);
+    picture->texture_id = ui_texture_add_vulkan(picture->view);
     picture->width = width;
     picture->height = height;
     picture->layout = VK_IMAGE_LAYOUT_UNDEFINED;

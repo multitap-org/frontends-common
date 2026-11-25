@@ -1,6 +1,6 @@
 #pragma once
 
-// A texture the CPU fills every frame and ImGui can draw: a core's picture,
+// A texture the CPU fills every frame and the GUI can draw: a core's picture,
 // a remote play stream, a savestate thumbnail. Frontends use this instead of
 // the graphics API's own texture, so they don't depend on which API the shell
 // runs on: vk_texture.h's StreamingTexture on Vulkan, gl_texture.h's
@@ -29,7 +29,7 @@ struct VideoTexture
     uint32_t         content_width   = 0;       // size of the last upload
     uint32_t         content_height  = 0;
     bool             has_content     = false;   // false until the first upload: don't draw it before that
-    uint64_t         imgui_id        = 0;       // what ImGui draws (ImTextureID), 0 = not created
+    uint64_t         ui_texture      = 0;       // the GUI's handle (ui_texture.h), 0 = not created
 
     // The API's texture underneath, the one the shell runs on (only
     // video_texture.cpp and the video modules look inside).
@@ -40,7 +40,7 @@ struct VideoTexture
 // True if this GPU can take `format` as it comes (no conversion on the CPU).
 bool video_texture_format_supported(const AppShell* shell, FramePixelFormat format);
 
-// Creates the texture and its ImGui id. `opaque`: alpha reads as 1 (a core's
+// Creates the texture and its GUI handle. `opaque`: alpha reads as 1 (a core's
 // picture: the unused X / top bits never turn into transparency). False
 // (logged) on failure; the texture is then empty.
 bool video_texture_create(VideoTexture* texture, AppShell* shell, uint32_t width, uint32_t height,
