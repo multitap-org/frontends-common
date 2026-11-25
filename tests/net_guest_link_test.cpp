@@ -44,6 +44,18 @@ static void check(bool condition, const char* what)
     }
 }
 
+// A device as these tests describe it: a piccolo (offers everything) or a
+// phone (offers nothing), using everything they could.
+static NetDeviceInfo test_device(const char* name, bool phone)
+{
+    NetDeviceInfo info;
+    net_device_info_set_name(&info, name);
+    info.kind = phone ? NetAppKind::piccoletto : NetAppKind::piccolo;
+    info.offers = phone ? 0 : NET_CAPS_ALL;
+    info.uses = NET_CAPS_ALL;
+    return info;
+}
+
 // One guest: a NetClient of its own (its own device key, no paired hosts).
 struct Guest
 {
@@ -132,7 +144,7 @@ static void pump(World* world)
                 guest->ready = guest_event.guest;
                 guest->level = guest_event.guest_level;
             }
-            else if (guest_event.type == NetClientEventType::access)
+            else if (guest_event.type == NetClientEventType::caps)
             {
                 guest->access_changed = true;
                 guest->level = guest_event.guest_level;
@@ -200,7 +212,8 @@ static Guest* new_guest(World* world, const char* name, const std::string& signa
     NetKeypair key;
     net_keypair_generate(&key);
     std::memcpy(guest->home_key, key.public_key, NET_KEY_SIZE);
-    net_client_create(&guest->client, &key, name, "");
+    NetDeviceInfo info = test_device(name, true);
+    net_client_create(&guest->client, &key, &info, "");
     net_keypair_wipe(&key);
     net_client_set_signal(&guest->client, signal_url.c_str(), stun.c_str());
     world->guests.push_back(guest);
@@ -252,7 +265,8 @@ static void test_guest_links(const char* beacon_path, const std::string& dir)
     net_keypair_generate(&host_key);
     std::string trust = dir + "/guest_host_devices.cfg";
     host_fs_remove_file(trust.c_str());
-    check(net_access_create(world.host, 0, "LIVING ROOM", &host_key, trust.c_str()), "host created");
+    NetDeviceInfo host_info = test_device("LIVING ROOM", false);
+    check(net_access_create(world.host, 0, &host_info, &host_key, trust.c_str()), "host created");
     world.host->accept_pairing = false;   // guests don't need pairing open
     net_access_set_beacon(world.host, &beacon_address, 1);
     check(net_access_set_signal(world.host, url.c_str(), stun.c_str()), "host signaling on");

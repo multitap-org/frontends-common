@@ -94,8 +94,9 @@ struct NetService
     uint32_t       beacon_generation = 0;   // guarded by `lock`: a newer set_beacon wins
 };
 
-// Creates the NetAccess (as net_access_create) and starts the thread.
-bool net_service_start(NetService* service, uint16_t port, const char* name, const NetKeypair* identity,
+// Creates the NetAccess (as net_access_create, `info` = this device) and
+// starts the thread. Builds are checked with net_build_verify (net_build.h).
+bool net_service_start(NetService* service, uint16_t port, const NetDeviceInfo* info, const NetKeypair* identity,
                        const char* trust_path);
 // Stops the thread and destroys the NetAccess. Safe on a service that
 // didn't start.
@@ -116,11 +117,10 @@ void net_service_set_beacon(NetService* service, const char* server);
 // the next call. False when the queue is empty.
 bool net_service_next(NetService* service, NetAccessEvent* event);
 
-// Locked: the shared folders for SHARE devices (piccolo-share): the game
-// folders, then SAVES, STATES and SCREENSHOTS ("" = not shared).
-void net_service_set_share_folders(NetService* service, const std::vector<std::string>* game_paths,
-                                   const char* saves_path, const char* states_path,
-                                   const char* screenshots_path);
+// Locked: the shared folders for devices with FILE TRANSFER (piccolo-share):
+// the game folders, then SAVES, STATES, SCREENSHOTS, RECORDINGS and CONFIG
+// ("" = not shared).
+void net_service_set_share_folders(NetService* service, const NetShareFolderPaths* paths);
 
 // --- remote play --------------------------------------------------------------
 

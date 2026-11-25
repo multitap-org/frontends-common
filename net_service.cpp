@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "host_log.h"
+#include "net_build.h"
 #include "net_rtc.h"
 
 // One poll: everything NetAccess has for us, copied into the queue.
@@ -239,7 +240,7 @@ void net_service_set_beacon(NetService* service, const char* server)
     service->resolver = std::thread(resolve_beacon, service, generation, text);
 }
 
-bool net_service_start(NetService* service, uint16_t port, const char* name, const NetKeypair* identity,
+bool net_service_start(NetService* service, uint16_t port, const NetDeviceInfo* info, const NetKeypair* identity,
                        const char* trust_path)
 {
     service->head = 0;
@@ -252,11 +253,12 @@ bool net_service_start(NetService* service, uint16_t port, const char* name, con
     service->stream.encoder = FrameDeltaEncoder{};
     service->stream.key_encoder = FrameDeltaEncoder{};
     service->stream.sent_info = NetStreamInfo{};
-    if (!net_access_create(&service->access, port, name, identity, trust_path))
+    if (!net_access_create(&service->access, port, info, identity, trust_path))
     {
         net_access_destroy(&service->access);
         return false;
     }
+    net_access_set_verify_build(&service->access, net_build_verify, nullptr);
     net_share_host_start(&service->share);
     service->running = true;
     service->thread = std::thread(run, service);
@@ -281,11 +283,9 @@ void net_service_stop(NetService* service)
     service->count = 0;
 }
 
-void net_service_set_share_folders(NetService* service, const std::vector<std::string>* game_paths,
-                                   const char* saves_path, const char* states_path,
-                                   const char* screenshots_path)
+void net_service_set_share_folders(NetService* service, const NetShareFolderPaths* paths)
 {
-    net_share_host_set_folders(&service->share, game_paths, saves_path, states_path, screenshots_path);
+    net_share_host_set_folders(&service->share, paths);
 }
 
 void net_service_lock(NetService* service)

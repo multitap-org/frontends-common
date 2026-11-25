@@ -29,7 +29,19 @@ static void check(bool condition, const char* what)
     }
 }
 
-static std::string g_code;   // the code the client shows: the host's user types it
+// A device as these tests describe it: a piccolo (offers everything) or a
+// phone (offers nothing), using everything they could.
+static NetDeviceInfo test_device(const char* name, bool phone)
+{
+    NetDeviceInfo info;
+    net_device_info_set_name(&info, name);
+    info.kind = phone ? NetAppKind::piccoletto : NetAppKind::piccolo;
+    info.offers = phone ? 0 : NET_CAPS_ALL;
+    info.uses = NET_CAPS_ALL;
+    return info;
+}
+
+static std::string g_code;   // the code the host pops up: the client's user types it
 
 // The host's frontend drains its queue, as piccolo's loop does.
 static void host_round(NetService* service)
@@ -40,7 +52,8 @@ static void host_round(NetService* service)
     {
         if (event.type == NetAccessEventType::pairing_requested)
         {
-            net_access_answer_pairing(&service->access, event.peer, g_code.c_str(), NetAccessLevel::gamepad);
+            g_code = event.code;   // what its screen shows
+            net_access_set_pairing_grants(&service->access, event.peer, NET_CAP_GAMEPAD);
         }
     }
     net_service_unlock(service);
@@ -53,6 +66,12 @@ static NetShareLinkState wait_state(NetShareLink* link, NetService* service, Net
     {
         host_round(service);
         net_share_link_status(link, status);
+        if (status->code_needed && !g_code.empty())
+        {
+            // The client's user types the code the host shows.
+            net_share_link_enter_code(link, g_code.c_str());
+            g_code.clear();
+        }
         if (status->state == want)
         {
             return status->state;
@@ -114,30 +133,32 @@ int main(int argc, char** argv)
     std::string client_hosts = base + "/client_hosts.cfg";
 
     NetService* service = new NetService();
-    check(net_service_start(service, 0, "HOST PICCOLO", &host_key, host_devices.c_str()), "host started");
-    std::vector<std::string> games;
-    games.push_back(host_games);
+    NetDeviceInfo host_info = test_device("HOST PICCOLO", false);
+    check(net_service_start(service, 0, &host_info, &host_key, host_devices.c_str()), "host started");
+    NetShareFolderPaths games;
+    games.games.push_back(host_games);
     net_service_lock(service);
-    net_service_set_share_folders(service, &games, "", "", "");
+    net_service_set_share_folders(service, &games);
     uint16_t port = net_host_port(&service->access.session.host);
     net_service_unlock(service);
 
     NetShareLink* link = new NetShareLink();
-    check(net_share_link_start(link, &client_key, "CLIENT PICCOLO", client_hosts.c_str()), "link started");
-    std::vector<std::string> client_game_paths;
-    client_game_paths.push_back(client_games);
-    net_share_link_set_folders(link, &client_game_paths, "", "", "");
+    NetDeviceInfo client_info = test_device("CLIENT PICCOLO", false);
+    check(net_share_link_start(link, &client_key, &client_info, client_hosts.c_str()), "link started");
+    NetShareFolderPaths client_paths;
+    client_paths.games.push_back(client_games);
+    net_share_link_set_folders(link, &client_paths);
     NetAddress address;
     net_address_from_text("127.0.0.1", port, &address);
 
     NetShareLinkStatus status;
-    char code[NET_PAIR_CODE_DIGITS + 1];
-    net_pair_code_generate(code);
-    g_code = code;
-    net_share_link_connect(link, address, code);
+    net_share_link_connect(link, address, true);
     check(wait_state(link, service, NetShareLinkState::ready, &status) == NetShareLinkState::ready &&
-              status.host_name == "HOST PICCOLO" && status.access == NetAccessLevel::gamepad,
-          "paired with the code, as GAMEPAD");
+              status.host_name == "HOST PICCOLO" && status.caps == NET_CAP_GAMEPAD && status.newly_paired,
+          "paired with the code the host showed, with GAMEPAD only");
+    check(status.paired_devices.size() == 1 && status.paired_devices[0].granted == NET_CAP_GAMEPAD,
+          "the record keeps what the host granted");
+    check(net_share_link_set_grants(link, 0, NET_CAP_SHARE), "the last screen's ticks are sent");
     if (status.state != NetShareLinkState::ready)
     {
         std::printf("pairing: state %u refusal %u\n", static_cast<unsigned>(status.state),
@@ -147,18 +168,20 @@ int main(int argc, char** argv)
     std::vector<NetShareEntry> entries;
     NetShareStatus list_status = NetShareStatus::failed;
     net_share_link_list(link, "");
-    check(!wait_listing(link, service, &entries, &list_status, 100), "no listing at GAMEPAD");
+    check(!wait_listing(link, service, &entries, &list_status, 100), "no listing without FILE TRANSFER");
 
     net_service_lock(service);
-    net_access_set_level(&service->access, 0, NetAccessLevel::share);
+    check(service->access.trust.devices.size() == 1 && service->access.trust.devices[0].granted == NET_CAP_SHARE,
+          "the host keeps what the client grants it");
+    net_access_set_grants(&service->access, 0, NET_CAP_GAMEPAD | NET_CAP_SHARE);
     net_service_unlock(service);
-    for (int i = 0; i < 100 && status.access != NetAccessLevel::share; i++)
+    for (int i = 0; i < 100 && (status.caps & NET_CAP_SHARE) == 0; i++)
     {
         host_round(service);
         net_share_link_status(link, &status);
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    check(status.access == NetAccessLevel::share, "told it's SHARE now");
+    check((status.caps & NET_CAP_SHARE) != 0, "told it has FILE TRANSFER now");
     net_share_link_list(link, "");
     check(wait_listing(link, service, &entries, &list_status, 1000) && list_status == NetShareStatus::ok &&
               entries.size() == 1 && entries[0].name == "roms",
@@ -184,7 +207,7 @@ int main(int argc, char** argv)
     net_share_link_disconnect(link);
     net_share_link_status(link, &status);
     check(status.state == NetShareLinkState::idle, "disconnected");
-    net_share_link_connect(link, address, "");
+    net_share_link_connect(link, address, false);
     check(wait_state(link, service, NetShareLinkState::ready, &status) == NetShareLinkState::ready,
           "reconnects without a code");
     if (status.state != NetShareLinkState::ready)

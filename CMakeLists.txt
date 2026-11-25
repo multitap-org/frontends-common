@@ -281,6 +281,7 @@ if(TARGET multitap_net)
         net_settings.cpp
         net_service.cpp
         net_client_service.cpp
+        net_build.cpp
         net_stream.cpp
         net_input.cpp
         input_net.cpp
@@ -291,6 +292,11 @@ if(TARGET multitap_net)
     target_include_directories(frontend_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     find_package(Threads REQUIRED)   # net_service's and net_client_service's threads
     target_link_libraries(frontend_net PUBLIC multitap_net frontend_common Threads::Threads)
+    if(TARGET frontend_download)
+        # Build proofs (net_build.h): signature checks and the record's download.
+        target_link_libraries(frontend_net PUBLIC frontend_download)
+        target_compile_definitions(frontend_net PRIVATE MULTITAP_NET_BUILD_PROOF=1)
+    endif()
     multitap_set_project_flags(frontend_net)
 
     # net_probe: LAN discovery on a real network, without a frontend.

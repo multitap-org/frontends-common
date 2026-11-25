@@ -27,6 +27,18 @@ static void check(bool condition, const char* what)
     }
 }
 
+// A device as these tests describe it: a piccolo (offers everything) or a
+// phone (offers nothing), using everything they could.
+static NetDeviceInfo test_device(const char* name, bool phone)
+{
+    NetDeviceInfo info;
+    net_device_info_set_name(&info, name);
+    info.kind = phone ? NetAppKind::piccoletto : NetAppKind::piccolo;
+    info.offers = phone ? 0 : NET_CAPS_ALL;
+    info.uses = NET_CAPS_ALL;
+    return info;
+}
+
 int main(int argc, char** argv)
 {
     if (argc < 2 || !net_init())
@@ -50,23 +62,25 @@ int main(int argc, char** argv)
     // Already paired, both ways.
     NetTrust host_trust;
     net_trust_add(&host_trust, client_key.public_key, "CLIENT");
-    host_trust.devices[0].access = NetAccessLevel::full;
+    host_trust.devices[0].grants = NET_CAPS_ALL;
     NetTrust client_trust;
     net_trust_add(&client_trust, host_key.public_key, "HOST");
     check(net_trust_save(&host_trust, host_devices.c_str()) && net_trust_save(&client_trust, client_hosts.c_str()),
           "lists saved");
 
     NetService* service = new NetService();
-    check(net_service_start(service, 0, "HOST", &host_key, host_devices.c_str()), "service started");
+    NetDeviceInfo host_info = test_device("HOST", false);
+    check(net_service_start(service, 0, &host_info, &host_key, host_devices.c_str()), "service started");
     net_service_lock(service);
     uint16_t port = net_host_port(&service->access.session.host);
     net_service_unlock(service);
 
     NetClient* client = new NetClient();
-    check(net_client_create(client, &client_key, "CLIENT", client_hosts.c_str()), "client created");
+    NetDeviceInfo client_info = test_device("CLIENT", true);
+    check(net_client_create(client, &client_key, &client_info, client_hosts.c_str()), "client created");
     NetAddress address;
     net_address_from_text("127.0.0.1", port, &address);
-    check(net_client_connect(client, address, nullptr), "client connecting");
+    check(net_client_connect(client, address, false), "client connecting");
 
     bool host_authorized = false;
     bool host_got_message = false;

@@ -2,13 +2,23 @@
 //
 //   net_probe [--port N] [--seconds S]          ask the LAN who's there (broadcast)
 //   net_probe [--port N] --at ADDRESS           ask one machine
-//   net_probe [--port N] --listen NAME          be a host: answer discovery;
-//                                               a pairing request asks for the
-//                                               code on stdin (--level L gives L)
-//   net_probe [--port N] --pair ADDRESS         pair: prints our code and waits
-//                                               for the host's user to type it
-//   net_probe --pair internet --beacon SERVER   the same across the internet
-//                                               (the host types it in INVITE)
+//   net_probe [--port N] --listen NAME          be a host: answer discovery; a
+//                                               pairing request prints the code
+//                                               to type on the other device
+//                                               (and grants --give)
+//   --pairing-code  with --listen: GENERATE PAIRING CODE: show a code and wait
+//               for the device that types it, on this network and (with
+//               --beacon) in its slot's room; it gets --give
+//   net_probe [--port N] --pair ADDRESS         pair: the host pops up a code;
+//                                               type it here (stdin, or --code)
+//   net_probe --pair internet --code CODE --beacon SERVER
+//                                               pair with the code a host shows
+//                                               (GENERATE PAIRING CODE there)
+//   --role CAPS what this device uses (default share,settings): gamepad,
+//               stream, settings, share, comma separated
+//   --give CAPS what the other device may use here (a host's grant; a
+//               client's grant once paired; default nothing)
+//   --code CODE with --pair: the code, instead of asking on stdin
 //   net_probe [--port N] --connect ADDRESS      connect as an already paired
 //                                               device, send a message on
 //                                               each channel
@@ -58,8 +68,6 @@
 //               ("beacon.get-piccolo.app", "host:port", "[v6]:port"); UDP first,
 //               then WebRTC through its signaling (wss://<name>/signal, or a
 //               full ws:// / wss:// URL given as SERVER is used for signaling)
-//               With --listen, --invite CODE waits in that code's pairing
-//               room and answers the request that comes with it
 //   --forget N  forget paired host N (0 = the first) here only, without connecting
 //   --dir DIR   where net_probe keeps its device key and paired devices
 //               (net_probe_identity.cfg, net_probe_devices.cfg; default ".")
@@ -78,12 +86,13 @@
 //   --share-host NAME   be a piccolo-share host instead (net_service, as
 //                       piccolo runs it): --share-dir as its game folder,
 //                       --share-saves DIR / --share-states DIR /
-//                       --share-screenshots DIR, pairing open,
-//                       every device that connects raised to SHARE (a test
-//                       tool: never on a network you don't trust). Ctrl+C stops
+//                       --share-screenshots DIR, pairing open (it prints each
+//                       request's code), every device that connects given
+//                       everything (a test tool: never on a network you don't
+//                       trust). Ctrl+C stops
 //
-// A piccolo with networking on is a host like --listen: --pair prints the code
-// its pairing request dialog asks for.
+// A piccolo with networking on is a host like --listen: --pair asks for the
+// code its pairing pop-up shows.
 
 #include <chrono>
 #include <cmath>
@@ -100,6 +109,7 @@
 #include "net_client.h"
 #include "net_content.h"
 #include "net_link.h"
+#include "net_build.h"
 #include "net_service.h"
 #include "net_settings.h"
 #include "net_share_link.h"
@@ -113,8 +123,9 @@
 static void usage()
 {
     std::printf("usage: net_probe [--port N] [--seconds S] [--dir DIR]\n"
-                "                 [--at ADDRESS | --listen NAME [--invite CODE] [--level L] | --pair ADDRESS |\n"
-                "                  --pair internet | --connect ADDRESS | --connect #N] [--grant-back L]\n"
+                "                 [--at ADDRESS | --listen NAME [--pairing-code] | --pair ADDRESS [--code CODE] |\n"
+                "                  --pair internet --code CODE | --connect ADDRESS | --connect #N]\n"
+                "                 [--role CAPS] [--give CAPS]\n"
                 "                 [--beacon SERVER]\n"
                 "                 [--pad | --cores | --list PATH | --load CORE PATH]\n");
 }
@@ -161,13 +172,46 @@ static bool load_identity(const std::string* dir, NetKeypair* identity)
     return true;
 }
 
-// Pairing options (main fills them): the host's --invite / --level, the
-// client's code (--pair) and --grant-back.
-static const char*    invite = nullptr;
-static NetAccessLevel level = NetAccessLevel::gamepad;
-static char           pair_code_buffer[NET_PAIR_CODE_DIGITS + 1] = {};
-static bool           has_grant_back = false;
-static NetAccessLevel grant_back = NetAccessLevel::gamepad;
+// Pairing options (main fills them): what we use (--role) and grant
+// (--give), the host's --pairing-code, the client's --code.
+static NetCaps     role_uses = NET_CAP_SHARE | NET_CAP_SETTINGS;
+static NetCaps     give = 0;
+static bool        show_pairing_code = false;
+static const char* typed_code = nullptr;
+
+// This device as net_probe describes it: a piccolo that offers everything
+// (a test tool) and uses --role.
+static NetDeviceInfo probe_info(const char* name)
+{
+    NetDeviceInfo info;
+    net_device_info_set_name(&info, name);
+    info.kind = NetAppKind::piccolo;
+    info.offers = NET_CAPS_ALL;
+    info.uses = role_uses;
+    return info;
+}
+
+// The code the other device shows: --code, or typed on stdin. False if it
+// isn't 9 digits.
+static bool read_code(const char* host_name, char* out, size_t capacity)
+{
+    if (typed_code != nullptr)
+    {
+        std::snprintf(out, capacity, "%s", typed_code);
+        typed_code = nullptr;   // once: a wrong one asks again
+    }
+    else
+    {
+        std::printf("type the code shown on \"%s\": ", host_name);
+        std::fflush(stdout);
+        if (std::fgets(out, static_cast<int>(capacity), stdin) == nullptr)
+        {
+            out[0] = '\0';
+        }
+        out[std::strcspn(out, "\r\n ")] = '\0';
+    }
+    return net_pair_code_valid(out);
+}
 
 static int run_listener(uint16_t port, const char* name, const std::string* dir, const char* beacon)
 {
@@ -178,12 +222,14 @@ static int run_listener(uint16_t port, const char* name, const std::string* dir,
     }
     NetAccess* access = new NetAccess();
     std::string devices = *dir + "/net_probe_devices.cfg";
-    if (!net_access_create(access, port, name, &identity, devices.c_str()))
+    NetDeviceInfo info = probe_info(name);
+    if (!net_access_create(access, port, &info, &identity, devices.c_str()))
     {
         net_access_destroy(access);
         delete access;
         return 1;
     }
+    net_access_set_verify_build(access, net_build_verify, nullptr);
     std::printf("host \"%s\" on port %u, %zu paired device(s) (Ctrl+C to stop)\n", name, static_cast<unsigned>(port),
                 access->trust.devices.size());
     if (beacon != nullptr)
@@ -201,9 +247,14 @@ static int run_listener(uint16_t port, const char* name, const std::string* dir,
         {
             std::printf("signaling at %s (browsers, WebRTC)\n", net_signal_url(beacon).c_str());
         }
-        if (invite != nullptr && net_access_invite(access, invite))
+    }
+    if (show_pairing_code)
+    {
+        char code[NET_PAIR_CODE_DIGITS + 1];
+        if (net_access_show_code(access, give, code))
         {
-            std::printf("invite: waiting in the pairing room of %.3s for the device that shows %s\n", invite, invite);
+            std::printf("pairing code %.3s %.3s %.3s (5 min): type it on the other device; it may use: %s\n", code,
+                        code + 3, code + 6, net_caps_name(give).c_str());
         }
     }
     NetBeaconStatus beacon_status = NetBeaconStatus::off;
@@ -237,7 +288,14 @@ static int run_listener(uint16_t port, const char* name, const std::string* dir,
                 std::printf("\"%s\" connected (paired before)\n", device);
                 break;
             case NetAccessEventType::paired:
-                std::printf("paired with \"%s\"\n", device);
+                std::printf("paired with \"%s\" (%s%s): it uses %s here\n", device, net_app_kind_name(event.info.kind),
+                            event.signed_build ? "" : ", unsigned build", net_caps_name(event.caps).c_str());
+                break;
+            case NetAccessEventType::granted:
+                std::printf("\"%s\" lets us use %s there\n", device, net_caps_name(event.caps).c_str());
+                break;
+            case NetAccessEventType::code_expired:
+                std::printf("the pairing code expired\n");
                 break;
             case NetAccessEventType::message:
                 print_message(event.channel, event.data, event.size);
@@ -246,46 +304,26 @@ static int run_listener(uint16_t port, const char* name, const std::string* dir,
                 std::printf("\"%s\" disconnected\n", device);
                 break;
             case NetAccessEventType::unpaired:
-                std::printf("\"%s\" unpaired itself (forgotten here too)\n", event.name);
+                std::printf("\"%s\" unpaired itself (forgotten here too)\n", event.info.name);
                 break;
             case NetAccessEventType::pairing_failed:
                 std::printf("pairing failed (too many wrong codes, or not an honest client)\n");
                 break;
             case NetAccessEventType::pairing_requested:
             {
-                std::printf("\"%s\" (%s) asks to pair%s, wants %s\n", event.name,
-                            event.kind == NetPairKind::piccoletto ? "piccoletto" : "piccolo",
-                            event.retry ? " again (the last code was wrong)" : "", net_access_level_name(event.access));
-                char typed[64] = {};
-                if (invite != nullptr && !event.retry)
-                {
-                    std::snprintf(typed, sizeof(typed), "%s", invite);
-                }
-                else
-                {
-                    std::printf("type its code: ");
-                    std::fflush(stdout);
-                    if (std::fgets(typed, sizeof(typed), stdin) == nullptr)
-                    {
-                        typed[0] = '\0';
-                    }
-                    typed[std::strcspn(typed, "\r\n ")] = '\0';
-                }
-                if (!net_access_answer_pairing(access, event.peer, typed, level))
-                {
-                    std::printf("not 9 digits: refused\n");
-                    net_access_refuse_pairing(access, event.peer);
-                }
+                NetCaps grants = give & event.info.uses;
+                net_access_set_pairing_grants(access, event.peer, grants);
+                std::printf("\"%s\" (%s%s) asks to pair%s: type %.3s %.3s %.3s on it; it may use: %s\n", event.info.name,
+                            net_app_kind_name(event.info.kind), event.signed_build ? "" : ", unsigned build",
+                            event.retry ? " again (the last code was wrong)" : "", event.code, event.code + 3,
+                            event.code + 6, net_caps_name(grants).c_str());
                 break;
             }
             case NetAccessEventType::guest_joined:
-                std::printf("guest \"%s\" joined (peer %u)\n", event.name, static_cast<unsigned>(event.peer));
+                std::printf("guest \"%s\" joined (peer %u)\n", event.info.name, static_cast<unsigned>(event.peer));
                 break;
             case NetAccessEventType::guest_full:
-                std::printf("guest \"%s\" turned away: no seat\n", event.name);
-                break;
-            case NetAccessEventType::granted_back:
-                std::printf("\"%s\" lets us come to it at %s\n", device, net_access_level_name(event.access));
+                std::printf("guest \"%s\" turned away: no seat\n", event.info.name);
                 break;
             case NetAccessEventType::none:
                 break;
@@ -921,8 +959,13 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
     NetKeypair identity;
     NetAddress address;
     bool via_beacon = at[0] == '#';
-    // "--pair internet": through the beacon (the host types the code in INVITE).
+    // "--pair internet --code CODE": through the beacon (the host shows the code).
     bool via_link = code != nullptr && std::strcmp(at, "internet") == 0;
+    if (via_link && (typed_code == nullptr || !net_pair_code_valid(typed_code)))
+    {
+        std::printf("--pair internet needs --code CODE (the 9 digits the host shows)\n");
+        return 1;
+    }
     if (via_link)
     {
         beacon = beacon != nullptr ? beacon : NET_BEACON_DEFAULT_SERVER;
@@ -939,7 +982,9 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
     }
     NetClient* client = new NetClient();
     std::string devices = *dir + "/net_probe_devices.cfg";
-    bool started = net_client_create(client, &identity, "NET PROBE", devices.c_str());
+    NetDeviceInfo info = probe_info("NET PROBE");
+    bool started = net_client_create(client, &identity, &info, devices.c_str());
+    net_client_set_verify_build(client, net_build_verify, nullptr);
     if (started && via_beacon)
     {
         NetAddress servers[NET_BEACON_MAX_SERVERS];
@@ -948,7 +993,8 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
         if (via_link)
         {
             std::printf("pairing through the beacon %s (%u address(es))\n", beacon, static_cast<unsigned>(count));
-            started = net_client_pair_beacon(client, servers, count, code);
+            started = net_client_pair_beacon(client, servers, count, typed_code);
+            typed_code = nullptr;
         }
         else
         {
@@ -963,7 +1009,7 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
     }
     else if (started)
     {
-        started = net_client_connect(client, address, code);
+        started = net_client_connect(client, address, code != nullptr);
     }
     if (!started)
     {
@@ -990,20 +1036,31 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
         NetClientEvent event;
         while (net_client_poll(client, &event))
         {
-            if (event.type == NetClientEventType::code_changed)
+            if (event.type == NetClientEventType::code_needed)
             {
-                std::printf("the host typed it wrong; our new code: %s\n", client->code);
+                if (event.retry)
+                {
+                    std::printf("wrong code: \"%s\" shows a new one\n", event.host.name);
+                }
+                char typed[64] = {};
+                if (!read_code(event.host.name, typed, sizeof(typed)) || !net_client_enter_code(client, typed))
+                {
+                    std::printf("not 9 digits: giving up\n");
+                    net_client_close(client);
+                }
                 std::fflush(stdout);
                 continue;
             }
             if (event.type == NetClientEventType::ready)
             {
-                std::printf("%s \"%s\" (access: %s), ", event.newly_paired ? "paired with" : "welcomed by",
-                            client->host_name, net_access_level_name(event.access));
+                std::printf("%s \"%s\" (%s%s; we may use: %s), ", event.newly_paired ? "paired with" : "welcomed by",
+                            event.host.name, net_app_kind_name(event.host.kind),
+                            event.host_signed ? "" : ", unsigned build", net_caps_name(event.caps).c_str());
                 print_key("its key is", client->host_key);
-                if (event.newly_paired && has_grant_back && net_client_grant_back(client, grant_back))
+                if (event.newly_paired && event.device >= 0)
                 {
-                    std::printf("let it come to us at %s\n", net_access_level_name(grant_back));
+                    net_client_set_grants(client, static_cast<uint32_t>(event.device), give);
+                    std::printf("it may use here: %s\n", net_caps_name(give).c_str());
                 }
                 std::vector<uint8_t> control = app_message("hello on control");
                 std::vector<uint8_t> input = app_message("hello on input");
@@ -1173,7 +1230,7 @@ static int run_client(uint16_t port, double seconds, const char* at, const char*
         // --unpair: right away once in.
         if (content->ask == ContentAsk::unpair && ready && !action_released)
         {
-            std::printf("unpairing from \"%s\"\n", client->host_name);
+            std::printf("unpairing from \"%s\"\n", client->host.name);
             net_client_unpair(client, static_cast<uint32_t>(client->device));
             action_released = true;
         }
@@ -1428,13 +1485,16 @@ static int run_share(uint16_t port, double seconds, const char* at, const char* 
     std::string ours = net_content_folder_name(&games[0]);   // our side's root's name
     NetShareLink* link = new NetShareLink();
     std::string devices = *dir + "/net_probe_devices.cfg";
-    if (!net_share_link_start(link, &identity, "NET PROBE", devices.c_str()))
+    NetDeviceInfo info = probe_info("NET PROBE");
+    if (!net_share_link_start(link, &identity, &info, devices.c_str()))
     {
         delete link;
         return 1;
     }
-    net_share_link_set_folders(link, &games, "", "", "");
-    net_share_link_connect(link, address, code == nullptr ? "" : code);
+    NetShareFolderPaths paths;
+    paths.games = games;
+    net_share_link_set_folders(link, &paths);
+    net_share_link_connect(link, address, code != nullptr);
 
     int result = 2;
     std::chrono::steady_clock::time_point end =
@@ -1448,11 +1508,28 @@ static int run_share(uint16_t port, double seconds, const char* at, const char* 
         {
             break;
         }
+        if (status.code_needed)
+        {
+            if (status.code_retry)
+            {
+                std::printf("wrong code: \"%s\" shows a new one\n", status.host_name.c_str());
+            }
+            char typed[64] = {};
+            if (!read_code(status.host_name.c_str(), typed, sizeof(typed)) || !net_share_link_enter_code(link, typed))
+            {
+                std::printf("not 9 digits: giving up\n");
+                net_share_link_disconnect(link);
+            }
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    // A level raised as we come in (a host that gives SHARE to whoever
+    if (status.state == NetShareLinkState::ready && status.newly_paired && status.device >= 0)
+    {
+        net_share_link_set_grants(link, static_cast<uint32_t>(status.device), give);
+    }
+    // What a host gives as we come in (one that gives everything to whoever
     // pairs) is told a moment after the welcome.
-    for (int i = 0; i < 400 && status.state == NetShareLinkState::ready && status.access != NetAccessLevel::share; i++)
+    for (int i = 0; i < 400 && status.state == NetShareLinkState::ready && (status.caps & NET_CAP_SHARE) == 0; i++)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
         net_share_link_status(link, &status);
@@ -1462,15 +1539,15 @@ static int run_share(uint16_t port, double seconds, const char* at, const char* 
         std::printf("not connected: %s\n", status.refusal == NetClientRefusal::none ? "out of time"
                                                                                      : refusal_text(status.refusal));
     }
-    else if (status.access != NetAccessLevel::share)
+    else if ((status.caps & NET_CAP_SHARE) == 0)
     {
-        std::printf("connected to \"%s\" with %s access: piccolo-share needs SHARE (give it on the host: "
-                    "SETTINGS > NETWORK)\n", status.host_name.c_str(), net_access_level_name(status.access));
+        std::printf("connected to \"%s\" with %s: piccolo-share needs FILE TRANSFER (give it on the host: "
+                    "SETTINGS > NETWORK)\n", status.host_name.c_str(), net_caps_name(status.caps).c_str());
         result = 3;
     }
     else
     {
-        std::printf("connected to \"%s\" (SHARE)\n", status.host_name.c_str());
+        std::printf("connected to \"%s\" (FILE TRANSFER)\n", status.host_name.c_str());
         result = 0;
         NetShareStatus list_status = NetShareStatus::failed;
         std::vector<NetShareEntry> entries;
@@ -1563,18 +1640,21 @@ static int run_share_host(uint16_t port, const char* name, const std::string* di
         return 1;
     }
     std::string share_dir = share->dir.empty() ? *dir : share->dir;
-    std::vector<std::string> games;
-    games.push_back(share_dir);
+    NetShareFolderPaths paths;
+    paths.games.push_back(share_dir);
+    paths.saves = share->saves;
+    paths.states = share->states;
+    paths.screenshots = share->screenshots;
     NetService* service = new NetService();
     std::string devices = *dir + "/net_probe_devices.cfg";
-    if (!net_service_start(service, port, name, &identity, devices.c_str()))
+    NetDeviceInfo info = probe_info(name);
+    if (!net_service_start(service, port, &info, &identity, devices.c_str()))
     {
         delete service;
         return 1;
     }
     net_service_lock(service);
-    net_service_set_share_folders(service, &games, share->saves.c_str(), share->states.c_str(),
-                                  share->screenshots.c_str());
+    net_service_set_share_folders(service, &paths);
     std::printf("share host \"%s\" on port %u, sharing %s%s%s%s%s%s%s (Ctrl+C to stop)\n", name,
                 static_cast<unsigned>(net_host_port(&service->access.session.host)), share_dir.c_str(),
                 share->saves.empty() ? "" : ", saves ", share->saves.c_str(), share->states.empty() ? "" : ", states ",
@@ -1592,8 +1672,8 @@ static int run_share_host(uint16_t port, const char* name, const std::string* di
                 event.device >= 0)
             {
                 uint32_t device = static_cast<uint32_t>(event.device);
-                net_access_set_level(&service->access, device, NetAccessLevel::share);
-                std::printf("%s \"%s\": SHARE\n", event.type == NetAccessEventType::paired ? "paired" : "connected",
+                net_access_set_grants(&service->access, device, NET_CAPS_ALL);
+                std::printf("%s \"%s\": everything\n", event.type == NetAccessEventType::paired ? "paired" : "connected",
                             service->access.trust.devices[device].name.c_str());
             }
             else if (event.type == NetAccessEventType::closed)
@@ -1602,18 +1682,9 @@ static int run_share_host(uint16_t port, const char* name, const std::string* di
             }
             else if (event.type == NetAccessEventType::pairing_requested)
             {
-                std::printf("\"%s\" asks to pair; type its code: ", event.name);
-                std::fflush(stdout);
-                char typed[64] = {};
-                if (std::fgets(typed, sizeof(typed), stdin) == nullptr)
-                {
-                    typed[0] = '\0';
-                }
-                typed[std::strcspn(typed, "\r\n ")] = '\0';
-                if (!net_access_answer_pairing(&service->access, event.peer, typed, NetAccessLevel::share))
-                {
-                    net_access_refuse_pairing(&service->access, event.peer);
-                }
+                net_access_set_pairing_grants(&service->access, event.peer, NET_CAPS_ALL);
+                std::printf("\"%s\" asks to pair: type %.3s %.3s %.3s on it\n", event.info.name, event.code, event.code + 3,
+                            event.code + 6);
             }
         }
         net_service_unlock(service);
@@ -1659,22 +1730,24 @@ int main(int argc, char** argv)
         else if (std::strcmp(argv[i], "--pair") == 0 && i + 1 < argc)
         {
             connect = argv[++i];
-            net_pair_code_generate(pair_code_buffer);
-            pair_code = pair_code_buffer;
-            std::printf("our code: %s (the host types it)\n", pair_code);
-            std::fflush(stdout);
+            pair_code = "";   // pairing: the code comes from the host's screen (--code or stdin)
         }
-        else if (std::strcmp(argv[i], "--invite") == 0 && i + 1 < argc)
+        else if (std::strcmp(argv[i], "--code") == 0 && i + 1 < argc)
         {
-            invite = argv[++i];
+            typed_code = argv[++i];
         }
-        else if (std::strcmp(argv[i], "--level") == 0 && i + 1 < argc)
+        else if (std::strcmp(argv[i], "--pairing-code") == 0)
         {
-            net_access_level_parse(argv[++i], &level);
+            show_pairing_code = true;
         }
-        else if (std::strcmp(argv[i], "--grant-back") == 0 && i + 1 < argc)
+        else if ((std::strcmp(argv[i], "--role") == 0 || std::strcmp(argv[i], "--give") == 0) && i + 1 < argc)
         {
-            has_grant_back = net_access_level_parse(argv[++i], &grant_back);
+            NetCaps* caps = std::strcmp(argv[i], "--role") == 0 ? &role_uses : &give;
+            if (!net_caps_parse(argv[++i], caps))
+            {
+                std::printf("%s: gamepad, stream, settings, share (comma separated)\n", argv[i - 1]);
+                return 1;
+            }
         }
         else if (std::strcmp(argv[i], "--pad") == 0)
         {
@@ -1877,7 +1950,8 @@ int main(int argc, char** argv)
         NetKeypair identity;
         NetClient* client = new NetClient();
         std::string devices = dir + "/net_probe_devices.cfg";
-        bool ok = load_identity(&dir, &identity) && net_client_create(client, &identity, "NET PROBE", devices.c_str()) &&
+        NetDeviceInfo info = probe_info("NET PROBE");
+        bool ok = load_identity(&dir, &identity) && net_client_create(client, &identity, &info, devices.c_str()) &&
                   net_client_unpair(client, static_cast<uint32_t>(forget));
         std::printf(ok ? "forgotten here\n" : "no such host\n");
         net_client_destroy(client);

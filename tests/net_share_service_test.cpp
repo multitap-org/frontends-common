@@ -34,6 +34,18 @@ static void check(bool condition, const char* what)
     }
 }
 
+// A device as these tests describe it: a piccolo (offers everything) or a
+// phone (offers nothing), using everything they could.
+static NetDeviceInfo test_device(const char* name, bool phone)
+{
+    NetDeviceInfo info;
+    net_device_info_set_name(&info, name);
+    info.kind = phone ? NetAppKind::piccoletto : NetAppKind::piccolo;
+    info.offers = phone ? 0 : NET_CAPS_ALL;
+    info.uses = NET_CAPS_ALL;
+    return info;
+}
+
 struct Side
 {
     NetService*     service = nullptr;
@@ -205,7 +217,7 @@ int main(int argc, char** argv)
           "identities");
     NetTrust host_trust;
     net_trust_add(&host_trust, client_key.public_key, "CLIENT");
-    host_trust.devices[0].access = NetAccessLevel::share;
+    host_trust.devices[0].grants = NET_CAP_GAMEPAD | NET_CAP_STREAM | NET_CAP_SHARE;
     NetTrust client_trust;
     net_trust_add(&client_trust, host_key.public_key, "HOST");
     check(net_trust_save(&host_trust, host_devices.c_str()) && net_trust_save(&client_trust, client_hosts.c_str()),
@@ -214,31 +226,36 @@ int main(int argc, char** argv)
     Side side;
     side.out.assign(NET_LINK_MAX_PAYLOAD, 0);
     side.service = new NetService();
-    check(net_service_start(side.service, 0, "HOST", &host_key, host_devices.c_str()), "service started");
-    std::vector<std::string> games;
-    games.push_back(host_games);
+    NetDeviceInfo host_info = test_device("HOST", false);
+    check(net_service_start(side.service, 0, &host_info, &host_key, host_devices.c_str()), "service started");
+    NetShareFolderPaths games;
+    games.games.push_back(host_games);
+    games.saves = host_saves;
+    games.states = host_states;
     net_service_lock(side.service);
-    net_service_set_share_folders(side.service, &games, host_saves.c_str(), host_states.c_str(), "");
+    net_service_set_share_folders(side.service, &games);
     uint16_t port = net_host_port(&side.service->access.session.host);
     net_service_unlock(side.service);
 
     NetShareFolders client_folders;
-    std::vector<std::string> client_game_paths;
-    client_game_paths.push_back(client_games);
-    net_share_set_folders(&client_folders, &client_game_paths, client_saves.c_str(), "", "");
+    NetShareFolderPaths client_paths;
+    client_paths.games.push_back(client_games);
+    client_paths.saves = client_saves;
+    net_share_set_folders(&client_folders, &client_paths);
     side.share = new NetShareClient();
     net_share_client_start(side.share, &client_folders);
     side.client = new NetClient();
-    check(net_client_create(side.client, &client_key, "CLIENT", client_hosts.c_str()), "client created");
+    NetDeviceInfo client_info = test_device("CLIENT", false);
+    check(net_client_create(side.client, &client_key, &client_info, client_hosts.c_str()), "client created");
     NetAddress address;
     net_address_from_text("127.0.0.1", port, &address);
-    check(net_client_connect(side.client, address, nullptr), "client connecting");
+    check(net_client_connect(side.client, address, false), "client connecting");
     for (int i = 0; i < 400 && !side.ready; i++)
     {
         client_round(&side, true);
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    check(side.ready && side.client->access == NetAccessLevel::share, "connected at SHARE");
+    check(side.ready && (side.client->caps & NET_CAP_SHARE) != 0, "connected with FILE TRANSFER");
 
     // Listing.
     std::vector<NetShareEntry> entries;
@@ -310,9 +327,9 @@ int main(int argc, char** argv)
     check(wait_done(&side, &done, 20000) && done.status == NetShareStatus::ok && same_files(&host_game, &second),
           "and goes once it stops");
 
-    // At STREAM, the host doesn't answer SHARE's messages at all.
+    // Without FILE TRANSFER, the host doesn't answer SHARE's messages at all.
     net_service_lock(side.service);
-    net_access_set_level(&side.service->access, 0, NetAccessLevel::stream);
+    net_access_set_grants(&side.service->access, 0, NET_CAP_GAMEPAD | NET_CAP_STREAM);
     uint32_t dropped_before = side.service->access.dropped_by_access;
     net_service_unlock(side.service);
     for (int i = 0; i < 100; i++)
@@ -321,7 +338,7 @@ int main(int argc, char** argv)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     net_share_client_list(side.share, "");
-    check(!wait_listing(&side, &entries, &status), "no listing at STREAM");
+    check(!wait_listing(&side, &entries, &status), "no listing without FILE TRANSFER");
     net_service_lock(side.service);
     check(side.service->access.dropped_by_access > dropped_before, "the request was dropped by access");
     net_service_unlock(side.service);

@@ -178,7 +178,7 @@ static void test_messages()
     size = net_settings_write_devices_watch(out, sizeof(out), 6);
     check(net_settings_read_devices_watch(out, size, &id) && id == 6, "devices_watch read");
     check(!net_settings_read_devices_request(out, size, &id), "devices_watch isn't devices_request");
-    check(net_message_required_access(out[0]) == NetAccessLevel::gamepad, "devices_watch: any level");
+    check(net_message_required_cap(out[0]) == NET_CAP_GAMEPAD, "devices_watch: GAMEPAD");
 
     bool pressed = false;
     size = net_settings_write_action(out, sizeof(out), "fast_forward", true);

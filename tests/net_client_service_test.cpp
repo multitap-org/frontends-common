@@ -31,6 +31,18 @@ static void check(bool condition, const char* what)
     }
 }
 
+// A device as these tests describe it: a piccolo (offers everything) or a
+// phone (offers nothing), using everything they could.
+static NetDeviceInfo test_device(const char* name, bool phone)
+{
+    NetDeviceInfo info;
+    net_device_info_set_name(&info, name);
+    info.kind = phone ? NetAppKind::piccoletto : NetAppKind::piccolo;
+    info.offers = phone ? 0 : NET_CAPS_ALL;
+    info.uses = NET_CAPS_ALL;
+    return info;
+}
+
 constexpr uint32_t WIDTH = 64;
 constexpr uint32_t HEIGHT = 48;
 constexpr uint32_t SAMPLES = 534;   // a frame's audio at 32040 Hz
@@ -154,25 +166,27 @@ int main(int argc, char** argv)
     // Already paired, both ways, with STREAM access.
     NetTrust host_trust;
     net_trust_add(&host_trust, client_key.public_key, "CLIENT");
-    host_trust.devices[0].access = NetAccessLevel::stream;
+    host_trust.devices[0].grants = NET_CAP_GAMEPAD | NET_CAP_STREAM;
     NetTrust client_trust;
     net_trust_add(&client_trust, host_key.public_key, "HOST");
     check(net_trust_save(&host_trust, host_devices.c_str()) && net_trust_save(&client_trust, client_hosts.c_str()),
           "lists saved");
 
     NetService* host = new NetService();
-    check(net_service_start(host, 0, "HOST", &host_key, host_devices.c_str()), "host started");
+    NetDeviceInfo host_info = test_device("HOST", false);
+    check(net_service_start(host, 0, &host_info, &host_key, host_devices.c_str()), "host started");
     net_service_lock(host);
     uint16_t port = net_host_port(&host->access.session.host);
     net_service_unlock(host);
 
     NetClientService* client = new NetClientService();
     client->stream.play_audio = false;
-    check(net_client_service_start(client, &client_key, "CLIENT", client_hosts.c_str()), "client started");
+    NetDeviceInfo phone_info = test_device("CLIENT", true);
+    check(net_client_service_start(client, &client_key, &phone_info, client_hosts.c_str()), "client started");
     NetAddress address;
     net_address_from_text("127.0.0.1", port, &address);
     net_client_service_lock(client);
-    check(net_client_connect(&client->client, address, nullptr), "client connecting");
+    check(net_client_connect(&client->client, address, false), "client connecting");
     net_client_service_unlock(client);
 
     // Connect: the ready event through the client's queue.

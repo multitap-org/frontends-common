@@ -5,6 +5,7 @@
 
 #include <SDL3/SDL_thread.h>
 
+#include "net_build.h"
 #include "host_log.h"
 
 // --- remote play, on the thread (under `lock`) --------------------------------
@@ -339,18 +340,19 @@ static void run(NetClientService* service)
     }
 }
 
-bool net_client_service_start(NetClientService* service, const NetKeypair* identity, const char* name,
+bool net_client_service_start(NetClientService* service, const NetKeypair* identity, const NetDeviceInfo* info,
                               const char* trust_path)
 {
     service->head = 0;
     service->count = 0;
     service->dropped = 0;
     service->stream.flags = 0;
-    if (!net_client_create(&service->client, identity, name, trust_path))
+    if (!net_client_create(&service->client, identity, info, trust_path))
     {
         net_client_destroy(&service->client);
         return false;
     }
+    net_client_set_verify_build(&service->client, net_build_verify, nullptr);
     service->running = true;
     service->thread = std::thread(run, service);
     return true;

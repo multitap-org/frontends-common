@@ -1,8 +1,8 @@
 // Checks net_share_link.h across the internet, over loopback against the
 // real beacon server code: a piccolo paired on the LAN is reached again
 // through the beacon (net_share_link_connect_paired), and a new piccolo
-// pairs across the internet with its own code, which the host's user types
-// in INVITE (net_access_invite, net_share_link_pair_beacon).
+// pairs across the internet with the code the host shows (GENERATE PAIRING
+// CODE: net_access_show_code, net_share_link_pair_beacon).
 // Linux only, like the server.
 //
 // Usage: frontend_net_share_link_beacon_test <scratch folder>
@@ -33,6 +33,18 @@ static void check(bool condition, const char* what)
     }
 }
 
+// A device as these tests describe it: a piccolo (offers everything) or a
+// phone (offers nothing), using everything they could.
+static NetDeviceInfo test_device(const char* name, bool phone)
+{
+    NetDeviceInfo info;
+    net_device_info_set_name(&info, name);
+    info.kind = phone ? NetAppKind::piccoletto : NetAppKind::piccolo;
+    info.offers = phone ? 0 : NET_CAPS_ALL;
+    info.uses = NET_CAPS_ALL;
+    return info;
+}
+
 struct World
 {
     BeaconServer server;
@@ -57,7 +69,8 @@ static void pump(World* world)
     {
         if (event.type == NetAccessEventType::pairing_requested)
         {
-            net_access_answer_pairing(&world->service->access, event.peer, g_code.c_str(), NetAccessLevel::share);
+            g_code = event.code;   // what the host's screen shows
+            net_access_set_pairing_grants(&world->service->access, event.peer, NET_CAPS_ALL);
         }
     }
     net_service_unlock(world->service);
@@ -78,6 +91,11 @@ static NetShareLinkState wait_state(World* world, NetShareLink* link, NetShareLi
     {
         pump(world);
         net_share_link_status(link, status);
+        if (status->code_needed && !g_code.empty())
+        {
+            net_share_link_enter_code(link, g_code.c_str());
+            g_code.clear();
+        }
         if (status->state == want)
         {
             return status->state;
@@ -153,7 +171,8 @@ int main(int argc, char** argv)
           "identities");
 
     world->service = new NetService();
-    check(net_service_start(world->service, 0, "HOST PICCOLO", &host_key, (base + "/host_devices.cfg").c_str()),
+    NetDeviceInfo host_info = test_device("HOST PICCOLO", false);
+    check(net_service_start(world->service, 0, &host_info, &host_key, (base + "/host_devices.cfg").c_str()),
           "host started");
     net_service_set_beacon(world->service, beacon_name.c_str());
     net_service_lock(world->service);
@@ -163,14 +182,13 @@ int main(int argc, char** argv)
 
     // Paired on the LAN first.
     NetShareLink* link = new NetShareLink();
-    check(net_share_link_start(link, &client_key, "CLIENT PICCOLO", (base + "/client_hosts.cfg").c_str()), "link started");
+    NetDeviceInfo client_info = test_device("CLIENT PICCOLO", false);
+    check(net_share_link_start(link, &client_key, &client_info, (base + "/client_hosts.cfg").c_str()), "link started");
     NetAddress address;
     net_address_from_text("127.0.0.1", port, &address);
     NetShareLinkStatus status;
     char code[NET_PAIR_CODE_DIGITS + 1];
-    net_pair_code_generate(code);
-    g_code = code;
-    net_share_link_connect(link, address, code);
+    net_share_link_connect(link, address, true);
     check(wait_state(world, link, NetShareLinkState::ready, &status) == NetShareLinkState::ready, "paired on the LAN");
     check(status.paired.size() == 1 && status.paired[0] == "HOST PICCOLO", "the paired piccolo listed");
     net_share_link_disconnect(link);
@@ -192,17 +210,17 @@ int main(int argc, char** argv)
     }
     net_share_link_disconnect(link);
 
-    // A new piccolo pairs across the internet: the host's user types its code
-    // in INVITE, which waits in the code's pairing room.
+    // A new piccolo pairs across the internet: the host shows a code (GENERATE
+    // PAIRING CODE), which waits in the code's pairing room; the new piccolo's
+    // user types it.
     NetShareLink* second = new NetShareLink();
-    check(net_share_link_start(second, &second_key, "SECOND PICCOLO", (base + "/second_hosts.cfg").c_str()),
+    NetDeviceInfo second_info = test_device("SECOND PICCOLO", false);
+    check(net_share_link_start(second, &second_key, &second_info, (base + "/second_hosts.cfg").c_str()),
           "second link started");
     net_share_link_set_beacon(second, beacon_name.c_str());
     check(!net_share_link_pair_beacon(second, "123456"), "a code that isn't 9 digits is refused");
-    net_pair_code_generate(code);
-    g_code = code;
     net_service_lock(world->service);
-    check(net_access_invite(&world->service->access, code), "the host invites with that code");
+    check(net_access_show_code(&world->service->access, NET_CAPS_ALL, code), "the host shows a code");
     net_service_unlock(world->service);
     check(wait_registered(world), "the host's pairing room registered");
     pump_for(world, 300);

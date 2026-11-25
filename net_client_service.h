@@ -149,8 +149,9 @@ struct NetClientService
     NetClientServiceStream stream;
 };
 
-// Creates the NetClient (as net_client_create) and starts the thread.
-bool net_client_service_start(NetClientService* service, const NetKeypair* identity, const char* name,
+// Creates the NetClient (as net_client_create, `info` = this device) and
+// starts the thread. Builds are checked with net_build_verify (net_build.h).
+bool net_client_service_start(NetClientService* service, const NetKeypair* identity, const NetDeviceInfo* info,
                               const char* trust_path);
 // Stops the thread, closes the audio and destroys the NetClient. Safe on a
 // service that didn't start.
