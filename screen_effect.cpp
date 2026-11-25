@@ -4,9 +4,8 @@
 
 #include <SDL3/SDL_log.h>
 
-#include "imgui.h"
 
-#include "debug_ui.h"
+#include "ui_texture.h"
 #include "screen_effect_spirv.h"
 #include "vk_barrier.h"
 
@@ -31,7 +30,7 @@ static void destroy_target(ScreenEffect* effect, const VulkanContext* context)
     {
         vkDeviceWaitIdle(context->device);   // earlier frames may still be drawing or copying it
     }
-    debug_ui_remove_texture(effect->texture_id);
+    ui_texture_remove(effect->texture_id);
     if (effect->framebuffer != VK_NULL_HANDLE)
     {
         vkDestroyFramebuffer(context->device, effect->framebuffer, nullptr);
@@ -405,7 +404,7 @@ static bool create_target(ScreenEffect* effect, const VulkanContext* context, ui
             return false;
         }
     }
-    effect->texture_id = debug_ui_add_texture(effect->view);
+    effect->texture_id = ui_texture_add_vulkan(effect->view);
     effect->width = width;
     effect->height = height;
     effect->layout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -508,21 +507,15 @@ bool screen_effect_prepare(ScreenEffect* effect, const VulkanContext* context, c
     return true;
 }
 
-void screen_effect_draw(const ScreenEffect* effect, ImDrawList* draw_list, float origin_x, float origin_y)
+bool screen_effect_shown_image(const ScreenEffect* effect, float origin_x, float origin_y, ShownImage* image)
 {
     if (!effect->ready)
     {
-        return;
+        return false;
     }
-    const ViewportResult* viewport = &effect->viewport;
-    ImVec2 top_left(origin_x + static_cast<float>(viewport->x), origin_y + static_cast<float>(viewport->y));
-    ImVec2 bottom_right(top_left.x + static_cast<float>(viewport->width), top_left.y + static_cast<float>(viewport->height));
     // The target is the picture's size: 1:1 with nearest, so nothing blurs it again.
-    const ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
-    draw_list->AddCallback(platform_io.DrawCallback_SetSamplerNearest, nullptr);
-    draw_list->AddImage(ImTextureRef(static_cast<ImTextureID>(effect->texture_id)), top_left, bottom_right,
-                        ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
-    draw_list->AddCallback(platform_io.DrawCallback_SetSamplerLinear, nullptr);
+    shown_image_whole(effect->texture_id, &effect->viewport, origin_x, origin_y, image);
+    return true;
 }
 
 bool screen_effect_request_capture(ScreenEffect* effect)
@@ -633,7 +626,7 @@ static void record_capture(ScreenEffect* effect, const VulkanContext* context, V
     vkCmdCopyImageToBuffer(command_buffer, effect->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, effect->capture_buffer,
                            1, &region);
 
-    // The target back to being sampled (ImGui's draw this frame), after the
+    // The target back to being sampled (the GUI's draw this frame), after the
     // copy has read it: an execution dependency plus the layout change.
     VkImageMemoryBarrier2 to_sampled = {
         .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
@@ -694,7 +687,7 @@ void screen_effect_record(ScreenEffect* effect, const VulkanContext* context, Vk
     vkUpdateDescriptorSets(context->device, 1, &write, 0, nullptr);
 
     // The target becomes a color attachment. Earlier frames may still be
-    // sampling it (ImGui) or copying it (a capture): reads only, so an
+    // sampling it (the GUI) or copying it (a capture): reads only, so an
     // execution dependency is enough. Every pixel is redrawn: old contents
     // discarded (UNDEFINED).
     VkImageMemoryBarrier2 to_attachment = {
@@ -778,7 +771,7 @@ void screen_effect_record(ScreenEffect* effect, const VulkanContext* context, Vk
             return;
         }
     }
-    // The pass's writes -> ImGui samples the target this frame.
+    // The pass's writes -> the GUI samples the target this frame.
     VkImageMemoryBarrier2 to_sampled = {
         .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
         .srcStageMask        = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,

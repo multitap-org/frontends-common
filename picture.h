@@ -1,8 +1,8 @@
 #pragma once
 
-// The core's picture on screen: draws a StreamingTexture where viewport.h
-// says, with the chosen filter, through Dear ImGui (so it can sit behind the
-// UI or inside a window).
+// The core's picture on screen: a StreamingTexture where viewport.h says,
+// with the chosen filter, handed to the GUI as a ShownImage (shown_image.h)
+// so the GUI draws it (behind the UI or inside a window).
 //
 // Filters:
 //   nearest         the texture as is, nearest sampling (sharp pixels).
@@ -15,10 +15,10 @@
 // blends in pixels outside the picture.
 //
 // Each frame, in this order:
-//   picture_prepare()   while building the UI, before picture_draw (it may
+//   picture_prepare()   while building the UI, before picture_shown_image (it may
 //                       recreate the copy, which waits for the GPU; only when
 //                       its size changes)
-//   picture_draw()      adds the picture to an ImGui draw list
+//   picture_shown_image()  what the GUI draws (a texture over a rectangle)
 //   picture_record()    after the texture upload, before rendering starts:
 //                       records the copy
 
@@ -26,10 +26,10 @@
 
 #include <vulkan/vulkan.h>
 
+#include "shown_image.h"
 #include "viewport.h"
 #include "vk_texture.h"
 
-struct ImDrawList;
 struct VulkanContext;
 
 struct Picture
@@ -41,7 +41,7 @@ struct Picture
     VkImageLayout  layout       = VK_IMAGE_LAYOUT_UNDEFINED;
     uint32_t       width        = 0;
     uint32_t       height       = 0;
-    uint64_t       texture_id   = 0;   // ImGui texture id of the copy
+    uint64_t       texture_id   = 0;   // the UI's handle of the copy (ui_texture_add_vulkan)
 
     VkFormat blit_checked   = VK_FORMAT_UNDEFINED;   // the source format blit_supported is for
     bool     blit_supported = false;   // the GPU can blit that format into the copy and filter it
@@ -64,10 +64,11 @@ void picture_destroy(Picture* picture, const VulkanContext* context);
 bool picture_prepare(Picture* picture, const VulkanContext* context, const StreamingTexture* source,
                      const ViewportResult* viewport);
 
-// Adds the picture to `draw_list`. The viewport's (0, 0) is at (origin_x,
-// origin_y) in ImGui coordinates. `source_texture_id` = the source's ImGui id.
-void picture_draw(const Picture* picture, ImDrawList* draw_list, const StreamingTexture* source,
-                  uint64_t source_texture_id, float origin_x, float origin_y);
+// What the GUI draws this frame. The viewport's (0, 0) is at (origin_x,
+// origin_y) in window pixels. `source_texture_id` = the source's UI handle.
+// False when there's nothing to draw.
+bool picture_shown_image(const Picture* picture, const StreamingTexture* source, uint64_t source_texture_id,
+                         float origin_x, float origin_y, ShownImage* image);
 
 // Records the copy into `command_buffer` (outside a rendering pass, after
 // the source's upload). Does nothing for nearest.

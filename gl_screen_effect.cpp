@@ -4,13 +4,13 @@
 
 #include <SDL3/SDL_log.h>
 
-#include "imgui.h"
 
 #include "gl_texture.h"
+#include "ui_texture.h"
 
 // GLSL ES 1.00, the same quad as the copy program (gl_context.cpp): row 0 of
 // the source (the picture's top) lands at the target's y = 0, so the target
-// keeps the uploaded orientation and ImGui draws it the right way up.
+// keeps the uploaded orientation and the GUI draws it the right way up.
 static const char* EFFECT_VERTEX_SHADER =
     "attribute vec2 a_position;\n"
     "varying vec2 v_coord;\n"
@@ -177,22 +177,15 @@ bool gl_screen_effect_prepare(GlScreenEffect* effect, GlContext* context, const 
     return true;
 }
 
-void gl_screen_effect_draw(const GlScreenEffect* effect, ImDrawList* draw_list, float origin_x, float origin_y)
+bool gl_screen_effect_shown_image(const GlScreenEffect* effect, float origin_x, float origin_y, ShownImage* image)
 {
     if (!effect->ready)
     {
-        return;
+        return false;
     }
-    const ViewportResult* viewport = &effect->viewport;
-    ImVec2 top_left(origin_x + static_cast<float>(viewport->x), origin_y + static_cast<float>(viewport->y));
-    ImVec2 bottom_right(top_left.x + static_cast<float>(viewport->width),
-                        top_left.y + static_cast<float>(viewport->height));
-    const ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
-    // ImTextureID on ImGui's GL backend is the texture name. 1:1, nearest.
-    draw_list->AddCallback(platform_io.DrawCallback_SetSamplerNearest, nullptr);
-    draw_list->AddImage(ImTextureRef(static_cast<ImTextureID>(effect->texture)), top_left, bottom_right,
-                        ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
-    draw_list->AddCallback(platform_io.DrawCallback_SetSamplerLinear, nullptr);
+    // 1:1, nearest.
+    shown_image_whole(ui_texture_from_gl(effect->texture), &effect->viewport, origin_x, origin_y, image);
+    return true;
 }
 
 bool gl_screen_effect_request_capture(GlScreenEffect* effect)
@@ -303,8 +296,8 @@ void gl_screen_effect_record(GlScreenEffect* effect, GlContext* context, const G
 
     gl->BindFramebuffer(GL_FRAMEBUFFER, effect->framebuffer);
     gl->Viewport(0, 0, static_cast<GLsizei>(effect->width), static_cast<GLsizei>(effect->height));
-    // ImGui sets and restores its own state around its draws; ours runs
-    // between them with these off.
+    // The GUI's GL backend (ImGui's) sets and restores its own state around
+    // its draws; ours runs between them with these off.
     gl->Disable(GL_BLEND);
     gl->Disable(GL_SCISSOR_TEST);
     gl->Disable(GL_DEPTH_TEST);
@@ -312,7 +305,7 @@ void gl_screen_effect_record(GlScreenEffect* effect, GlContext* context, const G
     gl->UseProgram(effect->program);
     gl->ActiveTexture(GL_TEXTURE0);
     gl->BindTexture(GL_TEXTURE_2D, source->texture);
-    GLint filter = source->linear ? GL_LINEAR : GL_NEAREST;   // ImGui changes it too: set on every use
+    GLint filter = source->linear ? GL_LINEAR : GL_NEAREST;   // the GUI changes it too: set on every use
     gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
     gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
     gl->Uniform1i(effect->source, 0);

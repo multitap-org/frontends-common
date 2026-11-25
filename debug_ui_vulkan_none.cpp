@@ -29,7 +29,7 @@ void debug_ui_on_swapchain_recreated(const VulkanSwapchain* swapchain)
     static_cast<void>(swapchain);
 }
 
-uint64_t debug_ui_add_texture(VkImageView view)
+uint64_t ui_texture_add_vulkan(VkImageView view)
 {
     static_cast<void>(view);
     return 0;

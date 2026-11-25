@@ -151,36 +151,30 @@ void video_output_skip(VideoOutput* output)
     output->gl_chain.ready = false;
 }
 
-void video_output_draw(const VideoOutput* output, ImDrawList* draw_list, const VideoTexture* source, float origin_x,
-                       float origin_y)
+bool video_output_shown_image(const VideoOutput* output, const VideoTexture* source, float origin_x, float origin_y,
+                              ShownImage* image)
 {
     if (output->on_gl)
     {
         if (output->effect_on)
         {
-            gl_screen_effect_draw(&output->gl_effect, draw_list, origin_x, origin_y);
+            return gl_screen_effect_shown_image(&output->gl_effect, origin_x, origin_y, image);
         }
-        else if (output->shaded)
+        if (output->shaded)
         {
-            gl_shader_chain_draw(&output->gl_chain, draw_list, origin_x, origin_y);
+            return gl_shader_chain_shown_image(&output->gl_chain, origin_x, origin_y, image);
         }
-        else
-        {
-            gl_picture_draw(&output->gl_picture, draw_list, &source->gl, origin_x, origin_y);
-        }
+        return gl_picture_shown_image(&output->gl_picture, &source->gl, origin_x, origin_y, image);
     }
-    else if (output->effect_on)
+    if (output->effect_on)
     {
-        screen_effect_draw(&output->effect_pass, draw_list, origin_x, origin_y);
+        return screen_effect_shown_image(&output->effect_pass, origin_x, origin_y, image);
     }
-    else if (output->shaded)
+    if (output->shaded)
     {
-        shader_chain_draw(&output->chain, draw_list, origin_x, origin_y);
+        return shader_chain_shown_image(&output->chain, origin_x, origin_y, image);
     }
-    else
-    {
-        picture_draw(&output->picture, draw_list, &source->vulkan, source->imgui_id, origin_x, origin_y);
-    }
+    return picture_shown_image(&output->picture, &source->vulkan, source->ui_texture, origin_x, origin_y, image);
 }
 
 void video_output_record(VideoOutput* output, const ShaderLibrary* library, AppShell* shell, VideoTexture* source)
@@ -259,11 +253,11 @@ void video_output_record(VideoOutput* output, const ShaderLibrary* library, AppS
                          &effect_source, &output->effect);
 }
 
-bool video_output_stage0_result(const VideoOutput* output, uint64_t* imgui_id, uint32_t* width, uint32_t* height)
+bool video_output_stage0_result(const VideoOutput* output, uint64_t* ui_texture, uint32_t* width, uint32_t* height)
 {
     if (output->on_gl)
     {
-        return gl_shader_chain_stage0_result(&output->gl_chain, imgui_id, width, height);
+        return gl_shader_chain_stage0_result(&output->gl_chain, ui_texture, width, height);
     }
     // Only once the chain has written it: a new image is still UNDEFINED
     // while the UI is built.
@@ -273,7 +267,7 @@ bool video_output_stage0_result(const VideoOutput* output, uint64_t* imgui_id, u
     {
         return false;
     }
-    *imgui_id = chain->middle.texture_id;
+    *ui_texture = chain->middle.texture_id;
     *width = chain->middle.width;
     *height = chain->middle.height;
     return true;

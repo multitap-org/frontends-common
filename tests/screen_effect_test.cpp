@@ -88,6 +88,21 @@ static ViewportResult picture_viewport(uint32_t size, ViewportFilter filter)
     return viewport;
 }
 
+// What a frontend's game view widget does with the ShownImage (piccolo:
+// retroui's game_view_draw), with ImGui as the shell's UI.
+static void draw_shown_image(const ShownImage* image)
+{
+    const ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+    ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
+    bool nearest = image->filter == ShownImageFilter::nearest;
+    draw_list->AddCallback(nearest ? platform_io.DrawCallback_SetSamplerNearest : platform_io.DrawCallback_SetSamplerLinear,
+                           nullptr);
+    draw_list->AddImage(ImTextureRef(static_cast<ImTextureID>(image->texture)), ImVec2(image->x, image->y),
+                        ImVec2(image->x + image->width, image->y + image->height), ImVec2(image->u_min, image->v_min),
+                        ImVec2(image->u_max, image->v_max));
+    draw_list->AddCallback(platform_io.DrawCallback_SetSamplerLinear, nullptr);
+}
+
 // One frame of the loop, as a frontend runs it. False if the shell couldn't make the frame.
 static bool run_frame(AppShell* shell, VideoOutput* output, VideoTexture* texture, const void* pixels,
                       const ViewportResult* viewport, const ScreenEffectParams* params)
@@ -99,7 +114,11 @@ static bool run_frame(AppShell* shell, VideoOutput* output, VideoTexture* textur
     video_output_set_effect(output, params);
     if (video_output_prepare(output, shell, texture, viewport))
     {
-        video_output_draw(output, ImGui::GetBackgroundDrawList(), texture, 0.0f, 0.0f);
+        ShownImage image = {};
+        if (video_output_shown_image(output, texture, 0.0f, 0.0f, &image))
+        {
+            draw_shown_image(&image);
+        }
     }
     if (!app_shell_acquire(shell))
     {

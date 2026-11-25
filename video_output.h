@@ -3,7 +3,8 @@
 // A VideoTexture on screen: where viewport.h says, through two shader stages
 // when there are any (stage 0 = the frontend's pass 0 at the picture's own
 // resolution, stage 1 = the chosen preset), else plain with the viewport's
-// filter. Drawn through ImGui, so it can sit behind the UI or inside a window.
+// filter. Handed to the GUI as a ShownImage (shown_image.h), so it can sit
+// behind the UI or inside a window; nothing here knows the GUI.
 // Frontends use this instead of the API's own modules, so they don't depend on
 // which API the shell runs on. Vulkan: shader_chain.h (librashader, .slangp)
 // and, without a chain, picture.h underneath. OpenGL ES: gl_shader_chain.h
@@ -14,7 +15,7 @@
 //   video_output_prepare()   while building the UI (may recreate images,
 //                            which waits for the GPU; only when sizes change).
 //                            Frames that show nothing call video_output_skip().
-//   video_output_draw()      adds the picture to an ImGui draw list
+//   video_output_shown_image()  what the GUI draws (a texture over a rectangle)
 //   video_output_record()    after app_shell_acquire() and the texture's
 //                            upload, before app_shell_present()
 //
@@ -37,10 +38,10 @@
 #include "screen_effect.h"
 #include "screen_effect_params.h"
 #include "shader_chain.h"
+#include "shown_image.h"
 #include "viewport.h"
 
 struct AppShell;
-struct ImDrawList;
 struct VideoTexture;
 
 struct VideoOutput
@@ -106,9 +107,10 @@ bool video_output_prepare(VideoOutput* output, AppShell* shell, const VideoTextu
 // Nothing is shown this frame (records nothing).
 void video_output_skip(VideoOutput* output);
 
-// Adds the picture to `draw_list`; the viewport's (0, 0) is at (origin_x, origin_y).
-void video_output_draw(const VideoOutput* output, ImDrawList* draw_list, const VideoTexture* source, float origin_x,
-                       float origin_y);
+// What the GUI draws this frame; the viewport's (0, 0) is at (origin_x,
+// origin_y). False when there's nothing to draw.
+bool video_output_shown_image(const VideoOutput* output, const VideoTexture* source, float origin_x, float origin_y,
+                              ShownImage* image);
 
 // Records this frame's GPU work (copies, shader passes). Only after
 // app_shell_acquire() returned true. Does nothing when nothing was prepared.
@@ -117,7 +119,7 @@ void video_output_record(VideoOutput* output, const ShaderLibrary* library, AppS
 // Stage 0's result this frame (the shown part, after the crop, before stage
 // 1), once it has been written: for previews of the picture controls. False
 // when there is none.
-bool video_output_stage0_result(const VideoOutput* output, uint64_t* imgui_id, uint32_t* width, uint32_t* height);
+bool video_output_stage0_result(const VideoOutput* output, uint64_t* ui_texture, uint32_t* width, uint32_t* height);
 
 // Frees everything. Waits for the GPU. Safe on an empty output.
 void video_output_destroy(VideoOutput* output, const ShaderLibrary* library, AppShell* shell);
