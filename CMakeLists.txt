@@ -228,13 +228,15 @@ if(MULTITAP_HAVE_ENET)
     endif()
 endif()
 
-# The settings model and the UI text, with no GUI: built without ImGui's
-# include path, so a frontend's logic (its view state) can link this alone and
-# a stray #include "imgui.h" there fails to compile.
+# The settings model, the UI text and the screen effects' values, with no
+# GUI: built without ImGui's include path, so a frontend's logic (its view
+# state) can link this alone and a stray #include "imgui.h" there fails to
+# compile.
 add_library(frontend_settings STATIC
     settings_file.cpp
     settings.cpp
     localization.cpp
+    screen_effect_params.cpp
 )
 target_include_directories(frontend_settings PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(frontend_settings PUBLIC SDL3::SDL3 host_common)
@@ -260,7 +262,6 @@ add_library(frontend_common STATIC
     video_texture.cpp
     video_output.cpp
     shown_image.cpp
-    screen_effect_params.cpp
     screenshot_writer.cpp
     gl_context.cpp
     gl_texture.cpp
