@@ -1,6 +1,7 @@
 #include "net_build.h"
 
 #include <cstring>
+#include <thread>
 
 #include "host_fs.h"
 #include "host_log.h"
@@ -167,6 +168,20 @@ bool net_build_proof_load(const NetBuildIdentity* build, const char* cache_dir, 
     return true;
 }
 
+void net_build_proof_fetch_later(const NetBuildIdentity* build, const char* cache_dir)
+{
+    if (build->version.empty() || build->version.find("-dev") != std::string::npos)
+    {
+        return;   // never signed: nothing to ask the server for
+    }
+    NetBuildIdentity copy = *build;
+    std::string dir = cache_dir;
+    std::thread([copy, dir]() {
+        NetDeviceInfo scratch;
+        net_build_proof_load(&copy, dir.c_str(), true, &scratch);
+    }).detach();
+}
+
 #else   // no downloads in this build (frontend_download): no proofs, every build unsigned
 
 bool net_build_verify(void* user, const NetDeviceInfo* info)
@@ -184,6 +199,12 @@ bool net_build_proof_load(const NetBuildIdentity* build, const char* cache_dir, 
     info->record_size = 0;
     info->signature_size = 0;
     return false;
+}
+
+void net_build_proof_fetch_later(const NetBuildIdentity* build, const char* cache_dir)
+{
+    (void)build;
+    (void)cache_dir;
 }
 
 #endif

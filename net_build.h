@@ -50,3 +50,7 @@ bool net_build_verify(void* user, const NetDeviceInfo* info);
 // before networking starts) and kept there. False (info left without a proof)
 // for a dev build or when there is none.
 bool net_build_proof_load(const NetBuildIdentity* build, const char* cache_dir, bool fetch, NetDeviceInfo* info);
+// net_build_proof_load with `fetch`, on a thread of its own (detached, for
+// the program's start): the proof lands in <cache_dir> for the next launch.
+// Nothing happens for a dev build or without downloads.
+void net_build_proof_fetch_later(const NetBuildIdentity* build, const char* cache_dir);
