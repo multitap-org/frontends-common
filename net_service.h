@@ -117,9 +117,10 @@ void net_service_set_beacon(NetService* service, const char* server);
 bool net_service_next(NetService* service, NetAccessEvent* event);
 
 // Locked: the shared folders for SHARE devices (piccolo-share): the game
-// folders, then SAVES and STATES ("" = not shared).
+// folders, then SAVES, STATES and SCREENSHOTS ("" = not shared).
 void net_service_set_share_folders(NetService* service, const std::vector<std::string>* game_paths,
-                                   const char* saves_path, const char* states_path);
+                                   const char* saves_path, const char* states_path,
+                                   const char* screenshots_path);
 
 // --- remote play --------------------------------------------------------------
 

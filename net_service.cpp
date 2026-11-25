@@ -282,9 +282,10 @@ void net_service_stop(NetService* service)
 }
 
 void net_service_set_share_folders(NetService* service, const std::vector<std::string>* game_paths,
-                                   const char* saves_path, const char* states_path)
+                                   const char* saves_path, const char* states_path,
+                                   const char* screenshots_path)
 {
-    net_share_host_set_folders(&service->share, game_paths, saves_path, states_path);
+    net_share_host_set_folders(&service->share, game_paths, saves_path, states_path, screenshots_path);
 }
 
 void net_service_lock(NetService* service)

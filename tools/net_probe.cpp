@@ -68,7 +68,8 @@
 // through net_share_link as piccolo's SHARE does; --seconds is the time
 // limit (at least 30):
 //   --share-list PATH   list a folder of the host's shared folders ("" = the
-//                       shared folders themselves: game folders, SAVES, STATES)
+//                       shared folders themselves: game folders, SAVES, STATES,
+//                       SCREENSHOTS)
 //   --share-get PATH    copy the host's file PATH into --share-dir
 //   --share-put NAME PATH  copy the file NAME of --share-dir to the host's PATH
 //                       ("ROMS/gba/Game.gba"; missing folders are made there)
@@ -76,7 +77,8 @@
 //   --share-dir DIR     our side's one shared folder (default --dir)
 //   --share-host NAME   be a piccolo-share host instead (net_service, as
 //                       piccolo runs it): --share-dir as its game folder,
-//                       --share-saves DIR / --share-states DIR, pairing open,
+//                       --share-saves DIR / --share-states DIR /
+//                       --share-screenshots DIR, pairing open,
 //                       every device that connects raised to SHARE (a test
 //                       tool: never on a network you don't trust). Ctrl+C stops
 //
@@ -1319,8 +1321,9 @@ struct ShareProbe
     std::string put_path;     // where on the host
     bool        replace = false;
     std::string dir;          // "" = --dir
-    std::string saves;        // --share-host: its SAVES / STATES ("" = none)
+    std::string saves;        // --share-host: its SAVES / STATES / SCREENSHOTS ("" = none)
     std::string states;
+    std::string screenshots;
 };
 
 static const char* share_status_text(NetShareStatus status)
@@ -1430,7 +1433,7 @@ static int run_share(uint16_t port, double seconds, const char* at, const char* 
         delete link;
         return 1;
     }
-    net_share_link_set_folders(link, &games, "", "");
+    net_share_link_set_folders(link, &games, "", "", "");
     net_share_link_connect(link, address, code == nullptr ? "" : code);
 
     int result = 2;
@@ -1485,11 +1488,12 @@ static int run_share(uint16_t port, double seconds, const char* at, const char* 
                 std::printf("list \"%s\": %s, %u entries in %.0f ms\n", share->list_path.c_str(),
                             share_status_text(list_status), static_cast<unsigned>(entries.size()),
                             share_seconds_since(start) * 1000.0);
-                static const char* KIND_NAMES[] = {"folder", "file", "games", "saves", "states"};
+                static const char* KIND_NAMES[NET_SHARE_KIND_COUNT] = {"folder", "file",   "games",
+                                                                       "saves",  "states", "screenshots"};
                 for (size_t i = 0; i < entries.size(); i++)
                 {
                     uint32_t kind = static_cast<uint32_t>(entries[i].kind);
-                    std::printf("  %-6s %12llu  %10llu  %s\n", kind < 5 ? KIND_NAMES[kind] : "?",
+                    std::printf("  %-11s %12llu  %10llu  %s\n", kind < NET_SHARE_KIND_COUNT ? KIND_NAMES[kind] : "?",
                                 static_cast<unsigned long long>(entries[i].size),
                                 static_cast<unsigned long long>(entries[i].mtime), entries[i].name.c_str());
                 }
@@ -1569,11 +1573,13 @@ static int run_share_host(uint16_t port, const char* name, const std::string* di
         return 1;
     }
     net_service_lock(service);
-    net_service_set_share_folders(service, &games, share->saves.c_str(), share->states.c_str());
-    std::printf("share host \"%s\" on port %u, sharing %s%s%s%s%s (Ctrl+C to stop)\n", name,
+    net_service_set_share_folders(service, &games, share->saves.c_str(), share->states.c_str(),
+                                  share->screenshots.c_str());
+    std::printf("share host \"%s\" on port %u, sharing %s%s%s%s%s%s%s (Ctrl+C to stop)\n", name,
                 static_cast<unsigned>(net_host_port(&service->access.session.host)), share_dir.c_str(),
                 share->saves.empty() ? "" : ", saves ", share->saves.c_str(), share->states.empty() ? "" : ", states ",
-                share->states.c_str());
+                share->states.c_str(), share->screenshots.empty() ? "" : ", screenshots ",
+                share->screenshots.c_str());
     net_service_unlock(service);
     std::fflush(stdout);   // read from a log while it runs
     for (;;)
@@ -1846,6 +1852,10 @@ int main(int argc, char** argv)
         else if (std::strcmp(argv[i], "--share-states") == 0 && has_value)
         {
             share.states = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "--share-screenshots") == 0 && has_value)
+        {
+            share.screenshots = argv[++i];
         }
         else if (std::strcmp(argv[i], "--share-host") == 0 && has_value)
         {
