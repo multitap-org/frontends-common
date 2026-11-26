@@ -820,7 +820,9 @@ static int32_t join_port(InputSystem* system, uint32_t controller)
     {
         return INPUT_NO_PORT;
     }
-    for (uint32_t p = 0; p < INPUT_PORT_COUNT; p++)
+    // Only the game's ports: a fifth pad doesn't sit on port 5 of a two-player game.
+    uint32_t ports = system->join_ports < INPUT_PORT_COUNT ? system->join_ports : INPUT_PORT_COUNT;
+    for (uint32_t p = 0; p < ports; p++)
     {
         if (port_free(system, p))
         {
