@@ -43,8 +43,9 @@ static void test_guest_ports()
 {
     InputSystem* system = new InputSystem{};
     InputNet* net = new InputNet{};
+    const uint32_t ports = system->join_ports;   // the ports START joins (4: a game that says nothing)
     int32_t controllers[INPUT_PORT_COUNT + 1] = {};
-    for (uint32_t peer = 0; peer < INPUT_PORT_COUNT + 1; peer++)
+    for (uint32_t peer = 0; peer < ports + 1; peer++)
     {
         uint8_t key[32] = {};
         key[0] = static_cast<uint8_t>(peer + 1);
@@ -56,13 +57,13 @@ static void test_guest_ports()
         check(input_net_peer_port(net, system, peer) == INPUT_NO_PORT, "a guest's pad has no port before it joins");
         controllers[peer] = input_first_controller(system, net->pads[peer][0].device);
     }
-    for (uint32_t peer = 0; peer < INPUT_PORT_COUNT; peer++)
+    for (uint32_t peer = 0; peer < ports; peer++)
     {
         check(controllers[peer] >= 0 && input_join(system, static_cast<uint32_t>(controllers[peer])),
               "guests join while ports are free");
         check(input_net_peer_port(net, system, peer) == static_cast<int32_t>(peer), "each on its port");
     }
-    uint32_t last = INPUT_PORT_COUNT;
+    uint32_t last = ports;
     check(controllers[last] >= 0 && !input_join(system, static_cast<uint32_t>(controllers[last])),
           "no free port: the last guest can't join");
     check(input_net_peer_port(net, system, last) == INPUT_NO_PORT, "it watches");
