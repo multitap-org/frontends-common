@@ -129,6 +129,7 @@ enum class InputAction
     // (piccolo's HOLD START TO REMAP card; the game sees the button as well).
     hotkey_remap,        // START on gamepads, nothing on the keyboard
     hotkey_screenshot,   // take a screenshot (F8; no gamepad button by default)
+    hotkey_reset,        // the core's own reset (nothing bound by default)
     count,
 };
 

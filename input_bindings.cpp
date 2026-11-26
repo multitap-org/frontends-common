@@ -24,7 +24,7 @@ static const char* const ACTION_NAMES[INPUT_ACTION_COUNT] = {
     "ui.up", "ui.down", "ui.left", "ui.right", "ui.accept", "ui.back", "ui.page_left", "ui.page_right", "ui.open_menu",
     "hotkey.enable", "hotkey.menu", "hotkey.quick_menu", "hotkey.save_state", "hotkey.load_state",
     "hotkey.fast_forward", "hotkey.grab_mouse", "hotkey.ports", "hotkey.pause", "hotkey.dvr",
-    "hotkey.remap", "hotkey.screenshot",
+    "hotkey.remap", "hotkey.screenshot", "hotkey.reset",
 };
 
 static uint32_t index_of(InputAction action)
