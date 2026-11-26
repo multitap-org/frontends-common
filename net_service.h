@@ -28,6 +28,10 @@
 #include "net_stream.h"
 
 constexpr uint32_t NET_SERVICE_QUEUE = 1024;     // events between two drains (input packets included)
+// The last slots of the queue are kept for everything but pad messages
+// (connect, disconnect, pairing, control and stream messages): a flood of pad
+// packets fills the queue only up to NET_SERVICE_QUEUE - NET_SERVICE_QUEUE_RESERVE.
+constexpr uint32_t NET_SERVICE_QUEUE_RESERVE = 64;
 constexpr uint32_t NET_SERVICE_POLL_MS = 1;
 
 struct NetServiceSlot
@@ -70,6 +74,8 @@ struct NetServiceStream
     uint32_t             keyframes_sent = 0;
 };
 
+struct NetServiceResolve;   // net_service.cpp
+
 struct NetService
 {
     NetAccess      access;               // guarded by `lock` once started
@@ -79,14 +85,16 @@ struct NetService
     NetServiceSlot queue[NET_SERVICE_QUEUE];
     uint32_t       head = 0;             // the oldest queued event
     uint32_t       count = 0;
-    uint32_t       dropped = 0;          // events lost to a full queue (logged)
+    uint32_t       dropped = 0;          // pad messages lost to a full queue (logged once)
+    uint32_t       lost_lifecycle = 0;   // other events lost because even the reserve was full (logged once as an error)
     std::vector<uint8_t> current;        // the payload of the event net_service_next last gave
     std::mutex     frame_lock;           // the frame and audio handed over (stream), apart from `lock`
     NetServiceStream stream;
-    // The beacon (across the internet): its name is resolved on a thread of
-    // its own (DNS may take seconds; neither the frontend nor the network
-    // thread should wait for it).
-    std::thread    resolver;
+    // The beacon (across the internet): its name is resolved on a detached
+    // thread of its own (DNS may take seconds; nobody waits for it). `resolve`
+    // is the pending lookup's mailbox (net_service.cpp), guarded by `lock`;
+    // the service thread picks the result up.
+    NetServiceResolve* resolve = nullptr;
     std::string    beacon_text;          // guarded by `lock`
     // piccolo-share: SHARE devices' listings and copies, handled on the
     // thread (never queued for the frontend); guarded by `lock`.
@@ -108,7 +116,8 @@ void net_service_unlock(NetService* service);
 // Not locked: across the internet through the beacon `server` ("name",
 // "name:port", "[v6]:port"), or off with nullptr / "". Resolved on its own
 // thread; the access gets the addresses when it's done (net_access_beacon_status
-// says how it goes). Waits for a lookup still running from an earlier call.
+// says how it goes). Never waits: a lookup still running from an earlier call
+// is let go and its answer ignored.
 // The same beacon's WebRTC signaling (browsers) starts at once, where the
 // build has WebRTC (net_access_signal_status).
 void net_service_set_beacon(NetService* service, const char* server);
