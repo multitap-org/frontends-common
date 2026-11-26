@@ -1889,6 +1889,10 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
                 frame->keyboard_pressed[a] = frame->keyboard_pressed[a] || (keyboard && pressed[a]);
                 fired = fired || pressed[a];
             }
+            if (fired && !keyboard)
+            {
+                frame->ui_gamepad = static_cast<int32_t>(index);
+            }
             if (fired)
             {
                 controller->modifier_used = true;
@@ -1908,6 +1912,10 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
                 if (!keyboard)
                 {
                     frame->gamepad_held[a] = frame->gamepad_held[a] || held[a];
+                    if (pressed[a])
+                    {
+                        frame->ui_gamepad = static_cast<int32_t>(index);
+                    }
                 }
             }
             // The keyboard's hotkeys without the modifier, where the frontend

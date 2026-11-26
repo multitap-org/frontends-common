@@ -457,6 +457,8 @@ struct InputFrame
     bool     keyboard_pressed[INPUT_ACTION_COUNT] = {};   // the same, from the keyboard only
     bool     gamepad_held[INPUT_ACTION_COUNT] = {}; // interface actions held on port 1's gamepad: to drive a UI
     bool     gamepad_enable_alone = false;          // port 1's gamepad holds HOTKEY ENABLE and no hotkey fired with it
+    int32_t  ui_gamepad = -1;                       // the gamepad controller whose interface action or hotkey went
+                                                    // down this frame (-1 none): whose buttons a UI's hints name
     int32_t  joined_port = INPUT_NO_PORT;           // a controller joined this frame (for a message)
     int32_t  joined_controller = -1;
     int32_t  left_port = INPUT_NO_PORT;             // a controller's device went away and left this port (its first)
