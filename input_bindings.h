@@ -130,6 +130,8 @@ enum class InputAction
     hotkey_remap,        // START on gamepads, nothing on the keyboard
     hotkey_screenshot,   // take a screenshot (F8; no gamepad button by default)
     hotkey_reset,        // the core's own reset (nothing bound by default)
+    hotkey_undo_save_state,   // the selected slot back as before its last save (nothing bound by default)
+    hotkey_undo_load_state,   // the game back as before the last state load (nothing bound by default)
     count,
 };
 

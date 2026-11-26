@@ -24,7 +24,7 @@ static const char* const ACTION_NAMES[INPUT_ACTION_COUNT] = {
     "ui.up", "ui.down", "ui.left", "ui.right", "ui.accept", "ui.back", "ui.page_left", "ui.page_right", "ui.open_menu",
     "hotkey.enable", "hotkey.menu", "hotkey.quick_menu", "hotkey.save_state", "hotkey.load_state",
     "hotkey.fast_forward", "hotkey.grab_mouse", "hotkey.ports", "hotkey.pause", "hotkey.dvr",
-    "hotkey.remap", "hotkey.screenshot", "hotkey.reset",
+    "hotkey.remap", "hotkey.screenshot", "hotkey.reset", "hotkey.undo_save_state", "hotkey.undo_load_state",
 };
 
 static uint32_t index_of(InputAction action)
@@ -1379,6 +1379,7 @@ static void stick(const InputController* controller, const InputBindingSet* set,
 static bool game_only_hotkey(InputAction action)
 {
     return action == InputAction::hotkey_save_state || action == InputAction::hotkey_load_state ||
+           action == InputAction::hotkey_undo_save_state || action == InputAction::hotkey_undo_load_state ||
            action == InputAction::hotkey_fast_forward;
 }
 
