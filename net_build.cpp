@@ -11,11 +11,13 @@
 #include "net_http.h"
 #include "signature.h"
 
-// The releases key's public half (index_sign keygen on the releases stack,
-// docs/sites.md: sites/releases-keys/public.key), current and next, in hex.
-// Not in any repo yet: until it's filled in, every build reads as unsigned
-// (and none is signed: the records come with the first tag).
-static const char* const RELEASES_KEYS[] = {nullptr};
+// The releases key's public half (index_sign keygen on the releases
+// publisher, the VPS's /srv/multitap/sites/releases-keys/public.key), in hex;
+// a next one goes beside it before a key change. Builds read as unsigned until
+// their records exist (they come with the first tag).
+static const char* const RELEASES_KEYS[] = {
+    "b3eaa7821837257719c663b3c99aa27cf261fc63d78175f452ccca45c2466669",   // key_id e41ad6ee967abf8d (2026-11-20)
+};
 
 static int32_t load_keys(SignatureKey* keys, int32_t capacity)
 {
