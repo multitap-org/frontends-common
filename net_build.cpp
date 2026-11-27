@@ -133,11 +133,12 @@ static const char* const RELEASES_KEYS[] = {
 };
 
 // The snapshot key's public half (the releases publisher's
-// /srv/<user>/<app>/keys/snapshot.key, index_sign keygen; Andrés, 2026-11-27).
+// /srv/multitap/sites/releases-keys/snapshot.key beside secret.key, index_sign
+// keygen; Andrés, 2026-11-27).
 // It signs the builds of main (<base>-snapshot.<date>.<commit>), never a
 // release: a record it signs counts only for a snapshot version.
 static const char* const SNAPSHOT_KEYS[] = {
-    nullptr,   // not generated yet: snapshots read as unsigned
+    "9898f7f8f8c813aa7be596d45bdae0888082679ee6e0c8fa95328081baaeaf2a",   // key_id 55a5d48a465f46e4 (2026-11-27)
 };
 
 static int32_t load_keys(const char* const* hex, size_t hex_count, SignatureKey* keys, int32_t capacity)
