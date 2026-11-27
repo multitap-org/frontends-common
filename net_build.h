@@ -3,9 +3,12 @@
 // A build's proof that Multitap released it (Andrés, 2026-11-25; design
 // notes 11.9 and 11.13, capabilities plan section 11).
 //
-// Only tagged releases are signed; dev and debug builds aren't. The releases
-// server (cores-server's publish-apps.sh) signs, with the releases key it
-// already signs the apps' index.cfg with, one record per build:
+// Tagged releases and the builds of main (snapshots, Andrés, 2026-11-27) are
+// signed; dev, branch and local builds aren't. The releases server
+// (cores-server's publish-apps.sh) signs one record per build: a release's
+// with the releases key it already signs the apps' index.cfg with, a
+// snapshot's (version <base>-snapshot.<date>.<commit>, tag=snapshot) with the
+// snapshot key, which counts only for snapshot versions:
 //   <releases>/v1/<app>/builds/<version>-<target>.cfg (+ .sig)
 //   app=piccolo
 //   version=0.4.0
@@ -57,7 +60,8 @@ struct NetBuildIdentity
 bool net_build_find_program(const char* program, NetBuildIdentity* build);
 
 // NetVerifyBuildFn: the record's signature checks out with a releases key
-// and the record's app is the device's kind. `user` is unused.
+// (or a snapshot key, for a snapshot version) and the record's app is the
+// device's kind. `user` is unused.
 bool net_build_verify(void* user, const NetDeviceInfo* info);
 
 // This build's proof into `info` (record and signature), from

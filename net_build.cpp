@@ -132,12 +132,20 @@ static const char* const RELEASES_KEYS[] = {
     "b3eaa7821837257719c663b3c99aa27cf261fc63d78175f452ccca45c2466669",   // key_id e41ad6ee967abf8d (2026-11-20)
 };
 
-static int32_t load_keys(SignatureKey* keys, int32_t capacity)
+// The snapshot key's public half (the releases publisher's
+// /srv/<user>/<app>/keys/snapshot.key, index_sign keygen; Andrés, 2026-11-27).
+// It signs the builds of main (<base>-snapshot.<date>.<commit>), never a
+// release: a record it signs counts only for a snapshot version.
+static const char* const SNAPSHOT_KEYS[] = {
+    nullptr,   // not generated yet: snapshots read as unsigned
+};
+
+static int32_t load_keys(const char* const* hex, size_t hex_count, SignatureKey* keys, int32_t capacity)
 {
     int32_t count = 0;
-    for (size_t i = 0; i < sizeof(RELEASES_KEYS) / sizeof(RELEASES_KEYS[0]) && count < capacity; i++)
+    for (size_t i = 0; i < hex_count && count < capacity; i++)
     {
-        if (RELEASES_KEYS[i] != nullptr && signature_key_from_hex(RELEASES_KEYS[i], &keys[count]))
+        if (hex[i] != nullptr && signature_key_from_hex(hex[i], &keys[count]))
         {
             count++;
         }
@@ -167,11 +175,11 @@ static std::string record_value(const uint8_t* record, size_t size, const char* 
     return "";
 }
 
-static bool signed_by_releases(const uint8_t* record, size_t record_size, const uint8_t* signature,
-                               size_t signature_size)
+static bool signed_by(const char* const* hex, size_t hex_count, const uint8_t* record, size_t record_size,
+                      const uint8_t* signature, size_t signature_size)
 {
     SignatureKey keys[4];
-    int32_t key_count = load_keys(keys, 4);
+    int32_t key_count = load_keys(hex, hex_count, keys, 4);
     if (key_count == 0)
     {
         return false;
@@ -181,11 +189,26 @@ static bool signed_by_releases(const uint8_t* record, size_t record_size, const 
            SignatureResult::ok;
 }
 
+// Signed by a releases key, or by a snapshot key when the record is a
+// snapshot's (a leaked snapshot key can't make a release).
+static bool signed_officially(const uint8_t* record, size_t record_size, const uint8_t* signature,
+                              size_t signature_size)
+{
+    if (signed_by(RELEASES_KEYS, sizeof(RELEASES_KEYS) / sizeof(RELEASES_KEYS[0]), record, record_size, signature,
+                  signature_size))
+    {
+        return true;
+    }
+    return record_value(record, record_size, "version").find("-snapshot.") != std::string::npos &&
+           signed_by(SNAPSHOT_KEYS, sizeof(SNAPSHOT_KEYS) / sizeof(SNAPSHOT_KEYS[0]), record, record_size, signature,
+                     signature_size);
+}
+
 bool net_build_verify(void* user, const NetDeviceInfo* info)
 {
     (void)user;
     if (info->record_size == 0 || info->signature_size == 0 ||
-        !signed_by_releases(info->record, info->record_size, info->signature, info->signature_size))
+        !signed_officially(info->record, info->record_size, info->signature, info->signature_size))
     {
         return false;
     }
@@ -220,7 +243,7 @@ static bool take_proof(const NetBuildIdentity* build, const std::string* exe_has
         record_value(bytes, record->size(), "version") != build->version ||
         record_value(bytes, record->size(), "target") != build->target ||
         record_value(bytes, record->size(), "exe_sha256") != *exe_hash ||
-        !signed_by_releases(bytes, record->size(), reinterpret_cast<const uint8_t*>(signature->data()),
+        !signed_officially(bytes, record->size(), reinterpret_cast<const uint8_t*>(signature->data()),
                             signature->size()))
     {
         return false;
