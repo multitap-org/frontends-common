@@ -131,6 +131,45 @@ static void test_po()
     check_text(&localization, QUIT, "SALIR", "CRLF line endings");
 }
 
+// One entry of a one-string table: is `translation` used or refused?
+static bool format_accepted(const char* english, const char* translation)
+{
+    LocalizedString table[1] = {{"fmt", english}};
+    Localization localization = {};
+    localization_init(&localization, table, 1);
+    std::string po = "msgctxt \"fmt\"\nmsgid \"x\"\nmsgstr \"";
+    po += translation;
+    po += "\"\n";
+    uint32_t used = localization_parse_po(&localization, po.c_str(), po.size(), "format.po", "xx");
+    bool accepted = used == 1 && localization.refused == 0;
+    check(used + localization.refused == 1, "a format entry is either used or refused");
+    check(std::strcmp(localization_get(&localization, 0), accepted ? translation : english) == 0,
+          "a refused translation leaves English");
+    return accepted;
+}
+
+static void test_formats()
+{
+    check(format_accepted("PORT %u: %s", "PUERTO %u: %s"), "same conversions are accepted");
+    check(!format_accepted("%s JOINED %d", "%s SE UNIO"), "a dropped conversion is refused");
+    check(!format_accepted("PORT %u", "PUERTO %s"), "%s vs %u is refused");
+    check(!format_accepted("PORT %u", "PUERTO %u %s"), "an extra conversion is refused");
+    check(!format_accepted("PORT %u", "PUERTO"), "a missing conversion is refused");
+    check(!format_accepted("PORT %u", "PUERTO %n"), "%n is refused");
+    check(!format_accepted("%n", "%n"), "%n is refused even when English has it");
+    check(!format_accepted("PORT %u", "PUERTO %1$u"), "a positional form is refused");
+    check(format_accepted("100%% DONE %d", "100%% HECHO %d"), "%% is ignored");
+    check(format_accepted("DONE %d", "HECHO %d%%"), "%% is not a conversion");
+    check(format_accepted("VOLUME (%)", "VOLUMEN (%)"), "a literal percent is ignored");
+    check(format_accepted("RUNS 100 %", "VA AL 100 %"), "a trailing lone percent is ignored");
+    check(format_accepted("UP TO 0.5% NOBODY HEARS IT", "HASTA 0.5% NADIE LO NOTA"),
+          "\"% n\" in a plain text is a literal percent");
+    check(format_accepted("%5.1f FPS", "%.2f FPS"), "different precision is accepted");
+    check(!format_accepted("%u MS", "%zu MS"), "%zu vs %u is refused");
+    check(format_accepted("%zu MS", "%zu MS"), "%zu vs %zu is accepted");
+    check(!format_accepted("%*d", "%d"), "a '*' width is part of the signature");
+}
+
 static void test_files(const char* directory)
 {
     Localization localization = {};
@@ -157,6 +196,7 @@ int main(int argc, char** argv)
     }
     test_table();
     test_po();
+    test_formats();
     test_files(argv[1]);
     if (g_failures == 0)
     {

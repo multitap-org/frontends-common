@@ -107,6 +107,10 @@ static void test_validation()
     check(!settings_value_is_valid(offscreen, "2,5"), "real with a comma refused");
     check(!settings_value_is_valid(offscreen, "nan") && !settings_value_is_valid(offscreen, "51"),
           "real nan / out of range refused");
+    double parsed = 0.0;
+    check(settings_parse_real("0.5", &parsed) && parsed == 0.5, "parse_real reads 0.5");
+    check(settings_parse_real("-1", &parsed) && parsed == -1.0, "parse_real reads -1");
+    check(!settings_parse_real("abc", &parsed) && !settings_parse_real("1,5", &parsed), "parse_real refuses abc and 1,5");
     check(settings_value_is_valid(pause, "false") && !settings_value_is_valid(pause, "yes"), "bool true/false only");
     check(settings_value_is_valid(saves, "/home/user/Partidas guardadas/ñ"), "UTF-8 path accepted");
     check(!settings_value_is_valid(saves, "a\nb") && !settings_value_is_valid(saves, " /x"),

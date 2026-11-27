@@ -18,6 +18,10 @@
 //   - Entries marked "#, fuzzy" are skipped (not reviewed yet), and so is the
 //     header entry (msgid ""), entries without msgctxt, with an empty msgstr
 //     or a key that's not in the table (from an older or newer version).
+//   - A translation whose printf conversions (%s, %d, %.1f, ... with their
+//     length modifiers and '*') differ from the English text's is refused and
+//     English stays: many texts are snprintf() formats. "%n" and "%1$s" forms
+//     are never accepted. See `refused`.
 //   - Plurals: msgstr[0] is used. (No string needs plural forms yet.)
 
 #include <cstddef>
@@ -37,6 +41,7 @@ struct Localization
     uint32_t               count = 0;
     std::vector<std::string> translations;    // per ID; "" = use English
     std::string            language;          // "" = English only
+    uint32_t               refused = 0;       // translations of the last parse not used (see below)
 };
 
 // Checks the table (keys unique and not empty, English present) and starts
@@ -47,7 +52,9 @@ bool localization_init(Localization* localization, const LocalizedString* table,
 void localization_use_english(Localization* localization);
 
 // Reads translations from .po text (replacing any loaded before) and calls
-// them `language`. Returns how many strings got a translation.
+// them `language`. Returns how many strings got a translation; how many were
+// refused for their printf conversions is left in localization->refused (each
+// one is logged).
 uint32_t localization_parse_po(Localization* localization, const char* text, size_t size, const char* source_name,
                                const char* language);
 

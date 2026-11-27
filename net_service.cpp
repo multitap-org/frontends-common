@@ -7,6 +7,8 @@
 #include "net_build.h"
 #include "net_rtc.h"
 
+static void resolve_pick_up(NetService* service);   // (the beacon lookup, further down)
+
 // One poll: everything NetAccess has for us, copied into the queue.
 static void poll_once(NetService* service)
 {
@@ -21,13 +23,28 @@ static void poll_once(NetService* service)
         {
             net_share_host_peer_closed(&service->share, event.peer);
         }
-        if (service->count == NET_SERVICE_QUEUE)
+        // The last NET_SERVICE_QUEUE_RESERVE slots are for everything but
+        // pad messages: a flood of pad packets must not push out `closed`
+        // (the frontend's per-device cleanup hangs off it), connects or
+        // pairing.
+        bool input_message = event.type == NetAccessEventType::message && event.channel == NetChannel::input;
+        if (input_message && service->count >= NET_SERVICE_QUEUE - NET_SERVICE_QUEUE_RESERVE)
         {
             // The frontend hasn't drained for a long while (a stall): the
-            // newest is dropped; pads repeat their last states anyway.
+            // newest pad message is dropped; pads repeat their last states anyway.
             if (service->dropped++ == 0)
             {
-                host_log(LogLevel::warning, "Network: event queue full, events dropped");
+                host_log(LogLevel::warning, "Network: event queue full, input events dropped");
+            }
+            continue;
+        }
+        if (service->count == NET_SERVICE_QUEUE)
+        {
+            // Even the reserve is full (a stall of minutes): something that
+            // matters is lost. Logged once, like the warning above.
+            if (service->lost_lifecycle++ == 0)
+            {
+                host_log(LogLevel::error, "Network: event queue full, lifecycle events lost (connections, pairing)");
             }
             continue;
         }
@@ -175,6 +192,7 @@ static void run(NetService* service)
         bool running = service->running;
         if (running)
         {
+            resolve_pick_up(service);
             poll_once(service);
         }
         service->lock.unlock();
@@ -194,11 +212,102 @@ static void run(NetService* service)
     }
 }
 
-static void resolve_beacon(NetService* service, uint32_t generation, std::string text)
+// One beacon lookup's mailbox (heap, made by net_service_set_beacon). The
+// lookup thread (detached: a blocking getaddrinfo can't be cancelled, so
+// nobody waits for it) touches only this, never the NetService, which may be
+// gone by the time it finishes.
+//
+// Ownership: exactly one side deletes it.
+// - The thread, when it finds `abandoned` after resolving (the service no
+//   longer wants the answer and has let go of the pointer).
+// - The service in every other case: it sees `done`, or it abandons a
+//   mailbox that is already `done` (the thread has finished and won't touch
+//   it again).
+// `lock` makes the decision atomic: the thread sets `done` or reads
+// `abandoned` in one locked step, the service the reverse. `text` and
+// `generation` are written before the thread starts and never change.
+// Lock order: the service's `lock`, then the mailbox's (the thread takes
+// only the mailbox's). `NetService::resolve` is guarded by the service's lock.
+struct NetServiceResolve
+{
+    std::mutex lock;
+    bool       abandoned = false;   // the service let go: the thread deletes
+    bool       done = false;        // the addresses are in: the service deletes
+    std::string text;
+    uint32_t   generation = 0;
+    NetAddress addresses[NET_BEACON_MAX_SERVERS];
+    uint32_t   count = 0;
+};
+
+static void resolve_thread(NetServiceResolve* mailbox)
 {
     NetAddress addresses[NET_BEACON_MAX_SERVERS];
-    uint32_t count = text.empty() ? 0 : net_address_resolve(text.c_str(), NET_BEACON_DEFAULT_PORT, addresses);
-    service->lock.lock();
+    uint32_t count = mailbox->text.empty() ? 0 : net_address_resolve(mailbox->text.c_str(), NET_BEACON_DEFAULT_PORT, addresses);
+    mailbox->lock.lock();
+    if (mailbox->abandoned)
+    {
+        mailbox->lock.unlock();
+        delete mailbox;   // the last owner
+        return;
+    }
+    for (uint32_t i = 0; i < count; i++)
+    {
+        mailbox->addresses[i] = addresses[i];
+    }
+    mailbox->count = count;
+    mailbox->done = true;
+    mailbox->lock.unlock();   // the service owns it from here
+}
+
+// With the service's `lock` held: lets go of the pending lookup, if any,
+// without waiting for it.
+static void resolve_abandon(NetService* service)
+{
+    NetServiceResolve* mailbox = service->resolve;
+    if (mailbox == nullptr)
+    {
+        return;
+    }
+    service->resolve = nullptr;
+    mailbox->lock.lock();
+    if (mailbox->done)
+    {
+        mailbox->lock.unlock();
+        delete mailbox;   // the thread is finished with it
+        return;
+    }
+    mailbox->abandoned = true;
+    mailbox->lock.unlock();   // the thread deletes it when it finishes
+}
+
+// With the service's `lock` held, from the service's thread (`run`): applies
+// a finished lookup. Not before net_service_start or after net_service_stop
+// (no thread then): the mailbox just waits, and stop / the next set_beacon
+// abandons it.
+static void resolve_pick_up(NetService* service)
+{
+    NetServiceResolve* mailbox = service->resolve;
+    if (mailbox == nullptr)
+    {
+        return;
+    }
+    mailbox->lock.lock();
+    if (!mailbox->done)
+    {
+        mailbox->lock.unlock();
+        return;
+    }
+    NetAddress addresses[NET_BEACON_MAX_SERVERS];
+    uint32_t count = mailbox->count;
+    for (uint32_t i = 0; i < count; i++)
+    {
+        addresses[i] = mailbox->addresses[i];
+    }
+    std::string text = mailbox->text;
+    uint32_t generation = mailbox->generation;
+    mailbox->lock.unlock();
+    delete mailbox;
+    service->resolve = nullptr;
     if (generation == service->beacon_generation)
     {
         net_access_set_beacon(&service->access, addresses, count);
@@ -208,16 +317,12 @@ static void resolve_beacon(NetService* service, uint32_t generation, std::string
                      text.c_str(), static_cast<unsigned>(count));
         }
     }
-    service->lock.unlock();
 }
 
 void net_service_set_beacon(NetService* service, const char* server)
 {
-    if (service->resolver.joinable())
-    {
-        service->resolver.join();
-    }
     service->lock.lock();
+    resolve_abandon(service);   // never waits: the old lookup finishes on its own
     service->beacon_generation++;
     uint32_t generation = service->beacon_generation;
     service->beacon_text = server != nullptr ? server : "";
@@ -232,12 +337,18 @@ void net_service_set_beacon(NetService* service, const char* server)
     {
         net_access_set_signal(&service->access, net_signal_url(text.c_str()).c_str(), net_signal_stun(text.c_str()).c_str());
     }
-    service->lock.unlock();
     if (net_rtc_only())
     {
+        service->lock.unlock();
         return;   // the browser: no UDP, so no beacon registration to look up (signaling only)
     }
-    service->resolver = std::thread(resolve_beacon, service, generation, text);
+    NetServiceResolve* mailbox = new NetServiceResolve();
+    mailbox->text = text;
+    mailbox->generation = generation;
+    service->resolve = mailbox;
+    // Detached at once: the thread owns nothing but the mailbox.
+    std::thread(resolve_thread, mailbox).detach();
+    service->lock.unlock();
 }
 
 bool net_service_start(NetService* service, uint16_t port, const NetDeviceInfo* info, const NetKeypair* identity,
@@ -246,6 +357,7 @@ bool net_service_start(NetService* service, uint16_t port, const NetDeviceInfo* 
     service->head = 0;
     service->count = 0;
     service->dropped = 0;
+    service->lost_lifecycle = 0;
     for (uint32_t peer = 0; peer < NET_MAX_PEERS; peer++)
     {
         service->stream.flags[peer] = 0;
@@ -267,10 +379,6 @@ bool net_service_start(NetService* service, uint16_t port, const NetDeviceInfo* 
 
 void net_service_stop(NetService* service)
 {
-    if (service->resolver.joinable())
-    {
-        service->resolver.join();
-    }
     if (service->thread.joinable())
     {
         service->lock.lock();
@@ -278,6 +386,10 @@ void net_service_stop(NetService* service)
         service->lock.unlock();
         service->thread.join();
     }
+    // After the thread is gone: nobody picks the lookup up any more.
+    service->lock.lock();
+    resolve_abandon(service);
+    service->lock.unlock();
     net_share_host_stop(&service->share);
     net_access_destroy(&service->access);
     service->count = 0;
