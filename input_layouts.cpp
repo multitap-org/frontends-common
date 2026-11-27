@@ -45,6 +45,23 @@ static void sort_layouts(InputLayouts* layouts)
     }
 }
 
+// The words of a space-separated value ("switchpro joyconpair").
+static void words(const char* text, std::vector<std::string>* out)
+{
+    std::string all = text != nullptr ? text : "";
+    size_t start = 0;
+    while (start < all.size())
+    {
+        size_t end = all.find(' ', start);
+        end = end == std::string::npos ? all.size() : end;
+        if (end > start)
+        {
+            out->push_back(all.substr(start, end - start));
+        }
+        start = end + 1;
+    }
+}
+
 bool input_layouts_add(InputLayouts* layouts, const char* maker, const char* model, const SettingsFile* file)
 {
     InputLayout layout = {};
@@ -57,22 +74,10 @@ bool input_layouts_add(InputLayouts* layouts, const char* maker, const char* mod
     {
         layout.order = static_cast<int32_t>(std::strtol(order, nullptr, 10));
     }
-    const char* types = settings_file_get(file, "layout", "sdl_types");
-    if (types != nullptr)
-    {
-        std::string text = types;
-        size_t start = 0;
-        while (start < text.size())
-        {
-            size_t end = text.find(' ', start);
-            end = end == std::string::npos ? text.size() : end;
-            if (end > start)
-            {
-                layout.sdl_types.push_back(text.substr(start, end - start));
-            }
-            start = end + 1;
-        }
-    }
+    words(settings_file_get(file, "layout", "sdl_types"), &layout.sdl_types);
+    words(settings_file_get(file, "layout", "extensions"), &layout.extensions);
+    const char* touch = settings_file_get(file, "layout", "touch");
+    layout.touch = touch != nullptr ? touch : "";
     const char* dpad = settings_file_get(file, "layout", "dpad");
     layout.dpad = dpad == nullptr || std::strcmp(dpad, "no") != 0;
     const char* face = settings_file_get(file, "layout", "face");
@@ -170,6 +175,21 @@ const InputLayout* input_layouts_find(const InputLayouts* layouts, const char* i
         if (layouts->layouts[l].id == id)
         {
             return &layouts->layouts[l];
+        }
+    }
+    return nullptr;
+}
+
+const InputLayout* input_layouts_for_extension(const InputLayouts* layouts, const char* extension)
+{
+    for (size_t l = 0; extension != nullptr && extension[0] != '\0' && l < layouts->layouts.size(); l++)
+    {
+        for (size_t e = 0; e < layouts->layouts[l].extensions.size(); e++)
+        {
+            if (layouts->layouts[l].extensions[e] == extension)
+            {
+                return &layouts->layouts[l];
+            }
         }
     }
     return nullptr;

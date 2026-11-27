@@ -21,6 +21,11 @@
 //                                   right), X Y Z on leftshoulder y rightshoulder
 //                                   (the RetroPad's usual places for them);
 //                                   L / R, if any, on the triggers
+//   touch = snes                    the touch pad's MINIMAL arrangement for it (retroui
+//                                   PadMinimal: two = NES / Game Boy, snes); none = the
+//                                   RetroPad's places
+//   extensions = sfc smc            games it's the controller of (a touch pad STYLE of
+//                                   AUTO picks it for them)
 //
 //   [labels]                        by SDL's position names; a control left out isn't on the pad
 //   a = B                           the bottom face button
@@ -54,6 +59,8 @@ struct InputLayout
     bool                     dpad = true;
     uint32_t                 sticks = 2;
     bool                     six_face = false;   // face = six: A B C below, X Y Z above (Genesis, Saturn)
+    std::string              touch;              // touch = two / snes: the touch pad's MINIMAL arrangement ("" = none)
+    std::vector<std::string> extensions;         // extensions = ...: the games it's the controller of, lowercase
     std::string              labels[INPUT_MAP_CONTROL_COUNT];   // "" = no label (d-pad, sticks) or not on the pad
 };
 
@@ -75,6 +82,10 @@ void input_layouts_makers(const InputLayouts* layouts, std::vector<std::string>*
 void input_layouts_ensure_generic(InputLayouts* layouts);
 
 const InputLayout* input_layouts_find(const InputLayouts* layouts, const char* id);
+
+// The first layout listing this game file extension ("sfc", lowercase, no
+// dot), or nullptr.
+const InputLayout* input_layouts_for_extension(const InputLayouts* layouts, const char* extension);
 
 // The first layout listing this SDL type name ("ps5"...), or nullptr.
 const InputLayout* input_layouts_for_type(const InputLayouts* layouts, const char* sdl_type);

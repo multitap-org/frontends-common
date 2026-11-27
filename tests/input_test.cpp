@@ -1419,6 +1419,7 @@ static void test_layouts()
     InputLayouts layouts = {};
     static const char GENESIS[] =
         "[layout]\nname = GENESIS\norder = 40\nsdl_types = segagenesis\ndpad = yes\nsticks = 0\nface = six\n"
+        "touch = six\nextensions = md gen smd\n"
         "[labels]\na = A\nb = B\nrightshoulder = C\nx = X\ny = Y\nleftshoulder = Z\nstart = START\n";
     SettingsFile file = {};
     settings_file_parse(&file, GENESIS, sizeof(GENESIS) - 1, "test");
@@ -1431,6 +1432,9 @@ static void test_layouts()
     const InputLayout* genesis = input_layouts_find(&layouts, "Sega/genesis6");
     check(genesis != nullptr && genesis->name == "GENESIS", "layouts: read by id");
     check(input_layouts_for_type(&layouts, "segagenesis") == genesis, "layouts: picked by SDL type");
+    check(input_layouts_for_extension(&layouts, "gen") == genesis && input_layouts_for_extension(&layouts, "sfc") == nullptr,
+          "layouts: picked by a game's extension");
+    check(genesis != nullptr && genesis->touch == "six" && layouts.layouts[0].touch.empty(), "layouts: the touch arrangement");
     check(genesis != nullptr && input_layout_has(genesis, InputMapControl::right_shoulder) &&
               genesis->labels[static_cast<uint32_t>(InputMapControl::right_shoulder)] == "C",
           "layouts: a labelled button is on the pad");
