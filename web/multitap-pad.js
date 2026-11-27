@@ -7,8 +7,8 @@
 // the page names: piccolo_web_pad_state, piccoletto_web_pad), a controller
 // like any pad (START joins a port). "..." (bit 16) opens the program's
 // quick menu, HOME (bit 17, piccolo only) its main menu. (Option `burger`,
-// piccolo: both give way to one "\u2630" beside START under the d-pad, SELECT
-// under the buttons; it opens a small menu over the picture, see
+// piccolo: both give way to one "\u2630" beside START under the buttons, SELECT
+// under the d-pad; it opens a small menu over the picture, see
 // multitap_pad_burger_toggle.) Shown on touch
 // screens and hidden while a real gamepad is in use; PAD in the strip shows
 // or hides it anywhere (remembered).
@@ -113,14 +113,15 @@ function multitap_pad_build(kind) {
   const meta = document.getElementById('pad-meta');
   meta.textContent = '';
   if (burger) {
-    // START and the menu under the d-pad, SELECT under the buttons, upright
-    // and sideways (Andrés, 2026-11-27); the middle row stays empty.
+    // SELECT under the d-pad, the menu and START under the buttons (the menu
+    // on the inner side), upright and sideways (Andrés, 2026-11-27); the
+    // middle row stays empty.
+    left.appendChild(multitap_pad_button('SELECT', ['SELECT'], 'meta'));
     const row = document.createElement('div');
     row.className = 'pad-row';
-    row.appendChild(multitap_pad_button('START', ['START'], 'meta'));
     row.appendChild(multitap_pad_button('\u2630', ['BURGER'], 'meta burger'));
-    left.appendChild(row);
-    right.appendChild(multitap_pad_button('SELECT', ['SELECT'], 'meta'));
+    row.appendChild(multitap_pad_button('START', ['START'], 'meta'));
+    right.appendChild(row);
     return;
   }
   meta.appendChild(multitap_pad_button('SELECT', ['SELECT'], 'meta upright'));
@@ -410,8 +411,8 @@ function multitap_pad_set_shown(shown) {
 //   toggle        the PAD button's id (null: none)
 //   storage_key   where PAD's choice is remembered
 //   menu_button   draw HOME (bit 17) too
-//   burger        true: one "\u2630" button replaces HOME and "..." (and SELECT /
-//                 START always share one row with it); it opens the menu below
+//   burger        true: one "\u2630" button replaces HOME and "..." (beside START
+//                 under the buttons, SELECT under the d-pad); it opens the menu below
 //   menu          with burger: { container: the id of the (hidden) element over
 //                 the picture, items: [[label or function giving it, bit], ...] }
 //   on_shown      called with the new shown state (piccolo closes FILES upright)
