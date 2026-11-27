@@ -591,6 +591,9 @@ static void test_shared_ports()
     input_devices_set_code(&system->devices, pads[1], static_cast<uint32_t>(InputButton::dpad_down), true);
     frame(system, 264, &out);
     check(out.gamepad_held[static_cast<uint32_t>(InputAction::ui_down)], "n:n: any member of port 1 drives the UI");
+    check(out.ui_gamepad == 1, "n:n: the hints name the member that pressed (ui_gamepad)");
+    frame(system, 270, &out);
+    check(out.ui_gamepad == -1, "n:n: no press this frame: no ui_gamepad");
     input_devices_set_code(&system->devices, pads[1], static_cast<uint32_t>(InputButton::dpad_down), false);
     system->settings.ui_active = false;
     frame(system, 280, &out);
@@ -726,6 +729,7 @@ static void test_menus_and_defaults()
     check(out.gamepad_held[static_cast<uint32_t>(InputAction::ui_down)], "ui: the gamepad's down is reported");
     check(!out.gamepad_held[static_cast<uint32_t>(InputAction::ui_up)], "ui: the keyboard's up is not in gamepad_held");
     check(out.held[static_cast<uint32_t>(InputAction::ui_up)], "ui: ...but is in held");
+    check(out.ui_gamepad == static_cast<int32_t>(pad_controller), "ui: the gamepad's press names it (not the keyboard's)");
 
     // A gamepad without d-pad buttons: its directions on the left stick.
     InputDevice no_dpad = {};

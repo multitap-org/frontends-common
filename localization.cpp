@@ -41,6 +41,7 @@ void localization_use_english(Localization* localization)
 {
     localization->translations.assign(localization->count, std::string());
     localization->language.clear();
+    localization->refused = 0;
 }
 
 uint32_t localization_find(const Localization* localization, const char* key)
@@ -152,8 +153,127 @@ static bool starts_with(std::string_view text, std::string_view prefix)
     return text.substr(0, prefix.size()) == prefix;
 }
 
-// Uses a finished entry and starts a new one.
-static void finish_entry(Localization* localization, PoEntry* entry, uint32_t* translated, uint32_t* unknown)
+// Reads the printf conversions of `text` as comparable data: for each one the
+// optional '*' width / precision (each consumes an argument), the length
+// modifier and the conversion letter, as "<stars><length><letter>," appended to
+// `signature`. Flags, width digits and precision digits are left out: a
+// language may change them ("%5.1f" vs "%.2f") without changing which
+// arguments are read. "%%" is skipped. False when the text has something no
+// translation may have: "%n" (writes through a pointer) or a positional "%1$s"
+// form (we never use them, so any '$' is treated as a mismatch).
+//
+// The space flag is deliberately not a flag here: "0.5% nobody" and "20 % walks"
+// are literal percent signs in help texts (strings.txt), and read as "% n" that
+// would be a "%n". No text of ours uses "% d". A '%' that is followed by
+// something that is no conversion (")", " ", the end) is a literal percent and
+// is skipped, the same way in English and in the translation.
+static bool printf_signature(const char* text, std::string* signature)
+{
+    size_t i = 0;
+    while (text[i] != '\0')
+    {
+        if (text[i] != '%')
+        {
+            i++;
+            continue;
+        }
+        i++;   // past the '%'
+        if (text[i] == '%')
+        {
+            i++;
+            continue;
+        }
+
+        size_t p = i;
+        std::string conversion;
+        while (text[p] == '-' || text[p] == '+' || text[p] == '#' || text[p] == '0')
+        {
+            p++;
+        }
+        if (text[p] == '*')
+        {
+            conversion += '*';
+            p++;
+        }
+        else
+        {
+            while (text[p] >= '0' && text[p] <= '9')
+            {
+                p++;
+            }
+        }
+        if (text[p] == '$')
+        {
+            return false;
+        }
+        if (text[p] == '.')
+        {
+            p++;
+            if (text[p] == '*')
+            {
+                conversion += '*';
+                p++;
+            }
+            else
+            {
+                while (text[p] >= '0' && text[p] <= '9')
+                {
+                    p++;
+                }
+            }
+            if (text[p] == '$')
+            {
+                return false;
+            }
+        }
+        // Length modifiers: h hh l ll j z t L q (two characters at most).
+        for (uint32_t k = 0; k < 2 && text[p] != '\0' && std::strchr("hljztLq", text[p]) != nullptr; k++)
+        {
+            conversion += text[p];
+            p++;
+        }
+
+        char letter = text[p];
+        if (letter == 'n')
+        {
+            return false;
+        }
+        if (letter == '%')
+        {
+            i = p + 1;   // "%5%" prints a percent sign and reads nothing, as printf does
+        }
+        else if (letter != '\0' && std::strchr("diuoxXcsSCpfFeEgGaA", letter) != nullptr)
+        {
+            conversion += letter;
+            *signature += conversion;
+            *signature += ',';
+            i = p + 1;
+        }
+        // Anything else: not a conversion, a literal '%'. Continue right after it.
+    }
+    return true;
+}
+
+// True when a translation reads the same arguments as the English text, so
+// the English text's snprintf() arguments are safe for it. A text that
+// printf_signature() rejects never matches (even if English is the one with it).
+static bool same_printf_conversions(const char* english, const char* translation)
+{
+    std::string english_signature;
+    std::string translation_signature;
+    if (!printf_signature(english, &english_signature) || !printf_signature(translation, &translation_signature))
+    {
+        return false;
+    }
+    return english_signature == translation_signature;
+}
+
+// Uses a finished entry and starts a new one. Many texts go straight into
+// snprintf() as the format, and a user .po can replace the bundled one: a
+// translation whose conversions differ from the English text's would be
+// undefined behaviour when shown, so it is refused (English stays) and counted.
+static void finish_entry(Localization* localization, PoEntry* entry, const char* source_name, uint32_t* translated,
+                         uint32_t* unknown, uint32_t* refused)
 {
     bool usable = entry->has_id && entry->has_context && !entry->fuzzy && !entry->id.empty() &&
                   !entry->translation.empty();
@@ -163,6 +283,13 @@ static void finish_entry(Localization* localization, PoEntry* entry, uint32_t* t
         if (id == UINT32_MAX)
         {
             (*unknown)++;
+        }
+        else if (!same_printf_conversions(localization->table[id].english, entry->translation.c_str()))
+        {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "%s: translation of %s refused: its printf conversions differ from the English text",
+                        source_name, entry->context.c_str());
+            (*refused)++;
         }
         else
         {
@@ -184,6 +311,7 @@ uint32_t localization_parse_po(Localization* localization, const char* text, siz
     PoField field = PoField::none;
     uint32_t translated = 0;
     uint32_t unknown = 0;
+    uint32_t refused = 0;
     uint32_t line_number = 0;
 
     while (!rest.empty())
@@ -195,7 +323,7 @@ uint32_t localization_parse_po(Localization* localization, const char* text, siz
 
         if (line.empty())
         {
-            finish_entry(localization, &entry, &translated, &unknown);
+            finish_entry(localization, &entry, source_name, &translated, &unknown, &refused);
             field = PoField::none;
             continue;
         }
@@ -204,7 +332,7 @@ uint32_t localization_parse_po(Localization* localization, const char* text, siz
             // A comment after a translation starts the next entry.
             if (entry.has_translation)
             {
-                finish_entry(localization, &entry, &translated, &unknown);
+                finish_entry(localization, &entry, source_name, &translated, &unknown, &refused);
                 field = PoField::none;
             }
             if (starts_with(line, "#,") && line.find("fuzzy") != std::string_view::npos)
@@ -219,7 +347,7 @@ uint32_t localization_parse_po(Localization* localization, const char* text, siz
         {
             if (entry.has_id)
             {
-                finish_entry(localization, &entry, &translated, &unknown);
+                finish_entry(localization, &entry, source_name, &translated, &unknown, &refused);
             }
             field = PoField::context;
             entry.has_context = true;
@@ -234,7 +362,7 @@ uint32_t localization_parse_po(Localization* localization, const char* text, siz
         {
             if (entry.has_translation)
             {
-                finish_entry(localization, &entry, &translated, &unknown);
+                finish_entry(localization, &entry, source_name, &translated, &unknown, &refused);
             }
             field = PoField::id;
             entry.has_id = true;
@@ -278,10 +406,18 @@ uint32_t localization_parse_po(Localization* localization, const char* text, siz
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "%s:%u: bad quoted string", source_name, line_number);
         }
     }
-    finish_entry(localization, &entry, &translated, &unknown);
+    finish_entry(localization, &entry, source_name, &translated, &unknown, &refused);
 
-    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "%s: %u of %u strings translated%s", source_name, translated,
-                localization->count, unknown > 0 ? " (some keys are unknown: another version?)" : "");
+    localization->refused = refused;
+
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "%s: %u of %u strings translated%s%s", source_name, translated,
+                localization->count, unknown > 0 ? " (some keys are unknown: another version?)" : "",
+                refused > 0 ? " (some were refused: their printf conversions differ from English)" : "");
+    if (refused > 0)
+    {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "%s: %u translation(s) refused for their printf conversions", source_name,
+                    refused);
+    }
     return translated;
 }
 

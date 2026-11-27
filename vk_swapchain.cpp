@@ -410,6 +410,13 @@ bool vulkan_swapchain_recreate(VulkanSwapchain* swapchain, const VulkanContext* 
     if (old_swapchain != VK_NULL_HANDLE)
     {
         vkDestroySwapchainKHR(context->device, old_swapchain, nullptr);
+        // A creation that gave up before vkCreateSwapchainKHR (the surface
+        // lost: Android, back from the background on its other side) leaves
+        // the old handle here; release would destroy it a second time.
+        if (swapchain->swapchain == old_swapchain)
+        {
+            swapchain->swapchain = VK_NULL_HANDLE;
+        }
     }
     return ok;
 }

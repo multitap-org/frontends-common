@@ -25,12 +25,12 @@
 //   --pad       with --connect / --pair: once in, act as a gamepad for
 //               --seconds: START (joins a port), then the d-pad, A and the
 //               left stick in turn, 60 states a second
-//   --cores     with --connect: list the host's cores (needs FULL access)
+//   --cores     with --connect: list the host's cores (needs the SETTINGS capability)
 //   --list PATH with --connect: list a folder of the host's game folders
 //               ("" = the game folders themselves; net_content.h)
 //   --load CORE PATH  with --connect: start a game ("" = the core alone)
 //   (what the host runs is printed whenever it says: at connection and on changes)
-//   --settings  with --connect: the host's settings, page by page (FULL access)
+//   --settings  with --connect: the host's settings, page by page (SETTINGS capability)
 //   --set LAYER KEY VALUE  with --connect: change one (LAYER global, core or game;
 //               VALUE "-" = reset that layer)
 //   --actions   with --connect: what this device may trigger
@@ -43,10 +43,10 @@
 //               this device's PAD plays on (DEVICE: a RETRO_DEVICE_* number)
 //   --ping      with --connect: the connection's round trip, jitter and loss, each second
 //   --speedtest with --connect: rising rates down (host -> us) then up, one second
-//               each, until the loss passes 2% (needs STREAM access)
+//               each, until the loss passes 2% (needs the STREAM capability)
 //   --watch     with --connect: remote play: receive the stream (video and
 //               audio), decode it, print frames / Mbit/s / losses each second
-//               (needs STREAM access; a game must be running on the host)
+//               (needs the STREAM capability; a game must be running on the host)
 //   --save FILE with --watch: write the last frame shown as a PPM picture
 //   --tuning T  with --watch: ask for a frame delay while streaming: host, off,
 //               auto or a number of ms (stream_tuning; prints what's applied)
@@ -58,7 +58,7 @@
 //   --drop P    with --watch: throw away P% of the stream's packets (a bad
 //               network, to see keyframe requests and recovery)
 //   --devices   with --connect: who plays on the host's ports, and each change
-//               (FULL access)
+//               (SETTINGS capability)
 //   --device-port C D P  with --connect: a second in, move controller C (device
 //               D, from --devices) to port P (1-4, 0 = on none)
 //   --unpair    with --connect: once in, unpair (the host forgets us too)
@@ -72,7 +72,7 @@
 //   --dir DIR   where net_probe keeps its device key and paired devices
 //               (net_probe_identity.cfg, net_probe_devices.cfg; default ".")
 //
-// piccolo-share (net_share.h; needs SHARE access), with --connect / --pair,
+// piccolo-share (net_share.h; needs the SHARE capability), with --connect / --pair,
 // through net_share_link as piccolo's SHARE does; --seconds is the time
 // limit (at least 30):
 //   --share-list PATH   list a folder of the host's shared folders ("" = the

@@ -110,6 +110,12 @@ const SettingDescriptor* settings_find(const Settings* settings, const char* key
 // Is `value` valid for this setting?
 bool settings_value_is_valid(const SettingDescriptor* descriptor, const char* value);
 
+// Is the whole `text` a real number as the settings accept it (finite, "." as
+// the decimal mark whatever the locale)? Then true and the value. For code
+// that reads a typed real itself (an edit field): strtod / strtof follow the
+// locale and can read "0.5" as 0 where the decimal mark is a comma.
+bool settings_parse_real(const char* text, double* value);
+
 // The effective value as text, and (if `source` isn't nullptr) the layer it
 // comes from. nullptr (and a logged error) for a key not in the table.
 const char* settings_get(const Settings* settings, const char* key, SettingLayer* source);

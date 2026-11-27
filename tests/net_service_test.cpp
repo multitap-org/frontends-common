@@ -140,7 +140,14 @@ int main(int argc, char** argv)
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
+    // A beacon name, then stop at once: the lookup is let go, nobody waits
+    // for it (a dead DNS would stall here otherwise).
+    std::chrono::steady_clock::time_point stop_begin = std::chrono::steady_clock::now();
+    net_service_set_beacon(service, "beacon.invalid");
+    net_service_set_beacon(service, "other.invalid");   // a second name lets the first go too
     net_service_stop(service);
+    int64_t stop_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - stop_begin).count();
+    check(stop_ms < 1000, "set_beacon and stop never wait for the lookup");
     check(!service->thread.joinable(), "stopped: the thread is joined");
     net_service_stop(service);   // twice is fine
     net_client_destroy(client);

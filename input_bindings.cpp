@@ -24,7 +24,7 @@ static const char* const ACTION_NAMES[INPUT_ACTION_COUNT] = {
     "ui.up", "ui.down", "ui.left", "ui.right", "ui.accept", "ui.back", "ui.page_left", "ui.page_right", "ui.open_menu",
     "hotkey.enable", "hotkey.menu", "hotkey.quick_menu", "hotkey.save_state", "hotkey.load_state",
     "hotkey.fast_forward", "hotkey.grab_mouse", "hotkey.ports", "hotkey.pause", "hotkey.dvr",
-    "hotkey.remap", "hotkey.screenshot",
+    "hotkey.remap", "hotkey.screenshot", "hotkey.reset", "hotkey.undo_save_state", "hotkey.undo_load_state",
 };
 
 static uint32_t index_of(InputAction action)
@@ -1379,6 +1379,7 @@ static void stick(const InputController* controller, const InputBindingSet* set,
 static bool game_only_hotkey(InputAction action)
 {
     return action == InputAction::hotkey_save_state || action == InputAction::hotkey_load_state ||
+           action == InputAction::hotkey_undo_save_state || action == InputAction::hotkey_undo_load_state ||
            action == InputAction::hotkey_fast_forward;
 }
 
@@ -1888,6 +1889,10 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
                 frame->keyboard_pressed[a] = frame->keyboard_pressed[a] || (keyboard && pressed[a]);
                 fired = fired || pressed[a];
             }
+            if (fired && !keyboard)
+            {
+                frame->ui_gamepad = static_cast<int32_t>(index);
+            }
             if (fired)
             {
                 controller->modifier_used = true;
@@ -1907,6 +1912,10 @@ void input_update(InputSystem* system, uint64_t now_ms, InputFrame* frame)
                 if (!keyboard)
                 {
                     frame->gamepad_held[a] = frame->gamepad_held[a] || held[a];
+                    if (pressed[a])
+                    {
+                        frame->ui_gamepad = static_cast<int32_t>(index);
+                    }
                 }
             }
             // The keyboard's hotkeys without the modifier, where the frontend

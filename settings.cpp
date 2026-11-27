@@ -37,7 +37,7 @@ static bool parse_int(const char* text, int32_t* out)
     return result.ec == std::errc() && result.ptr == end && end != text;
 }
 
-static bool parse_real(const char* text, double* out)
+bool settings_parse_real(const char* text, double* out)
 {
     const char* end = text + std::strlen(text);
     std::from_chars_result result = std::from_chars(text, end, *out);
@@ -105,7 +105,7 @@ bool settings_value_is_valid(const SettingDescriptor* descriptor, const char* va
     case SettingType::real:
     {
         double number = 0.0;
-        return parse_real(value, &number) && number >= descriptor->min_real && number <= descriptor->max_real;
+        return settings_parse_real(value, &number) && number >= descriptor->min_real && number <= descriptor->max_real;
     }
     case SettingType::enumeration:
         return enum_index(descriptor, value) >= 0;
@@ -428,7 +428,7 @@ double settings_get_real(const Settings* settings, const char* key)
     const SettingDescriptor* descriptor = nullptr;
     const char* value = get_typed(settings, key, SettingType::real, SettingType::real, &descriptor);
     double number = 0.0;
-    if (value == nullptr || !parse_real(value, &number))
+    if (value == nullptr || !settings_parse_real(value, &number))
     {
         return 0.0;
     }
