@@ -130,6 +130,42 @@ function multitap_page_game(playing, aspect) {
   }
 }
 
+// The build's hash for its proof (net_build.h): a release hashes the list
+// of its zip's wasm files (wasm.sha256, sha256sum's format); a page whose own
+// .wasm is on that list hands over the list's hash. In
+// globalThis.multitap_build_sha256 for the frontend (net_build_find_program):
+// undefined while working it out, '' when there's none (no list, or a .wasm
+// that isn't on it: never signed).
+function multitap_page_hex(buffer) {
+  return Array.from(new Uint8Array(buffer), function (byte) { return byte.toString(16).padStart(2, '0'); }).join('');
+}
+
+async function multitap_page_build_hash(wasm_url, list_url) {
+  globalThis.multitap_build_sha256 = undefined;
+  let hash = '';
+  try {
+    const list_response = await fetch(list_url, { cache: 'no-cache' });
+    const wasm_response = await fetch(wasm_url);
+    if (list_response.ok && wasm_response.ok) {
+      const list = await list_response.arrayBuffer();
+      const wasm_hash = multitap_page_hex(await crypto.subtle.digest('SHA-256', await wasm_response.arrayBuffer()));
+      const lines = new TextDecoder().decode(list).split('\n');
+      let listed = false;
+      for (const line of lines) {
+        listed = listed || line.split(/\s+/)[0] === wasm_hash;
+      }
+      if (listed) {
+        hash = multitap_page_hex(await crypto.subtle.digest('SHA-256', list));
+      } else {
+        console.log('Build proof: ' + wasm_url + ' isn\'t on ' + list_url);
+      }
+    }
+  } catch (error) {
+    console.log('Build proof: ' + error.message);
+  }
+  globalThis.multitap_build_sha256 = hash;
+}
+
 // Starts the frontend. config:
 //   name         its folder name (app_storage_init's) and module script (<name>.js)
 //   title        what the loading message calls it ("PICCOLO")
@@ -138,9 +174,15 @@ function multitap_page_game(playing, aspect) {
 //   sw, sw_scope sw.js's URL and scope (relative to the page)
 //   started      called once the filesystem is there, before main() (may be null)
 //   environment  more environment variables for the frontend, { NAME: 'value' } (may be null)
+//   build_list   the release's list of wasm files (multitap_page_build_hash; may be null: never signed)
 async function multitap_page_start(config) {
   if (!(await multitap_page_isolation(config.sw, config.sw_scope))) {
     return;
+  }
+  if (config.build_list) {
+    multitap_page_build_hash(config.name + '.wasm', config.build_list);
+  } else {
+    globalThis.multitap_build_sha256 = '';
   }
   if (!document.createElement('canvas').getContext('webgl2')) {
     multitap_page_message('THIS BROWSER HAS NO WEBGL 2', false);

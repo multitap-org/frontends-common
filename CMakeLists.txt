@@ -97,6 +97,24 @@ if(EXISTS "${MULTITAP_DEPS_DIR}/miniz/miniz_zip.c" AND EXISTS "${MULTITAP_DEPS_D
     endif()
 endif()
 
+# SHA-256 for file_hash.cpp (downloads, the build proof: net_build.h): 7-Zip's,
+# inside multitap_dep_7z where archives are read; on its own for a frontend
+# that has deps/7zip but reads no archives (piccoletto: its build proof).
+set(MULTITAP_SHA256_LIBRARY "")
+if(MULTITAP_ARCHIVES)
+    set(MULTITAP_SHA256_LIBRARY multitap_dep_7z)
+elseif(EXISTS "${MULTITAP_DEPS_DIR}/7zip/C/Sha256.c")
+    set(SEVEN_ZIP_C "${MULTITAP_DEPS_DIR}/7zip/C")
+    add_library(multitap_dep_sha256 STATIC
+        "${SEVEN_ZIP_C}/Sha256.c" "${SEVEN_ZIP_C}/Sha256Opt.c" "${SEVEN_ZIP_C}/CpuArch.c")
+    target_include_directories(multitap_dep_sha256 SYSTEM PUBLIC "${SEVEN_ZIP_C}")
+    target_compile_definitions(multitap_dep_sha256 PRIVATE Z7_EXTRACT_ONLY)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(multitap_dep_sha256 PRIVATE -O2)
+    endif()
+    set(MULTITAP_SHA256_LIBRARY multitap_dep_sha256)
+endif()
+
 # The network core (ENet, Monocypher, the beacon's wire library,
 # libdatachannel, Mbed TLS on Android) is built by multitap-net, which also
 # tells us which transports it has (MULTITAP_HAVE_RTC, MULTITAP_HAVE_WEBRTC_JS).
@@ -234,8 +252,9 @@ if(MULTITAP_ARCHIVES)
 endif()
 
 # Downloads (frontend_download: signature checks, HTTP downloads, SHA-256 of
-# files) for the core downloader. Only for frontends that have deps/monocypher
-# and zip reading, and where net_http has a backend (net_http_backend.h):
+# files) for the core downloader and the build proof. Only for frontends that
+# have deps/monocypher and deps/7zip (its SHA-256), and where net_http has a
+# backend (net_http_backend.h):
 # WinHTTP on Windows (part of the system), HttpURLConnection through JNI on
 # Android (part of the system), libcurl where it's found (Linux: the system's;
 # the Flatpak runtime has it).
@@ -243,7 +262,7 @@ endif()
 # The same target as multitap-net's, defined once.
 set(MULTITAP_DOWNLOADS OFF)
 set(MULTITAP_HTTP_BACKEND "")
-if(MULTITAP_ARCHIVES AND EXISTS "${MULTITAP_DEPS_DIR}/monocypher/src/monocypher.c")
+if(MULTITAP_SHA256_LIBRARY AND EXISTS "${MULTITAP_DEPS_DIR}/monocypher/src/monocypher.c")
     if(WIN32)
         set(MULTITAP_HTTP_BACKEND winhttp)
     elseif(ANDROID)
@@ -273,7 +292,7 @@ if(MULTITAP_HTTP_BACKEND)
     )
     target_include_directories(frontend_download PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(frontend_download PUBLIC host_common SDL3::SDL3
-                          PRIVATE multitap_dep_monocypher multitap_dep_7z)
+                          PRIVATE multitap_dep_monocypher ${MULTITAP_SHA256_LIBRARY})
     if(MULTITAP_HTTP_BACKEND STREQUAL "winhttp")
         target_link_libraries(frontend_download PRIVATE winhttp)
     elseif(MULTITAP_HTTP_BACKEND STREQUAL "curl")
@@ -317,6 +336,12 @@ if(TARGET multitap_net)
     if(TARGET frontend_download)
         # Build proofs (net_build.h): signature checks and the record's download.
         target_link_libraries(frontend_net PUBLIC frontend_download)
+        target_compile_definitions(frontend_net PRIVATE MULTITAP_NET_BUILD_PROOF=1)
+    elseif(EMSCRIPTEN AND TARGET multitap_dep_monocypher)
+        # In the browser: signature checks only. The page hashes the program
+        # and fetches the record (net_build.cpp, web/multitap-page.js).
+        target_sources(frontend_net PRIVATE signature.cpp)
+        target_link_libraries(frontend_net PRIVATE multitap_dep_monocypher)
         target_compile_definitions(frontend_net PRIVATE MULTITAP_NET_BUILD_PROOF=1)
     endif()
     multitap_set_project_flags(frontend_net)

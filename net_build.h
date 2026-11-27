@@ -12,6 +12,13 @@
 //   tag=v0.4.0
 //   target=linux-x86_64
 //   exe_sha256=<64 hex>   the program itself (release.yml writes it in manifest.cfg)
+// "The program" (net_build_find_program; Andrés, 2026-11-27):
+//   Windows, Linux  the executable (piccolo.exe, the Flatpak's piccolo)
+//   Android         the native activity's library, libmain.so: not the APK,
+//                   so a store that signs the APK again doesn't change it
+//   web             the list of the zip's wasm files with their hashes
+//                   (wasm.sha256, web/package.sh): the page checks that its
+//                   own .wasm is listed and hands over the list's hash
 // A build finds its record (the program's own hash must match), keeps it in
 // its settings folder, and sends record + signature in its hello
 // (net_pairing.h: NetDeviceInfo). The other device checks the signature with
@@ -37,7 +44,17 @@ struct NetBuildIdentity
     std::string version;    // "0.4.0"; empty or with "-dev" for an unreleased build (never signed)
     std::string target;     // "linux-x86_64", ... (build_target.h)
     std::string exe_path;   // the program file, hashed to match the record
+    std::string exe_sha256; // or the program's hash as the platform gives it (web); then exe_path isn't read
 };
+
+// Where this build's program is (exe_path) or its hash (exe_sha256), as
+// the release hashed it (above): `program` ("piccolo") in SDL's base path on
+// the desktop (with .exe on Windows), the library this code is linked into on
+// Android, the page's hash in the browser (globalThis.multitap_build_sha256,
+// web/multitap-page.js). False while the page is still working it out: ask
+// again later. A browser page with no hash (a dev build, a missing list)
+// gives true and an empty identity: never signed.
+bool net_build_find_program(const char* program, NetBuildIdentity* build);
 
 // NetVerifyBuildFn: the record's signature checks out with a releases key
 // and the record's app is the device's kind. `user` is unused.
