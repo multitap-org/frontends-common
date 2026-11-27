@@ -6,7 +6,9 @@
 // directions. What's held goes to the program as RetroPad bits (an export
 // the page names: piccolo_web_pad_state, piccoletto_web_pad), a controller
 // like any pad (START joins a port). "..." (bit 16) opens the program's
-// quick menu, HOME (bit 17, piccolo only) its main menu. Shown on touch
+// quick menu, HOME (bit 17, piccolo only) its main menu. (Option `burger`,
+// piccolo: both give way to one "\u2630" between SELECT and START that opens
+// a small menu over the picture, see multitap_pad_burger_open.) Shown on touch
 // screens and hidden while a real gamepad is in use; PAD in the strip shows
 // or hides it anywhere (remembered).
 //
@@ -24,10 +26,13 @@
 
 // RETRO_DEVICE_ID_JOYPAD_* as bits; QUICK and MENU are the programs' own.
 const MULTITAP_PAD_BIT = { B: 0, Y: 1, SELECT: 2, START: 3, UP: 4, DOWN: 5, LEFT: 6, RIGHT: 7, A: 8, X: 9, L: 10, R: 11,
-                           QUICK: 16, MENU: 17 };
+                           QUICK: 16, MENU: 17,
+                           // Not the program's: the page's own button, never sent (the burger option).
+                           BURGER: 20 };
 const MULTITAP_PAD_DEADZONE = 0.3;   // of the d-pad's half size: closer to its middle is no direction
 const MULTITAP_PAD_BUZZ_MS = 20;     // a press's buzz (piccolo's own touch pad: haptics.cpp BUZZ_MS)
 const MULTITAP_PAD_BOTH_REACH = 0.62;   // A + B: closer than this share of the distance between their centres to each
+const MULTITAP_PAD_PRESS_MS = 60;    // a menu item's press: held this long, so the program sees one frame with it (it takes rising edges)
 
 const multitap_pad = {
   options: null,        // multitap_pad_start's
@@ -41,6 +46,8 @@ const multitap_pad = {
   lit: 0,               // the bits drawn as held
   wanted: false,        // shown unless a gamepad is in use (PAD's choice, or the default)
   gamepads: 0,          // real gamepads connected
+  pulse: 0,             // bits held for a moment by the burger menu (not by a finger)
+  menu_open: false,     // the burger menu is showing
 };
 
 function multitap_pad_bits(names) {
@@ -87,21 +94,28 @@ function multitap_pad_build(kind) {
     face.appendChild(multitap_pad_button('A', ['A'], 'round a'));
   }
   right.appendChild(face);
-  // HOME (the main menu) at the top of the d-pad's side, "..." (the quick
-  // menu) at the top of the buttons' side: piccolo's own touch pad's words
-  // (touch_pad_menu, touch_pad_quick in its strings.txt).
-  if (multitap_pad.options.menu_button) {
-    left.insertBefore(multitap_pad_button('HOME', ['MENU'], 'meta menu'), left.firstChild);
+  const burger = multitap_pad.options.burger === true;
+  if (!burger) {
+    // HOME (the main menu) at the top of the d-pad's side, "..." (the quick
+    // menu) at the top of the buttons' side: piccolo's own touch pad's words
+    // (touch_pad_menu, touch_pad_quick in its strings.txt).
+    if (multitap_pad.options.menu_button) {
+      left.insertBefore(multitap_pad_button('HOME', ['MENU'], 'meta menu'), left.firstChild);
+    }
+    right.insertBefore(multitap_pad_button('...', ['QUICK'], 'meta menu'), right.firstChild);
+    // SELECT / START: sideways at the bottom of each half; upright close
+    // together in the middle, under the d-pad and the buttons (the CSS shows
+    // one of the two).
+    left.appendChild(multitap_pad_button('SELECT', ['SELECT'], 'meta sideways'));
+    right.appendChild(multitap_pad_button('START', ['START'], 'meta sideways'));
   }
-  right.insertBefore(multitap_pad_button('...', ['QUICK'], 'meta menu'), right.firstChild);
-  // SELECT / START: sideways at the bottom of each half; upright close
-  // together in the middle, under the d-pad and the buttons (the CSS shows
-  // one of the two).
-  left.appendChild(multitap_pad_button('SELECT', ['SELECT'], 'meta sideways'));
-  right.appendChild(multitap_pad_button('START', ['START'], 'meta sideways'));
   const meta = document.getElementById('pad-meta');
   meta.textContent = '';
   meta.appendChild(multitap_pad_button('SELECT', ['SELECT'], 'meta upright'));
+  if (burger) {
+    // One row in the middle, upright and sideways: SELECT, the menu, START.
+    meta.appendChild(multitap_pad_button('\u2630', ['BURGER'], 'meta burger upright'));
+  }
   meta.appendChild(multitap_pad_button('START', ['START'], 'meta upright'));
 }
 
@@ -188,13 +202,18 @@ function multitap_pad_bits_at(x, y) {
 // Everything held: lit on the page, sent to the program when it changed (a
 // short buzz for a new press, where the browser can).
 function multitap_pad_update() {
-  let bits = 0;
+  let bits = multitap_pad.pulse;
   for (const held of multitap_pad.fingers.values()) {
     bits |= held;
+  }
+  const burger = 1 << MULTITAP_PAD_BIT.BURGER;
+  if ((bits & ~multitap_pad.lit & burger) !== 0) {
+    multitap_pad_burger_toggle();
   }
   if (bits !== multitap_pad.lit) {
     multitap_pad_light(bits);
   }
+  bits &= ~burger;   // the page's own button: the program never sees it
   if (bits === multitap_pad.sent) {
     return;
   }
@@ -205,6 +224,68 @@ function multitap_pad_update() {
   if (typeof Module !== 'undefined' && Module.ccall && multitap_pad.attached) {
     Module.ccall(multitap_pad.options.state, null, ['number'], [bits]);
   }
+}
+
+// The burger menu (option `burger`): the items of options.menu.items, each
+// [label, bit] (label a string, or a function giving it: the page's language
+// can change), in the page's options.menu.container, which sits over the
+// picture. Built each time it opens, so the labels are current.
+function multitap_pad_burger_toggle() {
+  const menu = multitap_pad.options.menu;
+  const container = menu !== undefined ? document.getElementById(menu.container) : null;
+  if (container === null) {
+    return;
+  }
+  if (multitap_pad.menu_open) {
+    multitap_pad_burger_close();
+    return;
+  }
+  container.textContent = '';
+  for (const [label, bit] of menu.items) {
+    const item = document.createElement('button');
+    item.textContent = typeof label === 'function' ? label() : label;
+    item.addEventListener('click', function () {
+      multitap_pad_burger_close();
+      multitap_pad_press(bit);
+    });
+    container.appendChild(item);
+  }
+  container.hidden = false;
+  multitap_pad.menu_open = true;
+}
+
+function multitap_pad_burger_close() {
+  const menu = multitap_pad.options.menu;
+  const container = menu !== undefined ? document.getElementById(menu.container) : null;
+  if (container !== null) {
+    container.hidden = true;
+  }
+  multitap_pad.menu_open = false;
+}
+
+// A tap anywhere outside the menu closes it. (The burger button itself is
+// left to its own toggle: closing here too would open it again.) Capture
+// phase: the pad's halves stop their events' default, not their propagation,
+// but the canvas's own handlers shouldn't matter either.
+function multitap_pad_burger_outside(event) {
+  if (!multitap_pad.menu_open) {
+    return;
+  }
+  const container = document.getElementById(multitap_pad.options.menu.container);
+  if (!container.contains(event.target) && event.target.closest('.burger') === null) {
+    multitap_pad_burger_close();
+  }
+}
+
+// One press of a program bit (a menu item): held for MULTITAP_PAD_PRESS_MS
+// and let go, the way the program reads these (rising edges of bits 16+).
+function multitap_pad_press(bit) {
+  multitap_pad.pulse |= 1 << bit;
+  multitap_pad_update();
+  setTimeout(function () {
+    multitap_pad.pulse &= ~(1 << bit);
+    multitap_pad_update();
+  }, MULTITAP_PAD_PRESS_MS);
 }
 
 // The program's VIBRATE setting (piccolo: src/web_pad.h web_pad_set_vibrate).
@@ -302,6 +383,9 @@ function multitap_pad_set_shown(shown) {
     toggle.classList.toggle('active', shown);
   }
   multitap_pad.fingers.clear();
+  if (!shown && multitap_pad.menu_open) {
+    multitap_pad_burger_close();
+  }
   if (typeof multitap_pad.options.on_shown === 'function') {
     multitap_pad.options.on_shown(shown);
   }
@@ -318,6 +402,10 @@ function multitap_pad_set_shown(shown) {
 //   toggle        the PAD button's id (null: none)
 //   storage_key   where PAD's choice is remembered
 //   menu_button   draw HOME (bit 17) too
+//   burger        true: one "\u2630" button replaces HOME and "..." (and SELECT /
+//                 START always share one row with it); it opens the menu below
+//   menu          with burger: { container: the id of the (hidden) element over
+//                 the picture, items: [[label or function giving it, bit], ...] }
 //   on_shown      called with the new shown state (piccolo closes FILES upright)
 //   observe       ids whose size changes move the buttons
 function multitap_pad_start(options) {
@@ -329,6 +417,9 @@ function multitap_pad_start(options) {
       half.addEventListener(type, multitap_pad_finger);
     }
     half.addEventListener('contextmenu', function (event) { event.preventDefault(); });
+  }
+  if (options.burger === true) {
+    document.addEventListener('pointerdown', multitap_pad_burger_outside, true);
   }
   let shown = window.matchMedia('(pointer: coarse)').matches;
   try {
